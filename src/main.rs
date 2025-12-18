@@ -22,6 +22,7 @@ use crate::config::key_match;
 use app::App;
 use chrono::{Duration, Local};
 use models::{InputMode, Mood};
+use tui_textarea::CursorMove;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // 앱 초기화 및 설정 로드
@@ -559,6 +560,12 @@ fn handle_editing_mode(app: &mut App, key: event::KeyEvent) {
     } else if key_match(&key, &app.config.keybindings.composer.clear) {
         app.textarea = tui_textarea::TextArea::default();
         app.transition_to(InputMode::Editing);
+    } else if key_match(&key, &app.config.keybindings.composer.indent) {
+        if !indent_or_outdent_list_line(&mut app.textarea, true) {
+            let _ = app.textarea.insert_tab();
+        }
+    } else if key_match(&key, &app.config.keybindings.composer.outdent) {
+        let _ = indent_or_outdent_list_line(&mut app.textarea, false);
     } else if key_match(&key, &app.config.keybindings.composer.newline) {
         insert_newline_with_auto_indent(&mut app.textarea);
     } else if key_match(&key, &app.config.keybindings.composer.submit) {
@@ -726,6 +733,61 @@ fn insert_newline_with_auto_indent(textarea: &mut tui_textarea::TextArea) {
     if !prefix.is_empty() {
         textarea.insert_str(prefix);
     }
+}
+
+fn indent_or_outdent_list_line(textarea: &mut tui_textarea::TextArea, indent: bool) -> bool {
+    let (row, col) = textarea.cursor();
+    let current_line = textarea.lines().get(row).map(|s| s.as_str()).unwrap_or("");
+
+    if !is_list_line(current_line) {
+        return false;
+    }
+
+    if indent {
+        textarea.move_cursor(CursorMove::Jump(row as u16, 0));
+        textarea.insert_str("  ");
+        textarea.move_cursor(CursorMove::Jump(row as u16, (col + 2) as u16));
+        true
+    } else {
+        let remove = leading_outdent_chars(current_line);
+        if remove == 0 {
+            return true;
+        }
+
+        textarea.move_cursor(CursorMove::Jump(row as u16, 0));
+        for _ in 0..remove {
+            let _ = textarea.delete_next_char();
+        }
+        textarea.move_cursor(CursorMove::Jump(
+            row as u16,
+            col.saturating_sub(remove) as u16,
+        ));
+        true
+    }
+}
+
+fn is_list_line(line: &str) -> bool {
+    let (_, rest) = parse_indent_level(line);
+    checkbox_marker(rest).is_some()
+        || bullet_marker(rest).is_some()
+        || ordered_list_next_marker(rest).is_some()
+}
+
+fn leading_outdent_chars(line: &str) -> usize {
+    let bytes = line.as_bytes();
+    if bytes.is_empty() {
+        return 0;
+    }
+    if bytes[0] == b'\t' {
+        return 1;
+    }
+    if bytes.len() >= 2 && bytes[0] == b' ' && bytes[1] == b' ' {
+        return 2;
+    }
+    if bytes[0] == b' ' {
+        return 1;
+    }
+    0
 }
 
 fn list_continuation_prefix(line: &str) -> String {

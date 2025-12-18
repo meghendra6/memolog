@@ -273,6 +273,16 @@ pub fn render_help_popup(f: &mut Frame, app: &App) {
             vec![
                 ("Save", fmt_keys(&kb.composer.submit), "Save"),
                 ("New line", fmt_keys(&kb.composer.newline), "Insert newline"),
+                (
+                    "Indent",
+                    fmt_keys(&kb.composer.indent),
+                    "Increase list level",
+                ),
+                (
+                    "Outdent",
+                    fmt_keys(&kb.composer.outdent),
+                    "Decrease list level",
+                ),
                 ("Clear", fmt_keys(&kb.composer.clear), "Clear buffer"),
                 ("Back", fmt_keys(&kb.composer.cancel), "Back"),
             ],

@@ -46,18 +46,37 @@ fn is_match(key: &KeyEvent, binding: &str) -> bool {
         }
     }
 
-    if key.code != target_code {
-        if let KeyCode::Char(c) = key.code {
-            if let KeyCode::Char(tc) = target_code {
-                if c.to_lowercase().next() == Some(tc) {
-                    return key.modifiers.contains(target_modifiers);
-                }
-            }
-        }
+    // KeyCode match (case-insensitive for Char).
+    let code_matches = if key.code == target_code {
+        true
+    } else if let (KeyCode::Char(c), KeyCode::Char(tc)) = (key.code, target_code) {
+        c.to_lowercase().next() == Some(tc)
+    } else {
+        false
+    };
+    if !code_matches {
         return false;
     }
 
-    key.modifiers.contains(target_modifiers)
+    // Modifier match:
+    // - Enter must match modifiers exactly so `enter` and `shift+enter` can coexist.
+    // - For other keys, ignore Shift unless explicitly requested (helps BackTab and char keys like '?').
+    if target_code == KeyCode::Enter {
+        return key.modifiers == target_modifiers;
+    }
+
+    let mut key_mods = key.modifiers;
+    let mut target_mods = target_modifiers;
+
+    if !target_mods.contains(KeyModifiers::SHIFT) {
+        key_mods.remove(KeyModifiers::SHIFT);
+    }
+
+    if !target_mods.contains(KeyModifiers::SHIFT) {
+        target_mods.remove(KeyModifiers::SHIFT);
+    }
+
+    key_mods.contains(target_mods)
 }
 
 fn project_dirs() -> Option<ProjectDirs> {
@@ -226,6 +245,8 @@ pub struct ComposerBindings {
     pub newline: Vec<String>,
     pub cancel: Vec<String>,
     pub clear: Vec<String>,
+    pub indent: Vec<String>,
+    pub outdent: Vec<String>,
 }
 
 impl Default for ComposerBindings {
@@ -233,8 +254,10 @@ impl Default for ComposerBindings {
         Self {
             cancel: vec!["esc".to_string()],
             newline: vec!["enter".to_string()],
-            submit: vec!["ctrl+s".to_string(), "ctrl+d".to_string()],
+            submit: vec!["shift+enter".to_string()],
             clear: vec!["ctrl+l".to_string()],
+            indent: vec!["tab".to_string()],
+            outdent: vec!["backtab".to_string()],
         }
     }
 }
@@ -347,7 +370,8 @@ impl Config {
             Config::default()
         };
 
-        let changed = config.normalize_paths();
+        let mut changed = config.normalize_paths();
+        changed |= config.normalize_keybindings();
 
         if changed || !config_path.exists() {
             let _ = config.save_to_path(&config_path);
@@ -374,6 +398,31 @@ impl Config {
 
         if self.data.log_path.is_relative() {
             self.data.log_path = default_data_dir().join(&self.data.log_path);
+            changed = true;
+        }
+
+        changed
+    }
+
+    fn normalize_keybindings(&mut self) -> bool {
+        let mut changed = false;
+
+        // Migration: old default save bindings were Ctrl+S/Ctrl+D (often unreliable under some IME setups).
+        // Move to Shift+Enter by default.
+        if self
+            .keybindings
+            .composer
+            .submit
+            .iter()
+            .any(|k| k.eq_ignore_ascii_case("ctrl+s") || k.eq_ignore_ascii_case("ctrl+d"))
+            && !self
+                .keybindings
+                .composer
+                .submit
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case("shift+enter"))
+        {
+            self.keybindings.composer.submit = vec!["shift+enter".to_string()];
             changed = true;
         }
 

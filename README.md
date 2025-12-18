@@ -73,7 +73,8 @@ graph TD
 > **"생각나는 것을 바로 적으세요"**
 - 앱을 켜자마자 만나는 화면입니다.
 - **Enter**: 줄바꿈 (멀티라인 입력)
-- **Ctrl + S / Ctrl + D**: 메모 저장 후 Navigate 모드로 전환
+- **Shift + Enter**: 메모 저장 후 Navigate 모드로 전환
+- **Tab / Shift + Tab**: (리스트) 들여쓰기 레벨 조절
 - **Esc**: Navigate 모드로 전환
 
 ### 2. 🧭 Navigate Mode (탐색 모드)
@@ -153,10 +154,12 @@ activity = ["g"]
 log_dir = ["o"]
 
 [keybindings.composer]
-submit = ["ctrl+s", "ctrl+d"]
+submit = ["shift+enter"]
 newline = ["enter"]
 cancel = ["esc"]
 clear = ["ctrl+l"]
+indent = ["tab"]
+outdent = ["backtab"]
 
 # 테마 색상 설정 (색상명 또는 R,G,B)
 [theme]

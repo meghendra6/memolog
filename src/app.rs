@@ -4,6 +4,7 @@ use crate::storage;
 use chrono::{DateTime, Local};
 use ratatui::widgets::ListState;
 use std::collections::HashMap;
+use tui_textarea::CursorMove;
 use tui_textarea::TextArea;
 
 const PLACEHOLDER_COMPOSE: &str = "Compose…";
@@ -334,6 +335,8 @@ impl<'a> App<'a> {
                     self.update_logs();
                     self.last_search_query = None;
                 }
+                self.textarea.move_cursor(CursorMove::Bottom);
+                self.textarea.move_cursor(CursorMove::End);
             }
             InputMode::Search => {
                 self.textarea = TextArea::default(); // 검색어 입력 위해 초기화

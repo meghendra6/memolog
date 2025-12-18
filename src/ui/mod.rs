@@ -24,7 +24,8 @@ use popups::{
 };
 
 const HELP_NAVIGATE: &str = " ?: Help  h/l: Focus  j/k: Move  Space/Enter: Toggle Task  e: Edit  i: Compose  /: Search  t: Tags  p: Pomodoro  g: Activity  o: Log Dir  Ctrl+Q: Quit ";
-const HELP_COMPOSE: &str = " Enter: New line  Ctrl+S/Ctrl+D: Save  Ctrl+L: Clear  Esc: Back ";
+const HELP_COMPOSE: &str =
+    " Enter: New line  Shift+Enter: Save  Tab/Shift+Tab: Indent  Ctrl+L: Clear  Esc: Back ";
 const HELP_SEARCH: &str = " Enter: Apply  Ctrl+L: Clear  Esc: Cancel ";
 
 pub fn ui(f: &mut Frame, app: &mut App) {

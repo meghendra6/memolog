@@ -49,10 +49,12 @@ open = ["enter"]
 edit = ["e"]
 
 [keybindings.composer]
-submit = ["ctrl+s", "ctrl+d"]
+submit = ["shift+enter"]
 newline = ["enter"]
 cancel = ["esc"]
 clear = ["ctrl+l"]
+indent = ["tab"]
+outdent = ["backtab"]
 
 [keybindings.search]
 submit = ["enter"]
