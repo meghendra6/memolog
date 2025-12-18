@@ -63,6 +63,17 @@ pub fn parse_markdown_spans(text: &str, theme: &Theme, in_code_block: bool) -> V
         return spans;
     }
 
+    // Carryover marker
+    if content.starts_with("⤴ Carryover from ") {
+        spans.push(Span::styled(
+            content.to_string(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        return spans;
+    }
+
     // TODO checkboxes at line start.
     // Keep display width comparable to the original "- [ ] " / "- [x] " prefix for cleaner wrapping.
     let (content, todo_prefix) = if let Some(stripped) = content.strip_prefix("- [ ] ") {
@@ -198,6 +209,16 @@ fn parse_words(text: &str, theme: &Theme, todo_prefix: bool) -> Vec<Span<'static
     for (i, word) in text.split_whitespace().enumerate() {
         if i > 0 {
             spans.push(Span::raw(" ".to_string()));
+        }
+
+        if word.starts_with('⟦') && word.ends_with('⟧') {
+            spans.push(Span::styled(
+                word.to_string(),
+                Style::default()
+                    .fg(Color::LightCyan)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            continue;
         }
 
         if word.starts_with('#') {

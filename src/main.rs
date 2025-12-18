@@ -152,6 +152,8 @@ fn handle_day_rollover(app: &mut App) {
         return;
     }
 
+    let prev_date = app.active_date.clone();
+
     // Policy: Pomodoro timers are in-memory only. On day change, running timers are reset.
     app.active_date = today;
     app.pomodoro_end = None;
@@ -166,8 +168,36 @@ fn handle_day_rollover(app: &mut App) {
     app.is_search_result = false;
     app.last_search_query = None;
 
+    let mut carried_tasks = 0usize;
+    if !storage::is_carryover_done(&app.config.data.log_path).unwrap_or(false) {
+        if let Ok(blocks) =
+            storage::get_carryover_blocks_for_date(&app.config.data.log_path, &prev_date)
+        {
+            for block in blocks {
+                carried_tasks += block.task_lines.len();
+                let mut content = format!("⤴ Carryover from {}", block.from_date);
+                if let Some(ctx) = block.context.as_deref() {
+                    content.push_str(&format!("\n> {}", ctx));
+                }
+                if !block.task_lines.is_empty() {
+                    content.push('\n');
+                    content.push_str(&block.task_lines.join("\n"));
+                }
+                let _ = storage::append_entry(&app.config.data.log_path, &content);
+            }
+            let _ = storage::mark_carryover_done(&app.config.data.log_path);
+        }
+    }
+
     app.update_logs();
-    app.toast("New day detected: refreshed logs/tasks and reset pomodoro.");
+    if carried_tasks > 0 {
+        app.toast(format!(
+            "New day detected: carried over {} unfinished tasks from {}.",
+            carried_tasks, prev_date
+        ));
+    } else {
+        app.toast("New day detected: refreshed logs/tasks and reset pomodoro.");
+    }
 }
 
 fn handle_key_input(app: &mut App, key: event::KeyEvent) {

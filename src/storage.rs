@@ -20,6 +20,12 @@ fn get_today_file_path(log_path: &Path) -> PathBuf {
     path
 }
 
+fn get_file_path_for_date(log_path: &Path, date: &str) -> PathBuf {
+    let mut path = PathBuf::from(log_path);
+    path.push(format!("{date}.md"));
+    path
+}
+
 pub fn append_entry(log_path: &Path, content: &str) -> io::Result<()> {
     ensure_log_dir(log_path)?;
     let path = get_today_file_path(log_path);
@@ -58,6 +64,94 @@ pub fn read_today_tasks(log_path: &Path) -> io::Result<Vec<TaskItem>> {
     let path_str = path.to_string_lossy().to_string();
     let content = fs::read_to_string(&path)?;
     Ok(parse_task_content(&content, &path_str))
+}
+
+#[derive(Clone)]
+pub struct CarryoverBlock {
+    pub from_date: String,
+    pub context: Option<String>,
+    pub task_lines: Vec<String>,
+}
+
+pub fn get_carryover_blocks_for_date(
+    log_path: &Path,
+    from_date: &str,
+) -> io::Result<Vec<CarryoverBlock>> {
+    ensure_log_dir(log_path)?;
+    let path = get_file_path_for_date(log_path, from_date);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(&path)?;
+    let mut blocks: Vec<CarryoverBlock> = Vec::new();
+
+    let mut current_context: Option<String> = None;
+    let mut current_tasks: Vec<String> = Vec::new();
+    let mut has_started = false;
+
+    for raw_line in content.lines() {
+        if raw_line.contains("System: Carryover Checked") {
+            continue;
+        }
+
+        let is_new_entry = is_timestamped_line(raw_line) || !has_started;
+        if is_new_entry {
+            if !current_tasks.is_empty() {
+                blocks.push(CarryoverBlock {
+                    from_date: from_date.to_string(),
+                    context: current_context.take(),
+                    task_lines: std::mem::take(&mut current_tasks),
+                });
+            } else {
+                current_context = None;
+            }
+            has_started = true;
+        }
+
+        let mut s = raw_line;
+        if is_timestamped_line(s) {
+            // Safe due to timestamp format: "[HH:MM:SS] "
+            s = &s[11..];
+        }
+
+        let trimmed_start = s.trim_start();
+        if current_context.is_none()
+            && !trimmed_start.is_empty()
+            && !trimmed_start.starts_with("- [ ]")
+            && !trimmed_start.starts_with("- [x]")
+            && !trimmed_start.starts_with("- [X]")
+        {
+            current_context = Some(trimmed_start.to_string());
+        }
+
+        let (indent_bytes, indent_spaces) = parse_indent(s);
+        let after_indent = &s[indent_bytes..];
+        if let Some(text) = after_indent.strip_prefix("- [ ] ") {
+            let level = (indent_spaces + 1) / 2;
+            let indent = "  ".repeat(level);
+
+            let (base, tomato_count) = strip_trailing_tomatoes(text);
+            let base = base.trim();
+
+            let mut line = format!("{indent}- [ ] {base} ⟦{from_date}⟧");
+            if tomato_count > 0 {
+                line.push(' ');
+                line.push_str(&"🍅".repeat(tomato_count));
+            }
+            current_tasks.push(line);
+        }
+    }
+
+    if !current_tasks.is_empty() {
+        blocks.push(CarryoverBlock {
+            from_date: from_date.to_string(),
+            context: current_context.take(),
+            task_lines: current_tasks,
+        });
+    }
+
+    Ok(blocks)
 }
 
 pub fn search_entries(log_path: &Path, query: &str) -> io::Result<Vec<LogEntry>> {
