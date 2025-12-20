@@ -58,6 +58,7 @@ pub struct App<'a> {
     pub tag_list_state: ListState,
     pub is_search_result: bool,
     pub should_quit: bool,
+    pub show_discard_popup: bool,
 
     // Pomodoro timer state
     pub pomodoro_start: Option<DateTime<Local>>,
@@ -180,6 +181,7 @@ impl<'a> App<'a> {
             tag_list_state: ListState::default(),
             is_search_result: false,
             should_quit: false,
+            show_discard_popup: false,
             pomodoro_start: None,
             pomodoro_end: None,
             pomodoro_target: None,

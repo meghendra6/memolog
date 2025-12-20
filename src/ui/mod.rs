@@ -20,7 +20,8 @@ pub mod popups;
 use components::{parse_markdown_spans, wrap_markdown_line};
 use popups::{
     render_activity_popup, render_help_popup, render_mood_popup, render_path_popup,
-    render_pomodoro_popup, render_siren_popup, render_tag_popup, render_todo_popup,
+    render_discard_popup, render_pomodoro_popup, render_siren_popup, render_tag_popup,
+    render_todo_popup,
 };
 
 const HELP_NAVIGATE: &str = " ?: Help  h/l: Focus  j/k: Move  Space/Enter: Toggle Task  e: Edit  i: Compose  /: Search  t: Tags  p: Pomodoro  g: Activity  o: Log Dir  Ctrl+Q: Quit ";
@@ -596,6 +597,9 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
     if app.show_help_popup {
         render_help_popup(f, app);
+    }
+    if app.show_discard_popup {
+        render_discard_popup(f, app);
     }
 
     if app.show_pomodoro_popup {

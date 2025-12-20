@@ -365,6 +365,32 @@ pub fn render_help_popup(f: &mut Frame, app: &App) {
     );
 }
 
+pub fn render_discard_popup(f: &mut Frame, _app: &App) {
+    let block = Block::default()
+        .title(" Discard changes? ")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::Yellow));
+    let area = centered_rect(50, 30, f.area());
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let text_area = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .margin(2)
+        .split(area);
+
+    let body = Paragraph::new("You have unsaved text.\nDiscard it and go back?")
+        .style(Style::default().add_modifier(Modifier::BOLD))
+        .wrap(ratatui::widgets::Wrap { trim: true });
+
+    let help_text = Paragraph::new("[y] Discard    [n] Keep editing")
+        .style(Style::default().fg(Color::DarkGray));
+
+    f.render_widget(body, text_area[0]);
+    f.render_widget(help_text, text_area[1]);
+}
+
 pub fn render_pomodoro_popup(f: &mut Frame, app: &App) {
     let block = Block::default()
         .title(" Pomodoro (Task) ")
