@@ -217,6 +217,11 @@ fn handle_popup_events(app: &mut App, key: event::KeyEvent) -> bool {
         return true;
     }
 
+    if app.show_discard_popup {
+        handle_discard_popup(app, key);
+        return true;
+    }
+
     if app.show_pomodoro_popup {
         handle_pomodoro_popup(app, key);
         return true;
@@ -244,6 +249,17 @@ fn handle_popup_events(app: &mut App, key: event::KeyEvent) -> bool {
         return true;
     }
     false
+}
+
+fn handle_discard_popup(app: &mut App, key: event::KeyEvent) {
+    if key_match(&key, &app.config.keybindings.popup.confirm) {
+        app.editing_entry = None;
+        app.textarea = tui_textarea::TextArea::default();
+        app.transition_to(InputMode::Navigate);
+        app.show_discard_popup = false;
+    } else if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
+        app.show_discard_popup = false;
+    }
 }
 
 fn handle_mood_popup(app: &mut App, key: event::KeyEvent) {
@@ -540,9 +556,13 @@ fn handle_search_mode(app: &mut App, key: event::KeyEvent) {
 
 fn handle_editing_mode(app: &mut App, key: event::KeyEvent) {
     if key_match(&key, &app.config.keybindings.composer.cancel) {
-        app.editing_entry = None;
-        app.textarea = tui_textarea::TextArea::default();
-        app.transition_to(InputMode::Navigate);
+        if composer_has_unsaved_input(app) {
+            app.show_discard_popup = true;
+        } else {
+            app.editing_entry = None;
+            app.textarea = tui_textarea::TextArea::default();
+            app.transition_to(InputMode::Navigate);
+        }
     } else if key_match(&key, &app.config.keybindings.composer.clear) {
         app.textarea = tui_textarea::TextArea::default();
         app.transition_to(InputMode::Editing);
@@ -614,6 +634,16 @@ fn handle_editing_mode(app: &mut App, key: event::KeyEvent) {
     } else {
         app.textarea.input(key);
     }
+}
+
+fn composer_has_unsaved_input(app: &App) -> bool {
+    if app.editing_entry.is_some() {
+        return true;
+    }
+    app.textarea
+        .lines()
+        .iter()
+        .any(|line| !line.trim().is_empty())
 }
 
 fn refresh_search_results(app: &mut App, query: &str) {
