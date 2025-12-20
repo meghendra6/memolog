@@ -25,17 +25,15 @@ use models::{InputMode, Mood};
 use tui_textarea::CursorMove;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // 앱 초기화 및 설정 로드
     let mut app = App::new();
 
-    // 터미널 초기화
-    // 터미널 초기화
+    // Initialize terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture,)?;
 
-    // 키보드 향상 플래그는 지원되지 않는 터미널(예: Windows Legacy Console)에서 에러를 뱉을 수 있음.
-    // 에러가 발생해도 앱 실행엔 지장이 없으므로 무시함.
+    // Keyboard enhancement flags may fail on unsupported terminals (e.g., Windows Legacy Console).
+    // Errors are ignored as they don't affect app functionality.
     let _ = execute!(
         stdout,
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
@@ -44,13 +42,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // 앱 실행
     let res = run_app(&mut terminal, &mut app);
 
-    // 터미널 복구
+    // Restore terminal
     disable_raw_mode()?;
-
-    // 종료 시에도 플래그 해제 시도 (실패해도 무방)
     let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
 
     execute!(
@@ -69,15 +64,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
     loop {
-        // 뽀모도로 타이머 및 알림 체크
         check_timers(app);
 
         terminal.draw(|f| ui::ui(f, app))?;
 
-        // 알림 표시 중일 때는 입력을 아예 받지 않음 (강제 휴식/주목)
+        // Block all input during pomodoro completion alert (forces break/attention)
         if app.pomodoro_alert_expiry.is_some() {
             if event::poll(std::time::Duration::from_millis(100))? {
-                let _ = event::read()?; // 이벤트 소모
+                let _ = event::read();
             }
             continue;
         }
@@ -111,7 +105,8 @@ fn check_timers(app: &mut App) {
 
     if let Some(end_time) = app.pomodoro_end {
         if Local::now() >= end_time {
-            app.pomodoro_end = None; // 타이머 종료
+            app.pomodoro_end = None;
+            app.pomodoro_start = None;
 
             if let Some(models::PomodoroTarget::Task {
                 text,
@@ -134,7 +129,7 @@ fn check_timers(app: &mut App) {
 
     if let Some(expiry) = app.pomodoro_alert_expiry {
         if Local::now() >= expiry {
-            app.pomodoro_alert_expiry = None; // 알림 종료
+            app.pomodoro_alert_expiry = None;
             app.pomodoro_alert_message = None;
         }
     }
@@ -158,6 +153,7 @@ fn handle_day_rollover(app: &mut App) {
     // Policy: Pomodoro timers are in-memory only. On day change, running timers are reset.
     app.active_date = today;
     app.pomodoro_end = None;
+    app.pomodoro_start = None;
     app.pomodoro_target = None;
     app.pomodoro_alert_expiry = None;
     app.pomodoro_alert_message = None;
@@ -239,7 +235,7 @@ fn handle_popup_events(app: &mut App, key: event::KeyEvent) -> bool {
         return true;
     }
     if app.show_activity_popup {
-        // 아무 키나 누르면 닫기
+        // Close on any key press
         app.show_activity_popup = false;
         return true;
     }
@@ -622,7 +618,7 @@ fn handle_editing_mode(app: &mut App, key: event::KeyEvent) {
             }
         }
 
-        // 텍스트 영역 초기화
+        // Reset textarea
         app.textarea = tui_textarea::TextArea::default();
         app.transition_to(InputMode::Navigate);
     } else {
@@ -663,6 +659,7 @@ fn open_or_toggle_pomodoro_for_selected_task(app: &mut App) {
             && *line_number == task.line_number
         {
             app.pomodoro_end = None;
+            app.pomodoro_start = None;
             app.pomodoro_target = None;
             app.toast("Pomodoro stopped.");
             return;
@@ -700,7 +697,9 @@ fn handle_pomodoro_popup(app: &mut App, key: event::KeyEvent) {
             .unwrap_or(default_mins)
             .clamp(1, 600);
 
-        app.pomodoro_end = Some(Local::now() + Duration::minutes(mins));
+        let now = Local::now();
+        app.pomodoro_start = Some(now);
+        app.pomodoro_end = Some(now + Duration::minutes(mins));
         app.pomodoro_target = Some(models::PomodoroTarget::Task {
             text: task.text.clone(),
             file_path: task.file_path.clone(),
@@ -891,12 +890,11 @@ fn ordered_list_next_marker(rest: &str) -> Option<(String, &str)> {
 
 fn handle_path_popup(app: &mut App, key: event::KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.confirm) {
-        // 폴더 열기
-        // 절대 경로 변환 시도
+        // Try to open the log directory
         let path_to_open = if let Ok(abs_path) = std::fs::canonicalize(&app.config.data.log_path) {
             abs_path
         } else {
-            // 실패 시 상대 경로라도 시도
+            // Fallback to relative path if canonicalize fails
             std::path::PathBuf::from(&app.config.data.log_path)
         };
 

@@ -59,32 +59,60 @@ pub fn render_activity_popup(f: &mut Frame, app: &App) {
     let block = Block::default()
         .title(" 🌱 Activity Graph (Last 2 Weeks) ")
         .borders(Borders::ALL);
-    let area = centered_rect(60, 40, f.area());
+    let area = centered_rect(70, 50, f.area());
     f.render_widget(Clear, area);
     f.render_widget(block, area);
 
     let today = Local::now().date_naive();
     let mut items = Vec::new();
 
+    // Header row
+    items.push(ListItem::new(Line::from(vec![
+        Span::styled(
+            "Date        Logs  🍅   Activity                    Pomodoros",
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        ),
+    ])));
+    items.push(ListItem::new(Line::from("")));
+
     for i in 0..14 {
         let date = today - chrono::Duration::days(i);
         let date_str = date.format("%Y-%m-%d").to_string();
-        let count = app.activity_data.get(&date_str).cloned().unwrap_or(0);
+        let (line_count, tomato_count) = app.activity_data.get(&date_str).cloned().unwrap_or((0, 0));
 
-        let bar_len = count.min(20); // 최대 20칸
+        // Activity bar (based on log count)
+        let bar_len = line_count.min(20);
         let bar: String = "■".repeat(bar_len);
 
-        let color = if count == 0 {
+        let activity_color = if line_count == 0 {
             Color::DarkGray
-        } else if count < 5 {
+        } else if line_count < 5 {
             Color::Green
-        } else {
+        } else if line_count < 15 {
             Color::LightGreen
+        } else {
+            Color::Yellow
+        };
+
+        // Pomodoro bar (🍅 count)
+        let tomato_bar_len = tomato_count.min(10);
+        let tomato_bar: String = "🍅".repeat(tomato_bar_len);
+        let tomato_extra = if tomato_count > 10 {
+            format!("+{}", tomato_count - 10)
+        } else {
+            String::new()
         };
 
         items.push(ListItem::new(Line::from(vec![
-            Span::raw(format!("{} : {:3} logs ", date_str, count)),
-            Span::styled(bar, Style::default().fg(color)),
+            Span::raw(format!("{} ", date_str)),
+            Span::styled(format!("{:3}", line_count), Style::default().fg(Color::Cyan)),
+            Span::raw("  "),
+            Span::styled(format!("{:2}", tomato_count), Style::default().fg(Color::Red)),
+            Span::raw("   "),
+            Span::styled(format!("{:<20}", bar), Style::default().fg(activity_color)),
+            Span::raw(" "),
+            Span::raw(tomato_bar),
+            Span::styled(tomato_extra, Style::default().fg(Color::Red)),
         ])));
     }
 
@@ -187,11 +215,11 @@ pub fn render_path_popup(f: &mut Frame, app: &App) {
     f.render_widget(Clear, area);
     f.render_widget(block, area);
 
-    // 절대 경로 변환 시도
+    // Try to get absolute path
     let path_str = if let Ok(abs_path) = std::fs::canonicalize(&app.config.data.log_path) {
         abs_path.to_string_lossy().to_string()
     } else {
-        // 절대 경로 변환 실패 시 설정된 값 그대로 사용 (e.g. 경로가 아직 안 만들어졌을 때)
+        // Fallback to configured path if canonicalize fails (e.g., path doesn't exist yet)
         let mut p = std::env::current_dir().unwrap_or_default();
         p.push(&app.config.data.log_path);
         p.to_string_lossy().to_string()

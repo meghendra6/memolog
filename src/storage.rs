@@ -1,5 +1,7 @@
-use crate::models::{LogEntry, TaskItem};
-use chrono::Local;
+use crate::models::{
+    LogEntry, TaskItem, count_trailing_tomatoes, is_timestamped_line, strip_trailing_tomatoes,
+};
+use chrono::{Duration, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -51,6 +53,63 @@ pub fn read_today_entries(log_path: &Path) -> io::Result<Vec<LogEntry>> {
     let content = fs::read_to_string(&path)?;
 
     Ok(parse_log_content(&content, &path_str))
+}
+
+/// Reads log entries for a date range (inclusive).
+/// Returns entries ordered from oldest to newest (ascending by date).
+pub fn read_entries_for_date_range(
+    log_path: &Path,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> io::Result<Vec<LogEntry>> {
+    ensure_log_dir(log_path)?;
+    let mut all_entries = Vec::new();
+
+    let mut current = start_date;
+    while current <= end_date {
+        let date_str = current.format("%Y-%m-%d").to_string();
+        let path = get_file_path_for_date(log_path, &date_str);
+
+        if path.exists() {
+            let path_str = path.to_string_lossy().to_string();
+            if let Ok(content) = fs::read_to_string(&path) {
+                let entries = parse_log_content(&content, &path_str);
+                all_entries.extend(entries);
+            }
+        }
+        current += Duration::days(1);
+    }
+
+    Ok(all_entries)
+}
+
+/// Returns a list of available log dates in the log directory (sorted ascending).
+pub fn get_available_log_dates(log_path: &Path) -> io::Result<Vec<NaiveDate>> {
+    ensure_log_dir(log_path)?;
+    let dir = PathBuf::from(log_path);
+    let mut dates = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if let Ok(date) = NaiveDate::parse_from_str(stem, "%Y-%m-%d") {
+                        dates.push(date);
+                    }
+                }
+            }
+        }
+    }
+
+    dates.sort();
+    Ok(dates)
+}
+
+/// Returns the earliest available log date, if any.
+pub fn get_earliest_log_date(log_path: &Path) -> io::Result<Option<NaiveDate>> {
+    let dates = get_available_log_dates(log_path)?;
+    Ok(dates.first().copied())
 }
 
 pub fn read_today_tasks(log_path: &Path) -> io::Result<Vec<TaskItem>> {
@@ -267,38 +326,10 @@ fn parse_indent(s: &str) -> (usize, usize) {
     (i, spaces)
 }
 
-fn strip_trailing_tomatoes(s: &str) -> (&str, usize) {
-    let mut count = 0;
-    let mut text = s.trim_end();
-    while let Some(rest) = text.strip_suffix('🍅') {
-        count += 1;
-        text = rest.trim_end();
-    }
-    (text, count)
-}
-
-fn is_timestamped_line(line: &str) -> bool {
-    // Format: "[HH:MM:SS] " (11+ chars)
-    let bytes = line.as_bytes();
-    if bytes.len() < 11 {
-        return false;
-    }
-    if bytes[0] != b'[' || bytes[9] != b']' || bytes[10] != b' ' {
-        return false;
-    }
-    bytes[1].is_ascii_digit()
-        && bytes[2].is_ascii_digit()
-        && bytes[3] == b':'
-        && bytes[4].is_ascii_digit()
-        && bytes[5].is_ascii_digit()
-        && bytes[6] == b':'
-        && bytes[7].is_ascii_digit()
-        && bytes[8].is_ascii_digit()
-}
-
+/// Toggles the status of a task checkbox ([ ] <-> [x]) at the given line.
+/// This reads the entire file and rewrites it, which is inefficient for large files
+/// but acceptable for daily memo scale.
 pub fn toggle_task_status(file_path: &str, line_number: usize) -> io::Result<()> {
-    // 파일을 전부 읽어서 해당 라인만 수정 후 다시 저장
-    // 대용량 파일에는 비효율적이나, 일일 메모장 스케일에는 충분함
     let content = fs::read_to_string(file_path)?;
     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
 
@@ -317,7 +348,7 @@ pub fn toggle_task_status(file_path: &str, line_number: usize) -> io::Result<()>
     }
 
     let mut new_content = lines.join("\n");
-    // 파일 끝에 개행 문자가 없으면 추가 (append 시 문제 방지)
+    // Ensure file ends with newline (prevents issues with append operations)
     if !new_content.ends_with('\n') {
         new_content.push('\n');
     }
@@ -390,6 +421,7 @@ pub fn append_tomato_to_line(file_path: &str, line_number: usize) -> io::Result<
     Ok(())
 }
 
+/// Returns pending (uncompleted) todos from the most recent log file before today.
 pub fn get_last_file_pending_todos(log_path: &Path) -> io::Result<Vec<String>> {
     ensure_log_dir(log_path)?;
     let dir = PathBuf::from(log_path);
@@ -400,7 +432,7 @@ pub fn get_last_file_pending_todos(log_path: &Path) -> io::Result<Vec<String>> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("md") {
-                // 오늘 파일은 제외 (지난 일만 가져오기 위함)
+                // Exclude today's file (only look at past days)
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     if stem != today {
                         file_paths.push(path);
@@ -408,16 +440,16 @@ pub fn get_last_file_pending_todos(log_path: &Path) -> io::Result<Vec<String>> {
                 }
             }
         }
-        // 날짜순 정렬
+        // Sort by date
         file_paths.sort();
 
-        // 가장 최신(마지막) 파일 하나만 확인
+        // Check only the most recent (last) file
         if let Some(last_path) = file_paths.last() {
             let mut todos = Vec::new();
             if let Ok(content) = fs::read_to_string(last_path) {
                 for line in content.lines() {
                     if line.contains("- [ ]") {
-                        // 타임스탬프 "[HH:MM:SS] " 제거
+                        // Strip timestamp "[HH:MM:SS] " prefix
                         let clean_line = if line.trim_start().starts_with('[') {
                             if let Some(idx) = line.find("] ") {
                                 &line[idx + 2..]
@@ -437,6 +469,7 @@ pub fn get_last_file_pending_todos(log_path: &Path) -> io::Result<Vec<String>> {
     Ok(Vec::new())
 }
 
+/// Returns all tags found in log files with their occurrence counts, sorted by frequency.
 pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
     use std::collections::HashMap;
 
@@ -462,7 +495,7 @@ pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
     }
 
     let mut tags: Vec<(String, usize)> = tag_counts.into_iter().collect();
-    // 많이 쓰인 순서대로 정렬 (내림차순)
+    // Sort by frequency (descending)
     tags.sort_by(|a, b| b.1.cmp(&a.1));
 
     Ok(tags)
@@ -480,7 +513,11 @@ pub fn mark_carryover_done(log_path: &Path) -> io::Result<()> {
     save_state(log_path, &state)
 }
 
-pub fn get_activity_stats(log_path: &Path) -> io::Result<std::collections::HashMap<String, usize>> {
+/// Returns activity statistics for each date: (line_count, tomato_count).
+/// Tomato count excludes carryover tasks (marked with ⟦date⟧).
+pub fn get_activity_stats(
+    log_path: &Path,
+) -> io::Result<std::collections::HashMap<String, (usize, usize)>> {
     use std::collections::HashMap;
 
     ensure_log_dir(log_path)?;
@@ -492,16 +529,38 @@ pub fn get_activity_stats(log_path: &Path) -> io::Result<std::collections::HashM
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("md") {
                 if let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
-                    // 파일명(YYYY-MM-DD)을 키로 사용
                     if let Ok(content) = fs::read_to_string(&path) {
-                        // 빈 줄이나 시스템 마커 제외하고 카운트
-                        let count = content
-                            .lines()
-                            .filter(|l| {
-                                !l.trim().is_empty() && !l.contains("System: Carryover Checked")
-                            })
-                            .count();
-                        stats.insert(filename.to_string(), count);
+                        let mut line_count = 0usize;
+                        let mut tomato_count = 0usize;
+
+                        for line in content.lines() {
+                            if line.trim().is_empty() || line.contains("System: Carryover Checked")
+                            {
+                                continue;
+                            }
+                            line_count += 1;
+
+                            // Count tomatoes (only from non-carryover tasks)
+                            let s = if is_timestamped_line(line) && line.len() >= 11 {
+                                &line[11..]
+                            } else {
+                                line
+                            };
+                            let s = s.trim_start();
+
+                            if let Some(text) = s
+                                .strip_prefix("- [ ] ")
+                                .or_else(|| s.strip_prefix("- [x] "))
+                                .or_else(|| s.strip_prefix("- [X] "))
+                            {
+                                // Only count tomatoes if not a carryover task
+                                if !text.contains("⟦") {
+                                    tomato_count += count_trailing_tomatoes(text);
+                                }
+                            }
+                        }
+
+                        stats.insert(filename.to_string(), (line_count, tomato_count));
                     }
                 }
             }

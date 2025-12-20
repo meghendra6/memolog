@@ -1,7 +1,10 @@
 use crate::config::Config;
-use crate::models::{InputMode, LogEntry, NavigateFocus, PomodoroTarget, TaskItem};
+use crate::models::{
+    InputMode, LogEntry, NavigateFocus, PomodoroTarget, TaskItem, count_trailing_tomatoes,
+    is_timestamped_line,
+};
 use crate::storage;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Duration, Local, NaiveDate};
 use ratatui::widgets::ListState;
 use std::collections::HashMap;
 use tui_textarea::CursorMove;
@@ -10,6 +13,9 @@ use tui_textarea::TextArea;
 const PLACEHOLDER_COMPOSE: &str = "Compose…";
 const PLACEHOLDER_NAVIGATE: &str = "Navigate (press ? for help)…";
 const PLACEHOLDER_SEARCH: &str = "Search…";
+
+/// Default number of days to load initially (including today)
+const INITIAL_LOAD_DAYS: i64 = 7;
 
 #[derive(Clone)]
 pub struct EditingEntry {
@@ -38,37 +44,41 @@ pub struct App<'a> {
     pub last_search_query: Option<String>,
     pub show_mood_popup: bool,
     pub mood_list_state: ListState,
-    pub show_todo_popup: bool, // 할 일 요약 팝업
+    pub show_todo_popup: bool,
     pub pending_todos: Vec<String>,
     pub todo_list_state: ListState,
     pub show_help_popup: bool,
     pub show_tag_popup: bool,
-    pub tags: Vec<(String, usize)>, // (태그명, 횟수)
+    pub tags: Vec<(String, usize)>,
     pub tag_list_state: ListState,
     pub is_search_result: bool,
     pub should_quit: bool,
 
-    // 로컬 파워 기능
+    // Pomodoro timer state
+    pub pomodoro_start: Option<DateTime<Local>>,
     pub pomodoro_end: Option<DateTime<Local>>,
     pub pomodoro_target: Option<PomodoroTarget>,
     pub show_activity_popup: bool,
-    pub activity_data: HashMap<String, usize>, // "YYYY-MM-DD" -> line_count
+    pub activity_data: HashMap<String, (usize, usize)>, // "YYYY-MM-DD" -> (line_count, tomato_count)
     pub show_path_popup: bool,
 
     pub show_pomodoro_popup: bool,
     pub pomodoro_minutes_input: String,
     pub pomodoro_pending_task: Option<TaskItem>,
 
-    // 뽀모도로 종료 알림 (이 시간까지 알림 표시 & 입력 차단)
-    // 뽀모도로 종료 알림 (이 시간까지 알림 표시 & 입력 차단)
+    // Pomodoro completion alert (blocks input until expiry)
     pub pomodoro_alert_expiry: Option<DateTime<Local>>,
     pub pomodoro_alert_message: Option<String>,
 
     pub toast_message: Option<String>,
     pub toast_expiry: Option<DateTime<Local>>,
 
-    // 설정 (안내 문구 등)
-    // 설정 (안내 문구 등)
+    // History loading state for infinite scroll
+    pub loaded_start_date: Option<NaiveDate>,
+    pub earliest_available_date: Option<NaiveDate>,
+    pub is_loading_more: bool,
+
+    // Configuration
     pub config: Config,
 }
 
@@ -76,13 +86,24 @@ impl<'a> App<'a> {
     pub fn new() -> App<'a> {
         let config = Config::load();
 
-        let active_date = Local::now().format("%Y-%m-%d").to_string();
+        let today = Local::now().date_naive();
+        let active_date = today.format("%Y-%m-%d").to_string();
 
         let mut textarea = TextArea::default();
         textarea.set_placeholder_text(PLACEHOLDER_COMPOSE);
 
+        // Load logs from the past week (or earliest available)
+        let start_date = today - Duration::days(INITIAL_LOAD_DAYS - 1);
+        let earliest_available_date =
+            storage::get_earliest_log_date(&config.data.log_path).unwrap_or(None);
+        let effective_start = earliest_available_date
+            .map(|e| e.max(start_date))
+            .unwrap_or(start_date);
+
         let logs =
-            storage::read_today_entries(&config.data.log_path).unwrap_or_else(|_| Vec::new());
+            storage::read_entries_for_date_range(&config.data.log_path, effective_start, today)
+                .unwrap_or_else(|_| Vec::new());
+
         let mut logs_state = ListState::default();
         if !logs.is_empty() {
             logs_state.select(Some(logs.len() - 1));
@@ -94,8 +115,10 @@ impl<'a> App<'a> {
             tasks_state.select(Some(0));
         }
 
-        // 이미 기분 로그가 있는지 확인
-        let has_mood = logs.iter().any(|log| log.content.contains("Mood: "));
+        // Check if mood has already been logged today
+        let today_logs =
+            storage::read_today_entries(&config.data.log_path).unwrap_or_else(|_| Vec::new());
+        let has_mood = today_logs.iter().any(|log| log.content.contains("Mood: "));
         let show_mood_popup = !has_mood;
 
         let mut mood_list_state = ListState::default();
@@ -107,9 +130,7 @@ impl<'a> App<'a> {
         let mut pending_todos = Vec::new();
 
         if !show_mood_popup {
-            // 기분 팝업이 안 뜨는 경우(이미 기분 입력함)에도 체크할지,
-            // 아니면 그냥 뜰 때만 체크할지는 정책 나름이지만, 일단 시작 시 체크
-            // 단, 오늘 이미 체크했으면 다시 묻지 않음
+            // Check for unfinished tasks from previous day to carry over
             let already_checked =
                 storage::is_carryover_done(&config.data.log_path).unwrap_or(false);
             if !already_checked {
@@ -124,7 +145,8 @@ impl<'a> App<'a> {
 
         let input_mode = InputMode::Editing;
 
-        let (today_done_tasks, today_tomatoes) = compute_today_task_stats(&logs);
+        // Calculate today's stats from today's logs only
+        let (today_done_tasks, today_tomatoes) = compute_today_task_stats(&today_logs);
 
         App {
             input_mode,
@@ -152,6 +174,7 @@ impl<'a> App<'a> {
             tag_list_state: ListState::default(),
             is_search_result: false,
             should_quit: false,
+            pomodoro_start: None,
             pomodoro_end: None,
             pomodoro_target: None,
             show_activity_popup: false,
@@ -164,6 +187,9 @@ impl<'a> App<'a> {
             pomodoro_alert_message: None,
             toast_message: None,
             toast_expiry: None,
+            loaded_start_date: Some(effective_start),
+            earliest_available_date,
+            is_loading_more: false,
             config,
         }
     }
@@ -192,12 +218,40 @@ impl<'a> App<'a> {
         self.transition_to(InputMode::Editing);
     }
 
+    /// Reloads logs for the currently loaded date range, updates tasks, and recalculates stats.
     pub fn update_logs(&mut self) {
-        if let Ok(logs) = storage::read_today_entries(&self.config.data.log_path) {
-            self.logs = logs;
-            self.is_search_result = false;
-            if !self.logs.is_empty() {
-                self.logs_state.select(Some(self.logs.len() - 1));
+        let today = Local::now().date_naive();
+        let preserve_selection = self.logs_state.selected();
+
+        // Reload logs for the current date range
+        if let Some(start) = self.loaded_start_date {
+            if let Ok(logs) =
+                storage::read_entries_for_date_range(&self.config.data.log_path, start, today)
+            {
+                self.logs = logs;
+                self.is_search_result = false;
+                if !self.logs.is_empty() {
+                    // Try to preserve the previous selection position
+                    let new_selection = preserve_selection
+                        .and_then(|i| {
+                            if i < self.logs.len() {
+                                Some(i)
+                            } else {
+                                Some(self.logs.len() - 1)
+                            }
+                        })
+                        .or(Some(self.logs.len() - 1));
+                    self.logs_state.select(new_selection);
+                }
+            }
+        } else {
+            // Fallback to today's entries only
+            if let Ok(logs) = storage::read_today_entries(&self.config.data.log_path) {
+                self.logs = logs;
+                self.is_search_result = false;
+                if !self.logs.is_empty() {
+                    self.logs_state.select(Some(self.logs.len() - 1));
+                }
             }
         }
 
@@ -212,25 +266,90 @@ impl<'a> App<'a> {
             }
         }
 
-        let (done, tomatoes) = compute_today_task_stats(&self.logs);
+        // Calculate stats from today's logs only
+        let today_logs =
+            storage::read_today_entries(&self.config.data.log_path).unwrap_or_default();
+        let (done, tomatoes) = compute_today_task_stats(&today_logs);
         self.today_done_tasks = done;
         self.today_tomatoes = tomatoes;
     }
 
+    /// Loads more historical entries when scrolling to the top.
+    /// Loads one additional week at a time.
+    pub fn load_more_history(&mut self) {
+        if self.is_loading_more || self.is_search_result {
+            return;
+        }
+
+        let current_start = match self.loaded_start_date {
+            Some(d) => d,
+            None => return,
+        };
+
+        // Check if there's more history to load
+        let earliest = match self.earliest_available_date {
+            Some(d) => d,
+            None => return,
+        };
+
+        if current_start <= earliest {
+            return; // Already loaded all available history
+        }
+
+        self.is_loading_more = true;
+        self.toast("⏳ Loading more history...");
+
+        // Load 2 days at a time for smoother scrolling experience
+        let new_start = (current_start - Duration::days(2)).max(earliest);
+        let end_before_current = current_start - Duration::days(1);
+
+        if let Ok(older_logs) = storage::read_entries_for_date_range(
+            &self.config.data.log_path,
+            new_start,
+            end_before_current,
+        ) {
+            if !older_logs.is_empty() {
+                // Prepend older logs to existing logs
+                let old_len = older_logs.len();
+
+                let mut new_logs = older_logs;
+                new_logs.extend(std::mem::take(&mut self.logs));
+                self.logs = new_logs;
+
+                // Keep cursor at what was the first item (now at old_len)
+                // This creates a natural "scroll up" feeling as user can immediately see
+                // the item they were about to reach, and can continue scrolling up
+                self.logs_state.select(Some(old_len));
+
+                self.loaded_start_date = Some(new_start);
+                self.toast(format!("✓ Loaded {} more entries", old_len));
+            } else {
+                self.toast("No more history to load");
+            }
+        } else {
+            self.toast("Failed to load history");
+        }
+
+        self.is_loading_more = false;
+    }
+
     pub fn toast(&mut self, message: impl Into<String>) {
         self.toast_message = Some(message.into());
-        self.toast_expiry = Some(Local::now() + chrono::Duration::seconds(2));
+        self.toast_expiry = Some(Local::now() + Duration::seconds(2));
     }
 
     pub fn scroll_up(&mut self) {
-        if self.logs.is_empty() {
+        if self.logs.is_empty() || self.is_loading_more {
             return;
         }
 
         let i = match self.logs_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    0
+                    // At the top - try to load more history
+                    self.load_more_history();
+                    // Don't change selection here - load_more_history already set it
+                    return;
                 } else {
                     i - 1
                 }
@@ -313,10 +432,9 @@ impl<'a> App<'a> {
     }
 
     pub fn transition_to(&mut self, mode: InputMode) {
-        // Mode specific entry logic
         match mode {
             InputMode::Navigate => {
-                // Search 모드에서 돌아올 때는 입력창 내용을(검색어) 비워야 함
+                // Clear textarea when returning from Search mode
                 if self.input_mode == InputMode::Search {
                     self.textarea = TextArea::default();
                 }
@@ -330,7 +448,7 @@ impl<'a> App<'a> {
                 self.navigate_focus = NavigateFocus::Timeline;
                 self.textarea_viewport_row = 0;
                 self.textarea_viewport_col = 0;
-                // 검색 결과 화면에서 "Compose"로 들어갈 때만 전체 로그로 복귀 (엔트리 편집은 유지)
+                // Return to full log view when entering Compose from search results (unless editing an entry)
                 if self.is_search_result && self.editing_entry.is_none() {
                     self.update_logs();
                     self.last_search_query = None;
@@ -339,7 +457,7 @@ impl<'a> App<'a> {
                 self.textarea.move_cursor(CursorMove::End);
             }
             InputMode::Search => {
-                self.textarea = TextArea::default(); // 검색어 입력 위해 초기화
+                self.textarea = TextArea::default();
                 self.textarea.set_placeholder_text(PLACEHOLDER_SEARCH);
                 self.textarea_viewport_row = 0;
                 self.textarea_viewport_col = 0;
@@ -359,6 +477,9 @@ fn split_timestamp_prefix(line: &str) -> (String, String) {
     }
 }
 
+/// Computes (done_count, tomato_count) for today's tasks.
+/// Excludes tomatoes from carryover tasks (marked with ⟦date⟧) to ensure
+/// the tomato count resets daily.
 fn compute_today_task_stats(logs: &[LogEntry]) -> (usize, usize) {
     let mut done = 0usize;
     let mut tomatoes = 0usize;
@@ -367,13 +488,20 @@ fn compute_today_task_stats(logs: &[LogEntry]) -> (usize, usize) {
         for line in entry.content.lines() {
             let mut s = line;
             if is_timestamped_line(s) {
-                // Safe due to timestamp format: "[HH:MM:SS] "
                 s = &s[11..];
             }
             let s = s.trim_start();
 
+            // Skip carryover header lines
+            if s.starts_with("⤴ Carryover from ") {
+                continue;
+            }
+
             if let Some(text) = s.strip_prefix("- [ ] ") {
-                tomatoes += count_trailing_tomatoes(text);
+                // Carryover tasks have ⟦date⟧ marker - exclude their pre-existing tomatoes
+                if !is_carryover_task(text) {
+                    tomatoes += count_trailing_tomatoes(text);
+                }
                 continue;
             }
 
@@ -382,7 +510,10 @@ fn compute_today_task_stats(logs: &[LogEntry]) -> (usize, usize) {
                 .or_else(|| s.strip_prefix("- [X] "))
             {
                 done += 1;
-                tomatoes += count_trailing_tomatoes(text);
+                // Only count tomatoes if not a carryover task
+                if !is_carryover_task(text) {
+                    tomatoes += count_trailing_tomatoes(text);
+                }
             }
         }
     }
@@ -390,31 +521,7 @@ fn compute_today_task_stats(logs: &[LogEntry]) -> (usize, usize) {
     (done, tomatoes)
 }
 
-fn count_trailing_tomatoes(s: &str) -> usize {
-    let mut count = 0usize;
-    let mut text = s.trim_end();
-    while let Some(rest) = text.strip_suffix('🍅') {
-        count += 1;
-        text = rest.trim_end();
-    }
-    count
-}
-
-fn is_timestamped_line(line: &str) -> bool {
-    // Format: "[HH:MM:SS] " (11+ chars)
-    let bytes = line.as_bytes();
-    if bytes.len() < 11 {
-        return false;
-    }
-    if bytes[0] != b'[' || bytes[9] != b']' || bytes[10] != b' ' {
-        return false;
-    }
-    bytes[1].is_ascii_digit()
-        && bytes[2].is_ascii_digit()
-        && bytes[3] == b':'
-        && bytes[4].is_ascii_digit()
-        && bytes[5].is_ascii_digit()
-        && bytes[6] == b':'
-        && bytes[7].is_ascii_digit()
-        && bytes[8].is_ascii_digit()
+/// Checks if a task line contains a carryover date marker (⟦YYYY-MM-DD⟧)
+fn is_carryover_task(text: &str) -> bool {
+    text.contains("⟦") && text.contains("⟧")
 }

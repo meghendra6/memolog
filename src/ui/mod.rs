@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::models::{InputMode, NavigateFocus};
+use crate::models::{InputMode, NavigateFocus, is_timestamped_line};
 use crate::ui::color_parser::parse_color;
 use ratatui::style::Stylize;
 use std::path::Path;
@@ -44,103 +44,139 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         ])
         .split(f.area());
 
-    // 상단 영역을 좌우로 분할 (로그 70%, 할 일 목록 30%)
+    // Split top area: 70% logs, 30% tasks
     let top_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
         .split(chunks[0]);
 
-    // 상단 로그 뷰
-    let list_area_width = top_chunks[0].width.saturating_sub(4) as usize; // 테두리 및 여유 공간
+    // Timeline log view
+    let list_area_width = top_chunks[0].width.saturating_sub(4) as usize;
     let timestamp_width: usize = 11; // "[HH:MM:SS] "
     let blank_timestamp = " ".repeat(timestamp_width);
     let timestamp_color = parse_color(&app.config.theme.timestamp);
 
-    let list_items: Vec<ListItem> = app
-        .logs
-        .iter()
-        .map(|entry| {
-            let mut lines: Vec<Line<'static>> = Vec::new();
-            let mut in_code_block = false;
+    // Track current date for separator rendering and maintain index mapping
+    let mut last_date: Option<String> = None;
+    let mut items_with_separators: Vec<ListItem> = Vec::new();
+    let mut ui_to_log_index: Vec<Option<usize>> = Vec::new(); // Maps UI index to actual log index
 
-            let date_prefix = if app.is_search_result {
-                file_date(&entry.file_path)
-            } else {
-                None
-            };
-            let date_width: usize = if date_prefix.is_some() { 11 } else { 0 }; // "YYYY-MM-DD "
-            let blank_date = " ".repeat(date_width);
+    for (log_idx, entry) in app.logs.iter().enumerate() {
+        let entry_date = file_date(&entry.file_path);
 
-            let entry_has_timestamp = entry
-                .content
-                .lines()
-                .next()
-                .is_some_and(|l| is_timestamped_line(l));
-            let content_width = if entry_has_timestamp {
-                list_area_width
-                    .saturating_sub(date_width)
-                    .saturating_sub(timestamp_width)
-            } else {
-                list_area_width.saturating_sub(date_width)
-            };
-
-            for (line_idx, raw_line) in entry.content.lines().enumerate() {
-                let (ts_prefix, content_line) = if entry_has_timestamp && line_idx == 0 {
-                    // Safe due to timestamp format: "[HH:MM:SS] "
-                    (&raw_line[..timestamp_width], &raw_line[timestamp_width..])
-                } else {
-                    ("", raw_line)
-                };
-
-                let is_fence = content_line.trim_start().starts_with("```");
-                let line_in_code_block = in_code_block || is_fence;
-
-                let wrapped = wrap_markdown_line(content_line, content_width);
-                for (wrap_idx, wline) in wrapped.iter().enumerate() {
-                    let mut spans = Vec::new();
-
-                    if date_width > 0 {
-                        let date_span = if line_idx == 0 && wrap_idx == 0 {
-                            let date = date_prefix.clone().unwrap_or_default();
-                            Span::styled(
-                                format!("{date} "),
-                                Style::default()
-                                    .fg(Color::DarkGray)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                        } else {
-                            Span::raw(blank_date.clone())
-                        };
-                        spans.push(date_span);
-                    }
-
-                    if entry_has_timestamp {
-                        let ts_span = if line_idx == 0 && wrap_idx == 0 {
-                            Span::styled(
-                                ts_prefix.to_string(),
-                                Style::default().fg(timestamp_color),
-                            )
-                        } else {
-                            Span::raw(blank_timestamp.clone())
-                        };
-                        spans.push(ts_span);
-                    }
-
-                    spans.extend(parse_markdown_spans(
-                        wline,
-                        &app.config.theme,
-                        line_in_code_block,
-                    ));
-                    lines.push(Line::from(spans));
-                }
-
-                if is_fence {
-                    in_code_block = !in_code_block;
+        // Insert date separator if date changed (only for non-search view)
+        if !app.is_search_result {
+            if let Some(ref current_date) = entry_date {
+                if last_date.as_ref() != Some(current_date) {
+                    let separator_line = Line::from(vec![
+                        Span::styled(
+                            "─".repeat(list_area_width.saturating_sub(current_date.len() + 2)),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        Span::styled(
+                            format!(" {} ", current_date),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]);
+                    items_with_separators.push(ListItem::new(separator_line));
+                    ui_to_log_index.push(None); // Separator has no corresponding log entry
+                    last_date = Some(current_date.clone());
                 }
             }
-            ListItem::new(Text::from(lines))
-        })
-        .collect();
+        }
+
+        // Render the actual entry
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let mut in_code_block = false;
+
+        let date_prefix = if app.is_search_result {
+            file_date(&entry.file_path)
+        } else {
+            None
+        };
+        let date_width: usize = if date_prefix.is_some() { 11 } else { 0 }; // "YYYY-MM-DD "
+        let blank_date = " ".repeat(date_width);
+
+        let entry_has_timestamp = entry
+            .content
+            .lines()
+            .next()
+            .is_some_and(|l| is_timestamped_line(l));
+        let content_width = if entry_has_timestamp {
+            list_area_width
+                .saturating_sub(date_width)
+                .saturating_sub(timestamp_width)
+        } else {
+            list_area_width.saturating_sub(date_width)
+        };
+
+        for (line_idx, raw_line) in entry.content.lines().enumerate() {
+            let (ts_prefix, content_line) = if entry_has_timestamp && line_idx == 0 {
+                // Safe due to timestamp format: "[HH:MM:SS] "
+                (&raw_line[..timestamp_width], &raw_line[timestamp_width..])
+            } else {
+                ("", raw_line)
+            };
+
+            let is_fence = content_line.trim_start().starts_with("```");
+            let line_in_code_block = in_code_block || is_fence;
+
+            let wrapped = wrap_markdown_line(content_line, content_width);
+            for (wrap_idx, wline) in wrapped.iter().enumerate() {
+                let mut spans = Vec::new();
+
+                if date_width > 0 {
+                    let date_span = if line_idx == 0 && wrap_idx == 0 {
+                        let date = date_prefix.clone().unwrap_or_default();
+                        Span::styled(
+                            format!("{date} "),
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Span::raw(blank_date.clone())
+                    };
+                    spans.push(date_span);
+                }
+
+                if entry_has_timestamp {
+                    let ts_span = if line_idx == 0 && wrap_idx == 0 {
+                        Span::styled(ts_prefix.to_string(), Style::default().fg(timestamp_color))
+                    } else {
+                        Span::raw(blank_timestamp.clone())
+                    };
+                    spans.push(ts_span);
+                }
+
+                spans.extend(parse_markdown_spans(
+                    wline,
+                    &app.config.theme,
+                    line_in_code_block,
+                ));
+                lines.push(Line::from(spans));
+            }
+
+            if is_fence {
+                in_code_block = !in_code_block;
+            }
+        }
+        items_with_separators.push(ListItem::new(Text::from(lines)));
+        ui_to_log_index.push(Some(log_idx)); // This UI item corresponds to log_idx
+    }
+
+    let list_items = items_with_separators;
+
+    // Convert selected log index to UI index for rendering
+    let ui_selected_index = if let Some(selected_log_idx) = app.logs_state.selected() {
+        ui_to_log_index
+            .iter()
+            .position(|&log_idx| log_idx == Some(selected_log_idx))
+    } else {
+        None
+    };
 
     let is_timeline_focused =
         app.input_mode == InputMode::Navigate && app.navigate_focus == NavigateFocus::Timeline;
@@ -150,10 +186,46 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     let focus_mark_timeline = if is_timeline_focused { "▶" } else { " " };
     let focus_mark_tasks = if is_tasks_focused { "▶" } else { " " };
 
+    // Collect status information (used in both search and normal mode)
+    let focus_info = if let Some(selected_idx) = app.logs_state.selected() {
+        if let Some(entry) = app.logs.get(selected_idx) {
+            let date = file_date(&entry.file_path).unwrap_or_else(|| "N/A".to_string());
+            let time_info = entry
+                .content
+                .lines()
+                .next()
+                .and_then(|line| {
+                    if is_timestamped_line(line) {
+                        Some(&line[1..9]) // Extract HH:MM:SS
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("--:--:--");
+            format!("📅 {} {}", date, time_info)
+        } else {
+            "📅 N/A".to_string()
+        }
+    } else {
+        "📅 N/A".to_string()
+    };
+
+    let task_summary = if app.tasks.is_empty() {
+        "Tasks 0".to_string()
+    } else {
+        format!("Tasks {} ({}✓)", app.tasks.len(), app.today_done_tasks)
+    };
+
+    let stats_summary = format!(
+        "{} · {} · 🍅 {}",
+        focus_info, task_summary, app.today_tomatoes
+    );
+
     let title = if app.is_search_result {
         format!(
-            " 🔍 Search Results: {} found (Esc to reset) ",
-            app.logs.len()
+            " 🔍 Search: {} found · {} (Esc to reset) ",
+            app.logs.len(),
+            stats_summary
         )
     } else {
         let time = Local::now().format("%Y-%m-%d %H:%M");
@@ -161,17 +233,43 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             let now = Local::now();
             if now < end_time {
                 let remaining = end_time - now;
+                let total_secs = remaining.num_seconds();
+                let mins = remaining.num_minutes();
+                let secs = total_secs % 60;
+
                 let target = match app.pomodoro_target.as_ref() {
                     Some(crate::models::PomodoroTarget::Task { text, .. }) => {
-                        format!(" · {}", truncate(text, 24))
+                        format!(" {}", truncate(text, 20))
                     }
                     _ => "".to_string(),
                 };
+
+                // Progress bar: calculate based on actual duration
+                let elapsed_ratio = if let Some(start) = app.pomodoro_start {
+                    let total_duration = (end_time - start).num_seconds() as f32;
+                    let elapsed = (now - start).num_seconds() as f32;
+                    (elapsed / total_duration).min(1.0)
+                } else {
+                    // Fallback if start time not tracked
+                    0.0
+                };
+                let bar_width = 10;
+                let filled = (elapsed_ratio * bar_width as f32) as usize;
+                let empty = bar_width - filled;
+                let progress_bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
+
+                // Color indicator based on remaining time
+                let urgency = if mins < 1 {
+                    "🔴"
+                } else if mins < 5 {
+                    "🟡"
+                } else {
+                    "🟢"
+                };
+
                 format!(
-                    " [🍅 {:02}:{:02}{}]",
-                    remaining.num_minutes(),
-                    remaining.num_seconds() % 60,
-                    target
+                    " [{} 🍅 {:02}:{:02} {}{}]",
+                    urgency, mins, secs, progress_bar, target
                 )
             } else {
                 "".to_string()
@@ -180,18 +278,12 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             "".to_string()
         };
 
-        let summary = format!(
-            "Entries {} · Open {} · Done {} · 🍅 {}",
-            app.logs.len(),
-            app.tasks.len(),
-            app.today_done_tasks,
-            app.today_tomatoes
-        );
+        let summary = format!("Entries {} · {}", app.logs.len(), stats_summary);
 
         format!(" {focus_mark_timeline} SONOMEMO · {time} · {summary}{pomodoro} ")
     };
 
-    // 모드에 따른 메인 테두리 색상 결정
+    // Border color based on current mode
     let main_border_color = match app.input_mode {
         InputMode::Navigate => parse_color(&app.config.theme.border_default),
         InputMode::Editing => parse_color(&app.config.theme.border_editing),
@@ -226,13 +318,16 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
     let logs_list = List::new(list_items)
         .block(logs_block)
-        .highlight_symbol("▶ ") // 조금 더 멋진 화살표
-        .highlight_style(logs_highlight_style); // 배경색 하이라이트
+        .highlight_symbol("▶ ")
+        .highlight_style(logs_highlight_style);
 
-    f.render_stateful_widget(logs_list, top_chunks[0], &mut app.logs_state);
+    // Create a temporary state with UI index for rendering
+    let mut ui_logs_state = ratatui::widgets::ListState::default();
+    ui_logs_state.select(ui_selected_index);
+    f.render_stateful_widget(logs_list, top_chunks[0], &mut ui_logs_state);
 
-    // 오른쪽 할 일 목록 뷰 (오늘의 할 일만 필터링)
-    let todo_area_width = top_chunks[1].width.saturating_sub(2) as usize; // 테두리 제외
+    // Right panel: Today's tasks
+    let todo_area_width = top_chunks[1].width.saturating_sub(2) as usize;
 
     let todos: Vec<ListItem> = app
         .tasks
@@ -243,7 +338,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             line.push_str("- [ ] ");
             line.push_str(&task.text);
 
-            if let (
+            let is_active_pomodoro = if let (
                 Some(end_time),
                 Some(crate::models::PomodoroTarget::Task {
                     file_path,
@@ -256,22 +351,56 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                     let now = Local::now();
                     if now < end_time {
                         let remaining = end_time - now;
-                        line.push_str(&format!(
-                            " ⏱ {:02}:{:02}",
-                            remaining.num_minutes(),
-                            remaining.num_seconds() % 60
-                        ));
-                    }
-                }
-            }
+                        let mins = remaining.num_minutes();
+                        let secs = remaining.num_seconds() % 60;
 
-            if task.tomato_count > 0 {
+                        // Urgency indicator
+                        let urgency = if mins < 1 {
+                            "🔴"
+                        } else if mins < 5 {
+                            "🟡"
+                        } else {
+                            "🟢"
+                        };
+
+                        // Progress bar for the task: calculate based on actual duration
+                        let elapsed_ratio = if let Some(start) = app.pomodoro_start {
+                            let total_duration = (end_time - start).num_seconds() as f32;
+                            let elapsed = (now - start).num_seconds() as f32;
+                            (elapsed / total_duration).min(1.0)
+                        } else {
+                            0.0
+                        };
+                        let bar_width = 8;
+                        let filled = (elapsed_ratio * bar_width as f32) as usize;
+                        let empty = bar_width - filled;
+                        let progress = format!("{}{}", "▓".repeat(filled), "░".repeat(empty));
+
+                        line.push_str(&format!(
+                            " {} {:02}:{:02} {}",
+                            urgency, mins, secs, progress
+                        ));
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if task.tomato_count > 0 && !is_active_pomodoro {
                 if task.tomato_count <= 3 {
                     line.push(' ');
                     line.push_str(&"🍅".repeat(task.tomato_count));
                 } else {
                     line.push_str(&format!(" 🍅×{}", task.tomato_count));
                 }
+            } else if task.tomato_count > 0 && is_active_pomodoro {
+                // Show tomato count after timer for active task
+                line.push_str(&format!(" (🍅{})", task.tomato_count));
             }
 
             let wrapped = wrap_markdown_line(&line, todo_area_width);
@@ -325,7 +454,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         .highlight_style(todo_highlight_style);
     f.render_stateful_widget(todo_list, top_chunks[1], &mut app.tasks_state);
 
-    // 하단 영역: Navigate는 Status 패널, Editing/Search는 TextArea
+    // Bottom area: Status panel in Navigate mode, TextArea in Editing/Search
     match app.input_mode {
         InputMode::Navigate => {
             let border_color = parse_color(&app.config.theme.border_default);
@@ -399,7 +528,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         }
     }
 
-    // 커서 위치 수동 설정 (한글 IME 지원을 위해 필수)
+    // Manual cursor position setting (required for Korean/CJK IME support)
     if app.input_mode == crate::models::InputMode::Editing
         || app.input_mode == crate::models::InputMode::Search
     {
@@ -430,7 +559,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         }
     }
 
-    // 하단 도움말 푸터 (toast 우선)
+    // Footer help text (toast message takes priority)
     let help_text = if let Some(msg) = app.toast_message.as_deref() {
         msg
     } else {
@@ -449,7 +578,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     .block(Block::default().borders(Borders::NONE));
     f.render_widget(footer, chunks[2]);
 
-    // 팝업 렌더링 (순서 중요: 나중에 렌더링된 것이 위에 뜸)
+    // Render popups (order matters: later ones appear on top)
     if app.show_activity_popup {
         render_activity_popup(f, app);
     }
@@ -511,25 +640,6 @@ fn next_scroll_top(prev_top: u16, cursor: u16, len: u16) -> u16 {
     } else {
         prev_top
     }
-}
-
-fn is_timestamped_line(line: &str) -> bool {
-    // Format: "[HH:MM:SS] " (11+ chars)
-    let bytes = line.as_bytes();
-    if bytes.len() < 11 {
-        return false;
-    }
-    if bytes[0] != b'[' || bytes[9] != b']' || bytes[10] != b' ' {
-        return false;
-    }
-    bytes[1].is_ascii_digit()
-        && bytes[2].is_ascii_digit()
-        && bytes[3] == b':'
-        && bytes[4].is_ascii_digit()
-        && bytes[5].is_ascii_digit()
-        && bytes[6] == b':'
-        && bytes[7].is_ascii_digit()
-        && bytes[8].is_ascii_digit()
 }
 
 fn file_date(file_path: &str) -> Option<String> {
