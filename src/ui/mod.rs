@@ -26,6 +26,9 @@ use popups::{
     render_todo_popup,
 };
 
+const COMPOSE_HEADER: &str =
+    "Compose (INSERT) — Shift+Enter: Save · Esc: Back · Tab/Shift+Tab: Indent";
+
 pub fn ui(f: &mut Frame, app: &mut App) {
     let tokens = theme::ThemeTokens::from_theme(&app.config.theme);
     let (main_area, search_area, status_area) = match app.input_mode {
@@ -61,22 +64,12 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
             .split(main_area);
 
-        let timeline_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(top_chunks[0]);
-        let tasks_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(top_chunks[1]);
-
-        let timeline_header_area = timeline_chunks[0];
-        let timeline_body_area = timeline_chunks[1];
-        let tasks_header_area = tasks_chunks[0];
-        let tasks_body_area = tasks_chunks[1];
+        let timeline_area = top_chunks[0];
+        let tasks_area = top_chunks[1];
+        let timeline_inner = Block::default().borders(Borders::ALL).inner(timeline_area);
 
         // Timeline log view
-        let list_area_width = timeline_body_area.width.saturating_sub(1).max(1) as usize;
+        let list_area_width = timeline_inner.width.saturating_sub(1).max(1) as usize;
         let timestamp_width: usize = 11; // "[HH:MM:SS] "
         let blank_timestamp = " ".repeat(timestamp_width);
         let timestamp_color = tokens.content_timestamp;
@@ -106,7 +99,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             .bg(tokens.ui_highlight)
             .add_modifier(Modifier::BOLD);
         let visible_start = app.timeline_ui_state.offset();
-        let visible_end = visible_start.saturating_add(timeline_body_area.height as usize);
+        let visible_end = visible_start.saturating_add(timeline_inner.height as usize);
 
     // Track current date for separator rendering and maintain index mapping
     let mut last_date: Option<String> = None;
@@ -327,12 +320,6 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         String::new()
     };
 
-    let title_label = if app.is_search_result {
-        "Search"
-    } else {
-        "Timeline"
-    };
-
     let summary = if app.is_search_result {
         let mut parts = Vec::new();
         parts.push(format!("{} results", app.logs.len()));
@@ -354,28 +341,32 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         format!("{base}{pomodoro}")
     };
 
-    let title_style = if is_timeline_focused {
+    let title_label = if app.is_search_result {
+        "SEARCH"
+    } else {
+        "TIMELINE"
+    };
+    let timeline_title_text = format!("{title_label} — {summary}");
+    let timeline_title = truncate(
+        &timeline_title_text,
+        timeline_area.width.saturating_sub(4) as usize,
+    );
+    let timeline_border_color = if is_timeline_focused {
+        tokens.ui_accent
+    } else {
+        tokens.ui_border_default
+    };
+    let timeline_title_style = if is_timeline_focused {
         Style::default()
             .fg(tokens.ui_accent)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(tokens.ui_muted)
     };
-    let dot_style = if is_timeline_focused {
-        Style::default().fg(tokens.ui_accent)
-    } else {
-        Style::default().fg(tokens.ui_muted)
-    };
-
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled("•", dot_style),
-        Span::raw(" "),
-        Span::styled(title_label, title_style),
-        Span::raw("  "),
-        Span::styled(summary, Style::default().fg(tokens.ui_muted)),
-    ]))
-    .style(Style::default().fg(tokens.ui_fg));
-    f.render_widget(header, timeline_header_area);
+    let timeline_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(timeline_border_color))
+        .title(Line::from(Span::styled(timeline_title, timeline_title_style)));
 
     let highlight_bg = tokens.ui_selection_bg;
     let logs_highlight_style = if is_timeline_focused {
@@ -387,15 +378,17 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     };
 
     let logs_list = List::new(list_items)
+        .block(timeline_block)
         .highlight_symbol("")
         .highlight_style(logs_highlight_style);
 
     // Persist list offset across frames to avoid "cursor pinned" scroll behavior.
     app.timeline_ui_state.select(ui_selected_index);
-    f.render_stateful_widget(logs_list, timeline_body_area, &mut app.timeline_ui_state);
+    f.render_stateful_widget(logs_list, timeline_area, &mut app.timeline_ui_state);
 
     // Right panel: Today's tasks
-    let todo_area_width = tasks_body_area.width.saturating_sub(1).max(1) as usize;
+    let tasks_inner = Block::default().borders(Borders::ALL).inner(tasks_area);
+    let todo_area_width = tasks_inner.width.saturating_sub(1).max(1) as usize;
 
     let todos: Vec<ListItem> = app
         .tasks
@@ -494,7 +487,16 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         app.today_done_tasks,
         app.today_tomatoes
     );
-
+    let tasks_title_text = format!("TASKS — {tasks_summary}");
+    let tasks_title = truncate(
+        &tasks_title_text,
+        tasks_area.width.saturating_sub(4) as usize,
+    );
+    let tasks_border_color = if is_tasks_focused {
+        tokens.ui_accent
+    } else {
+        tokens.ui_border_default
+    };
     let tasks_title_style = if is_tasks_focused {
         Style::default()
             .fg(tokens.ui_accent)
@@ -502,21 +504,10 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     } else {
         Style::default().fg(tokens.ui_muted)
     };
-    let tasks_dot_style = if is_tasks_focused {
-        Style::default().fg(tokens.ui_accent)
-    } else {
-        Style::default().fg(tokens.ui_muted)
-    };
-
-    let tasks_header = Paragraph::new(Line::from(vec![
-        Span::styled("•", tasks_dot_style),
-        Span::raw(" "),
-        Span::styled("Tasks", tasks_title_style),
-        Span::raw("  "),
-        Span::styled(tasks_summary, Style::default().fg(tokens.ui_muted)),
-    ]))
-    .style(Style::default().fg(tokens.ui_fg));
-    f.render_widget(tasks_header, tasks_header_area);
+    let tasks_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tasks_border_color))
+        .title(Line::from(Span::styled(tasks_title, tasks_title_style)));
 
     let highlight_bg = tokens.ui_selection_bg;
     let todo_highlight_style = if is_tasks_focused {
@@ -528,15 +519,36 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     };
 
     let todo_list = List::new(todos)
+        .block(tasks_block)
         .highlight_symbol("")
         .highlight_style(todo_highlight_style);
-    f.render_stateful_widget(todo_list, tasks_body_area, &mut app.tasks_state);
+    f.render_stateful_widget(todo_list, tasks_area, &mut app.tasks_state);
     }
 
     match app.input_mode {
         InputMode::Editing => {
+            let compose_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(1)])
+                .split(main_area);
+            let header_area = compose_chunks[0];
+            let editor_host = compose_chunks[1];
+
             let editor_width = app.config.editor.column_width;
-            let editor_area = centered_column(main_area, editor_width);
+            let header_column = centered_column(header_area, editor_width);
+            let header_text = truncate(
+                COMPOSE_HEADER,
+                header_column.width.saturating_sub(1) as usize,
+            );
+            let header = Paragraph::new(Line::from(Span::styled(
+                header_text,
+                Style::default()
+                    .fg(tokens.ui_accent)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            f.render_widget(header, header_column);
+
+            let editor_area = centered_column(editor_host, editor_width);
             let input_block = Block::default().borders(Borders::NONE);
             let input_inner = input_block.inner(editor_area);
             app.textarea.set_block(input_block);
@@ -544,6 +556,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 .set_cursor_line_style(Style::default().bg(tokens.ui_cursorline_bg));
             app.textarea
                 .set_selection_style(Style::default().bg(tokens.ui_selection_bg));
+            app.textarea
+                .set_placeholder_style(Style::default().fg(tokens.ui_muted));
             app.textarea.set_cursor_style(Style::default().reversed());
             f.render_widget(&app.textarea, editor_area);
             cursor_area = Some(input_inner);
@@ -684,7 +698,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
             NavigateFocus::Timeline => "NAV:TL",
             NavigateFocus::Tasks => "NAV:TS",
         },
-        InputMode::Editing => "EDIT",
+        InputMode::Editing => "COMPOSE/INSERT",
         InputMode::Search => "SEARCH",
     };
 
