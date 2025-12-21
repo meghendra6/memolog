@@ -2,6 +2,7 @@ use super::components::centered_rect;
 use crate::app::App;
 use crate::models::Mood;
 use crate::ui::color_parser::parse_color;
+use crate::ui::theme::ThemeTokens;
 use chrono::Local;
 use ratatui::{
     Frame,
@@ -257,10 +258,11 @@ pub fn render_path_popup(f: &mut Frame, app: &App) {
 }
 
 pub fn render_help_popup(f: &mut Frame, app: &App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
     let block = Block::default()
         .title(" Help ")
         .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(tokens.ui_border_default));
     let area = centered_rect(80, 80, f.area());
     f.render_widget(Clear, area);
     f.render_widget(block, area);
@@ -271,96 +273,82 @@ pub fn render_help_popup(f: &mut Frame, app: &App) {
         (
             "Global",
             vec![
-                ("?", fmt_keys(&kb.global.help), "Help"),
-                ("h", fmt_keys(&kb.global.focus_timeline), "Focus Timeline"),
-                ("l", fmt_keys(&kb.global.focus_tasks), "Focus Tasks"),
-                ("i", fmt_keys(&kb.global.focus_composer), "Compose"),
-                ("/", fmt_keys(&kb.global.search), "Search"),
-                ("t", fmt_keys(&kb.global.tags), "Tags"),
-                ("p", fmt_keys(&kb.global.pomodoro), "Pomodoro (Task)"),
-                ("g", fmt_keys(&kb.global.activity), "Activity"),
-                ("o", fmt_keys(&kb.global.log_dir), "Log Directory"),
-                ("q", fmt_keys(&kb.global.quit), "Quit"),
+                ("Help", fmt_keys(&kb.global.help)),
+                ("Focus timeline", fmt_keys(&kb.global.focus_timeline)),
+                ("Focus tasks", fmt_keys(&kb.global.focus_tasks)),
+                ("Compose", fmt_keys(&kb.global.focus_composer)),
+                ("Search", fmt_keys(&kb.global.search)),
+                ("Tags", fmt_keys(&kb.global.tags)),
+                ("Pomodoro", fmt_keys(&kb.global.pomodoro)),
+                ("Activity", fmt_keys(&kb.global.activity)),
+                ("Log dir", fmt_keys(&kb.global.log_dir)),
+                ("Quit", fmt_keys(&kb.global.quit)),
             ],
         ),
         (
             "Timeline",
             vec![
-                ("Move", fmt_keys(&kb.timeline.up), "Up"),
-                ("", fmt_keys(&kb.timeline.down), "Down"),
-                ("Edit", fmt_keys(&kb.timeline.edit), "Edit selected entry"),
-                (
-                    "Toggle",
-                    fmt_keys(&kb.timeline.toggle_todo),
-                    "Toggle checkbox",
-                ),
+                ("Up", fmt_keys(&kb.timeline.up)),
+                ("Down", fmt_keys(&kb.timeline.down)),
+                ("Page up", fmt_keys(&kb.timeline.page_up)),
+                ("Page down", fmt_keys(&kb.timeline.page_down)),
+                ("Top", fmt_keys(&kb.timeline.top)),
+                ("Bottom", fmt_keys(&kb.timeline.bottom)),
+                ("Edit", fmt_keys(&kb.timeline.edit)),
+                ("Toggle checkbox", fmt_keys(&kb.timeline.toggle_todo)),
             ],
         ),
         (
             "Tasks",
             vec![
-                ("Move", fmt_keys(&kb.tasks.up), "Up"),
-                ("", fmt_keys(&kb.tasks.down), "Down"),
-                ("Toggle", fmt_keys(&kb.tasks.toggle), "Toggle task"),
-                (
-                    "Pomodoro",
-                    fmt_keys(&kb.tasks.start_pomodoro),
-                    "Start/stop (selected)",
-                ),
-                ("Edit", fmt_keys(&kb.tasks.edit), "Edit original entry"),
+                ("Up", fmt_keys(&kb.tasks.up)),
+                ("Down", fmt_keys(&kb.tasks.down)),
+                ("Toggle", fmt_keys(&kb.tasks.toggle)),
+                ("Pomodoro", fmt_keys(&kb.tasks.start_pomodoro)),
+                ("Edit", fmt_keys(&kb.tasks.edit)),
             ],
         ),
         (
             "Composer",
             vec![
-                ("Save", fmt_keys(&kb.composer.submit), "Save"),
-                ("New line", fmt_keys(&kb.composer.newline), "Insert newline"),
-                (
-                    "Indent",
-                    fmt_keys(&kb.composer.indent),
-                    "Increase list level",
-                ),
-                (
-                    "Outdent",
-                    fmt_keys(&kb.composer.outdent),
-                    "Decrease list level",
-                ),
-                ("Clear", fmt_keys(&kb.composer.clear), "Clear buffer"),
-                ("Back", fmt_keys(&kb.composer.cancel), "Back"),
+                ("Save", fmt_keys(&kb.composer.submit)),
+                ("New line", fmt_keys(&kb.composer.newline)),
+                ("Indent", fmt_keys(&kb.composer.indent)),
+                ("Outdent", fmt_keys(&kb.composer.outdent)),
+                ("Clear", fmt_keys(&kb.composer.clear)),
+                ("Back", fmt_keys(&kb.composer.cancel)),
             ],
         ),
         (
             "Search",
             vec![
-                ("Apply", fmt_keys(&kb.search.submit), "Apply search"),
-                ("Clear", fmt_keys(&kb.search.clear), "Clear query"),
-                ("Cancel", fmt_keys(&kb.search.cancel), "Cancel"),
+                ("Apply", fmt_keys(&kb.search.submit)),
+                ("Clear", fmt_keys(&kb.search.clear)),
+                ("Cancel", fmt_keys(&kb.search.cancel)),
             ],
         ),
     ];
 
+    let header_style = Style::default()
+        .fg(tokens.ui_accent)
+        .add_modifier(Modifier::BOLD);
+    let key_style = Style::default()
+        .fg(tokens.ui_accent)
+        .add_modifier(Modifier::BOLD);
+    let label_style = Style::default().fg(tokens.ui_fg);
+    let muted_style = Style::default().fg(tokens.ui_muted);
+
     let mut items: Vec<ListItem> = Vec::new();
     for (section, entries) in rows {
-        items.push(ListItem::new(Line::from(vec![Span::styled(
-            format!("{section}"),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        )])));
-        for (label, keys, desc) in entries {
-            let label = if label.is_empty() { "" } else { &label };
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("•", header_style),
+            Span::raw(" "),
+            Span::styled(section, header_style),
+        ])));
+        for (label, keys) in entries {
             items.push(ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("{:<10}", label),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled(
-                    format!("{:<18}", keys),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(desc.to_string()),
+                Span::styled(format!("{:<18}", keys), key_style),
+                Span::styled(label, label_style),
             ])));
         }
         items.push(ListItem::new(Line::from("")));
@@ -374,7 +362,7 @@ pub fn render_help_popup(f: &mut Frame, app: &App) {
 
     f.render_widget(List::new(items), inner_area[0]);
     f.render_widget(
-        Paragraph::new("Press Esc / ? to close").style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new("Esc / ?: close").style(muted_style),
         inner_area[1],
     );
 }
