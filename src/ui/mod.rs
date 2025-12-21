@@ -26,9 +26,6 @@ use popups::{
     render_todo_popup,
 };
 
-const COMPOSE_HEADER: &str =
-    "Compose (INSERT) — Shift+Enter: Save · Esc: Back · Tab/Shift+Tab: Indent";
-
 pub fn ui(f: &mut Frame, app: &mut App) {
     let tokens = theme::ThemeTokens::from_theme(&app.config.theme);
     let (main_area, search_area, status_area) = match app.input_mode {
@@ -527,28 +524,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
     match app.input_mode {
         InputMode::Editing => {
-            let compose_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(1), Constraint::Min(1)])
-                .split(main_area);
-            let header_area = compose_chunks[0];
-            let editor_host = compose_chunks[1];
-
             let editor_width = app.config.editor.column_width;
-            let header_column = centered_column(header_area, editor_width);
-            let header_text = truncate(
-                COMPOSE_HEADER,
-                header_column.width.saturating_sub(1) as usize,
-            );
-            let header = Paragraph::new(Line::from(Span::styled(
-                header_text,
-                Style::default()
-                    .fg(tokens.ui_accent)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            f.render_widget(header, header_column);
-
-            let editor_area = centered_column(editor_host, editor_width);
+            let editor_area = centered_column(main_area, editor_width);
             let input_block = Block::default().borders(Borders::NONE);
             let input_inner = input_block.inner(editor_area);
             app.textarea.set_block(input_block);
@@ -557,7 +534,11 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             app.textarea
                 .set_selection_style(Style::default().bg(tokens.ui_selection_bg));
             app.textarea
-                .set_placeholder_style(Style::default().fg(tokens.ui_muted));
+                .set_placeholder_style(
+                    Style::default()
+                        .fg(tokens.ui_muted)
+                        .add_modifier(Modifier::DIM),
+                );
             app.textarea.set_cursor_style(Style::default().reversed());
             f.render_widget(&app.textarea, editor_area);
             cursor_area = Some(input_inner);
@@ -698,7 +679,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
             NavigateFocus::Timeline => "NAV:TL",
             NavigateFocus::Tasks => "NAV:TS",
         },
-        InputMode::Editing => "COMPOSE/INSERT",
+        InputMode::Editing => "[Compose]",
         InputMode::Search => "SEARCH",
     };
 
@@ -782,6 +763,27 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
 }
 
 fn status_file_label(app: &App) -> String {
+    if app.input_mode == InputMode::Navigate {
+        let selected_path = match app.navigate_focus {
+            NavigateFocus::Timeline => app
+                .logs_state
+                .selected()
+                .and_then(|i| app.logs.get(i))
+                .map(|entry| entry.file_path.as_str()),
+            NavigateFocus::Tasks => app
+                .tasks_state
+                .selected()
+                .and_then(|i| app.tasks.get(i))
+                .map(|task| task.file_path.as_str()),
+        };
+
+        if let Some(path) = selected_path {
+            if let Some(name) = Path::new(path).file_name().and_then(|s| s.to_str()) {
+                return name.to_string();
+            }
+        }
+    }
+
     if let Some(editing) = app.editing_entry.as_ref() {
         if let Some(name) = Path::new(&editing.file_path)
             .file_name()
