@@ -11,7 +11,7 @@ use std::path::Path;
 use tui_textarea::CursorMove;
 use tui_textarea::TextArea;
 
-const PLACEHOLDER_COMPOSE: &str = "Start typing… (Shift+Enter: Save)";
+const PLACEHOLDER_COMPOSE: &str = "Write your note here… (Shift+Enter to save, Esc to go back)";
 const PLACEHOLDER_NAVIGATE: &str = "Navigate (press ? for help)…";
 const PLACEHOLDER_SEARCH: &str = "Search…";
 
@@ -152,7 +152,7 @@ impl<'a> App<'a> {
             }
         }
 
-        let input_mode = InputMode::Editing;
+        let input_mode = InputMode::Navigate;
 
         // Calculate today's stats from today's logs only
         let (today_done_tasks, today_tomatoes) = compute_today_task_stats(&today_logs);
