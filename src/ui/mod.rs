@@ -89,14 +89,13 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         };
 
         let mut search_regex: Option<Regex> = None;
-        if app.is_search_result && highlight_ready {
-            if let Some(query) = app.search_highlight_query.as_deref() {
+        if app.is_search_result && highlight_ready
+            && let Some(query) = app.search_highlight_query.as_deref() {
                 let query = query.trim();
                 if !query.is_empty() {
                     search_regex = Regex::new(&format!("(?i){}", regex::escape(query))).ok();
                 }
             }
-        }
 
         let search_style = Style::default()
             .bg(tokens.ui_highlight)
@@ -118,9 +117,9 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             let entry_date = file_date(&entry.file_path);
 
             // Insert date separator if date changed (only for non-search view)
-            if !app.is_search_result {
-                if let Some(ref current_date) = entry_date {
-                    if last_date.as_ref() != Some(current_date) {
+            if !app.is_search_result
+                && let Some(ref current_date) = entry_date
+                    && last_date.as_ref() != Some(current_date) {
                         let separator_line = Line::from(vec![
                             Span::styled(
                                 "─".repeat(list_area_width.saturating_sub(current_date.len() + 2)),
@@ -138,8 +137,6 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                         last_date = Some(current_date.clone());
                         ui_index += 1;
                     }
-                }
-            }
 
             // Render the actual entry
             let mut lines: Vec<Line<'static>> = Vec::new();
@@ -154,7 +151,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             let blank_date = " ".repeat(date_width);
 
             let first_line = entry.content.lines().next();
-            let entry_has_timestamp = first_line.is_some_and(|l| is_timestamped_line(l));
+            let entry_has_timestamp = first_line.is_some_and(is_timestamped_line);
             let heading_timestamp_prefix = first_line
                 .and_then(|l| {
                     if is_heading_timestamp_line(l) {
@@ -392,16 +389,14 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         let summary = if app.is_search_result {
             let mut parts = Vec::new();
             parts.push(format!("{} results", app.logs.len()));
-            if let Some(query) = app.last_search_query.as_deref() {
-                if !query.trim().is_empty() {
+            if let Some(query) = app.last_search_query.as_deref()
+                && !query.trim().is_empty() {
                     parts.push(format!("\"{}\"", query.trim()));
                 }
-            }
-            if let Some(selected) = app.logs_state.selected() {
-                if !app.logs.is_empty() {
+            if let Some(selected) = app.logs_state.selected()
+                && !app.logs.is_empty() {
                     parts.push(format!("Sel {}/{}", selected + 1, app.logs.len()));
                 }
-            }
             parts.push(stats_summary.clone());
             parts.join(" · ")
         } else {
@@ -649,7 +644,9 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
             let show_line_numbers = app.config.ui.line_numbers;
             let prefix_width = compose_prefix_width(show_line_numbers) as usize;
-            let content_width = (input_inner.width as usize).saturating_sub(prefix_width).max(1);
+            let content_width = (input_inner.width as usize)
+                .saturating_sub(prefix_width)
+                .max(1);
 
             let lines = app.textarea.lines();
             let is_empty = lines.iter().all(|line| line.trim().is_empty());
@@ -675,14 +672,16 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                     if is_cursor_line {
                         // Calculate cursor position within wrapped lines
                         cursor_visual_row = visual_lines.len();
-                        let (wrap_row, wrap_col) = find_cursor_in_wrapped_lines(&wrapped, cursor_col);
+                        let (wrap_row, wrap_col) =
+                            find_cursor_in_wrapped_lines(&wrapped, cursor_col);
                         cursor_visual_row += wrap_row;
                         cursor_visual_col = wrap_col;
                     }
 
                     for (wrap_idx, wline) in wrapped.iter().enumerate() {
                         let is_first_wrap = wrap_idx == 0;
-                        let is_cursor_wrap = is_cursor_line && (visual_lines.len() + wrap_idx == cursor_visual_row);
+                        let is_cursor_wrap =
+                            is_cursor_line && (visual_lines.len() + wrap_idx == cursor_visual_row);
                         visual_lines.push(compose_wrapped_line(
                             wline,
                             &tokens,
@@ -770,11 +769,13 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     }
 
     // Manual cursor position setting (required for Korean/CJK IME support)
-    if let Some(inner) = cursor_area {
-        if inner.height > 0 && inner.width > 0 {
+    if let Some(inner) = cursor_area
+        && inner.height > 0 && inner.width > 0 {
             let (cursor_row, cursor_col) = app.textarea.cursor();
             let prefix_width = compose_prefix_width(app.config.ui.line_numbers);
-            let content_width = (inner.width as usize).saturating_sub(prefix_width as usize).max(1);
+            let content_width = (inner.width as usize)
+                .saturating_sub(prefix_width as usize)
+                .max(1);
 
             // Calculate visual row considering line wrapping
             let lines = app.textarea.lines();
@@ -785,7 +786,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 let wrapped = wrap_line_for_editor(line, content_width);
 
                 if idx == cursor_row {
-                    let (wrap_offset, wrap_col) = find_cursor_in_wrapped_lines(&wrapped, cursor_col);
+                    let (wrap_offset, wrap_col) =
+                        find_cursor_in_wrapped_lines(&wrapped, cursor_col);
                     visual_row += wrap_offset;
                     cursor_visual_col = wrap_col;
                     break;
@@ -804,7 +806,6 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
             f.set_cursor_position((inner.x + col_in_view, inner.y + row_in_view));
         }
-    }
 
     render_status_bar(f, status_area, app, &tokens);
 
@@ -865,40 +866,6 @@ fn truncate(text: &str, max_chars: usize) -> String {
 
 const LINE_NUMBER_WIDTH: usize = 3;
 const LINE_MARKER: &str = "| ";
-
-fn compose_render_line(
-    line: &str,
-    tokens: &theme::ThemeTokens,
-    is_cursor: bool,
-    line_number: usize,
-    show_line_numbers: bool,
-) -> Line<'static> {
-    let (indent_level, indent, rest) = split_indent(line);
-    let mut spans: Vec<Span<'static>> =
-        compose_prefix_spans(line_number, tokens, show_line_numbers);
-
-    if !indent.is_empty() {
-        spans.push(Span::raw(indent.to_string()));
-    }
-
-    if let Some((bullet, tail)) = replace_list_bullet(rest, indent_level) {
-        spans.push(Span::styled(
-            format!("{bullet} "),
-            Style::default()
-                .fg(tokens.ui_accent)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw(tail.to_string()));
-    } else {
-        spans.push(Span::raw(rest.to_string()));
-    }
-
-    let mut rendered = Line::from(spans);
-    if is_cursor {
-        rendered.style = Style::default().bg(tokens.ui_cursorline_bg);
-    }
-    rendered
-}
 
 /// Wrap a logical line into multiple visual lines based on display width.
 /// Returns a vector of string slices representing each visual line.
@@ -1086,7 +1053,7 @@ fn split_indent(line: &str) -> (usize, &str, &str) {
     (spaces / 2, indent, rest)
 }
 
-fn replace_list_bullet<'a>(rest: &'a str, indent_level: usize) -> Option<(char, &'a str)> {
+fn replace_list_bullet(rest: &str, indent_level: usize) -> Option<(char, &str)> {
     if rest.starts_with("- ") || rest.starts_with("* ") || rest.starts_with("+ ") {
         return Some((bullet_for_level(indent_level), &rest[2..]));
     }
@@ -1152,8 +1119,8 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         ));
     }
 
-    if let Some(toast) = app.toast_message.as_deref() {
-        if !toast.is_empty() {
+    if let Some(toast) = app.toast_message.as_deref()
+        && !toast.is_empty() {
             if !right_plain.is_empty() {
                 right_plain.push_str("  ");
                 right_spans.push(Span::raw("  "));
@@ -1166,7 +1133,6 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
                     .add_modifier(Modifier::BOLD),
             ));
         }
-    }
 
     let min_left_width = 10u16;
     let mut right_width = UnicodeWidthStr::width(right_plain.as_str()) as u16;
@@ -1210,21 +1176,19 @@ fn status_file_label(app: &App) -> String {
                 .map(|task| task.file_path.as_str()),
         };
 
-        if let Some(path) = selected_path {
-            if let Some(name) = Path::new(path).file_name().and_then(|s| s.to_str()) {
+        if let Some(path) = selected_path
+            && let Some(name) = Path::new(path).file_name().and_then(|s| s.to_str()) {
                 return name.to_string();
             }
-        }
     }
 
-    if let Some(editing) = app.editing_entry.as_ref() {
-        if let Some(name) = Path::new(&editing.file_path)
+    if let Some(editing) = app.editing_entry.as_ref()
+        && let Some(name) = Path::new(&editing.file_path)
             .file_name()
             .and_then(|s| s.to_str())
         {
             return name.to_string();
         }
-    }
 
     if app.is_search_result || app.input_mode == InputMode::Search {
         return "Search Results".to_string();
@@ -1253,7 +1217,7 @@ fn file_date(file_path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::compose_prefix_width;
-    use super::compose_render_line;
+    use super::compose_wrapped_line;
     use crate::config::Theme;
     use crate::ui::theme::ThemeTokens;
 
@@ -1268,27 +1232,27 @@ mod tests {
     fn renders_bullets_with_indentation_levels() {
         let tokens = ThemeTokens::from_theme(&Theme::default());
 
-        let top = compose_render_line("* item1", &tokens, false, 0, false);
+        let top = compose_wrapped_line("* item1", &tokens, false, 0, false, true);
         assert_eq!(line_to_string(&top), "| • item1");
 
-        let nested = compose_render_line("  * sub1", &tokens, false, 1, false);
+        let nested = compose_wrapped_line("  * sub1", &tokens, false, 1, false, true);
         assert_eq!(line_to_string(&nested), "|   ◦ sub1");
 
-        let deep = compose_render_line("    - sub2", &tokens, false, 2, false);
+        let deep = compose_wrapped_line("    - sub2", &tokens, false, 2, false, true);
         assert_eq!(line_to_string(&deep), "|     ▪ sub2");
     }
 
     #[test]
     fn preserves_non_list_lines_verbatim() {
         let tokens = ThemeTokens::from_theme(&Theme::default());
-        let line = compose_render_line("plain text", &tokens, false, 0, false);
+        let line = compose_wrapped_line("plain text", &tokens, false, 0, false, true);
         assert_eq!(line_to_string(&line), "| plain text");
     }
 
     #[test]
     fn renders_line_numbers_in_gutter() {
         let tokens = ThemeTokens::from_theme(&Theme::default());
-        let line = compose_render_line("plain text", &tokens, false, 9, true);
+        let line = compose_wrapped_line("plain text", &tokens, false, 9, true, true);
         assert_eq!(line_to_string(&line), " 10 | plain text");
     }
 
