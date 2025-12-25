@@ -1,8 +1,7 @@
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
-        KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-        PushKeyboardEnhancementFlags,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -19,7 +18,7 @@ mod models;
 mod storage;
 mod ui;
 
-use crate::config::{config_path, key_match, ThemePreset};
+use crate::config::{ThemePreset, config_path, key_match};
 use crate::models::split_timestamp_line;
 use app::{App, PendingEditCommand};
 use chrono::{Duration, Local};
@@ -90,9 +89,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
             }
 
             if let Event::Key(key) = event
-                && key.kind == KeyEventKind::Press {
-                    handle_key_input(app, key);
-                }
+                && key.kind == KeyEventKind::Press
+            {
+                handle_key_input(app, key);
+            }
         }
 
         if app.should_quit {
@@ -105,44 +105,48 @@ fn check_timers(app: &mut App) {
     handle_day_rollover(app);
 
     if let Some(end_time) = app.pomodoro_end
-        && Local::now() >= end_time {
-            app.pomodoro_end = None;
-            app.pomodoro_start = None;
+        && Local::now() >= end_time
+    {
+        app.pomodoro_end = None;
+        app.pomodoro_start = None;
 
-            if let Some(models::PomodoroTarget::Task {
-                text,
-                file_path,
-                line_number,
-            }) = app.pomodoro_target.take()
-            {
-                let _ = storage::append_tomato_to_line(&file_path, line_number);
-                app.update_logs();
-                app.pomodoro_alert_message =
-                    Some(format!("Pomodoro complete: 🍅 added to \"{}\".", text));
-            } else {
-                app.pomodoro_alert_message = Some("Pomodoro complete.".to_string());
-            }
-
-            let alert_seconds = app.config.pomodoro.alert_seconds.max(1) as i64;
-            app.pomodoro_alert_expiry = Some(Local::now() + Duration::seconds(alert_seconds));
+        if let Some(models::PomodoroTarget::Task {
+            text,
+            file_path,
+            line_number,
+        }) = app.pomodoro_target.take()
+        {
+            let _ = storage::append_tomato_to_line(&file_path, line_number);
+            app.update_logs();
+            app.pomodoro_alert_message =
+                Some(format!("Pomodoro complete: 🍅 added to \"{}\".", text));
+        } else {
+            app.pomodoro_alert_message = Some("Pomodoro complete.".to_string());
         }
+
+        let alert_seconds = app.config.pomodoro.alert_seconds.max(1) as i64;
+        app.pomodoro_alert_expiry = Some(Local::now() + Duration::seconds(alert_seconds));
+    }
 
     if let Some(expiry) = app.pomodoro_alert_expiry
-        && Local::now() >= expiry {
-            app.pomodoro_alert_expiry = None;
-            app.pomodoro_alert_message = None;
-        }
+        && Local::now() >= expiry
+    {
+        app.pomodoro_alert_expiry = None;
+        app.pomodoro_alert_message = None;
+    }
 
     if let Some(expiry) = app.toast_expiry
-        && Local::now() >= expiry {
-            app.toast_expiry = None;
-            app.toast_message = None;
-        }
+        && Local::now() >= expiry
+    {
+        app.toast_expiry = None;
+        app.toast_message = None;
+    }
 
     if let Some(expiry) = app.visual_hint_expiry
-        && Local::now() >= expiry {
-            app.clear_visual_hint();
-        }
+        && Local::now() >= expiry
+    {
+        app.clear_visual_hint();
+    }
 }
 
 fn handle_day_rollover(app: &mut App) {
@@ -170,13 +174,13 @@ fn handle_day_rollover(app: &mut App) {
     if !storage::is_carryover_done(&app.config.data.log_path).unwrap_or(false)
         && let Ok(tasks) =
             storage::collect_carryover_tasks(&app.config.data.log_path, &app.active_date)
-        {
-            for task in &tasks {
-                let _ = storage::append_entry(&app.config.data.log_path, task);
-            }
-            carried_tasks = tasks.len();
-            let _ = storage::mark_carryover_done(&app.config.data.log_path);
+    {
+        for task in &tasks {
+            let _ = storage::append_entry(&app.config.data.log_path, task);
         }
+        carried_tasks = tasks.len();
+        let _ = storage::mark_carryover_done(&app.config.data.log_path);
+    }
 
     app.update_logs();
     if carried_tasks > 0 {
@@ -390,17 +394,18 @@ fn handle_tag_popup(app: &mut App, key: event::KeyEvent) {
         app.tag_list_state.select(Some(i));
     } else if key_match(&key, &app.config.keybindings.popup.confirm) {
         if let Some(i) = app.tag_list_state.selected()
-            && i < app.tags.len() {
-                let query = app.tags[i].0.clone();
-                if let Ok(results) = storage::search_entries(&app.config.data.log_path, &query) {
-                    app.logs = results;
-                    app.is_search_result = true;
-                    app.last_search_query = Some(query);
-                    app.search_highlight_query = app.last_search_query.clone();
-                    app.search_highlight_ready_at = Some(Local::now() + Duration::milliseconds(150));
-                    app.logs_state.select(Some(0));
-                }
+            && i < app.tags.len()
+        {
+            let query = app.tags[i].0.clone();
+            if let Ok(results) = storage::search_entries(&app.config.data.log_path, &query) {
+                app.logs = results;
+                app.is_search_result = true;
+                app.last_search_query = Some(query);
+                app.search_highlight_query = app.last_search_query.clone();
+                app.search_highlight_ready_at = Some(Local::now() + Duration::milliseconds(150));
+                app.logs_state.select(Some(0));
             }
+        }
         app.show_tag_popup = false;
         app.transition_to(InputMode::Navigate);
     } else if key_match(&key, &app.config.keybindings.popup.cancel) {
@@ -536,10 +541,11 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         && key_match(&key, &app.config.keybindings.timeline.edit)
     {
         if let Some(i) = app.logs_state.selected()
-            && i < app.logs.len() {
-                let entry = app.logs[i].clone();
-                app.start_edit_entry(&entry);
-            }
+            && i < app.logs.len()
+        {
+            let entry = app.logs[i].clone();
+            app.start_edit_entry(&entry);
+        }
     } else if key_match(&key, &app.config.keybindings.timeline.delete_entry) {
         if app.navigate_focus == models::NavigateFocus::Timeline {
             if let Some(i) = app.logs_state.selected() {
@@ -565,17 +571,18 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         && key_match(&key, &app.config.keybindings.tasks.edit)
     {
         if let Some(i) = app.tasks_state.selected()
-            && i < app.tasks.len() {
-                let task = app.tasks[i].clone();
-                if let Some(entry) = app.logs.iter().find(|e| {
-                    e.file_path == task.file_path
-                        && e.line_number <= task.line_number
-                        && task.line_number <= e.end_line
-                }) {
-                    let entry = entry.clone();
-                    app.start_edit_entry(&entry);
-                }
+            && i < app.tasks.len()
+        {
+            let task = app.tasks[i].clone();
+            if let Some(entry) = app.logs.iter().find(|e| {
+                e.file_path == task.file_path
+                    && e.line_number <= task.line_number
+                    && task.line_number <= e.end_line
+            }) {
+                let entry = entry.clone();
+                app.start_edit_entry(&entry);
             }
+        }
     } else if key.code == KeyCode::Esc {
         if app.is_search_result {
             app.last_search_query = None;
@@ -585,36 +592,39 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         && key_match(&key, &app.config.keybindings.timeline.toggle_todo)
     {
         if let Some(i) = app.logs_state.selected()
-            && i < app.logs.len() {
-                let entry = &app.logs[i];
-                if entry.content.contains("- [ ]") || entry.content.contains("- [x]") {
-                    let _ = storage::toggle_todo_status(entry);
-                    if app.is_search_result {
-                        app.update_logs(); // TODO: Maintain search, but reloading is safer
-                    } else {
-                        app.update_logs();
-                    }
-                    app.logs_state.select(Some(i));
+            && i < app.logs.len()
+        {
+            let entry = &app.logs[i];
+            if entry.content.contains("- [ ]") || entry.content.contains("- [x]") {
+                let _ = storage::toggle_todo_status(entry);
+                if app.is_search_result {
+                    app.update_logs(); // TODO: Maintain search, but reloading is safer
+                } else {
+                    app.update_logs();
                 }
+                app.logs_state.select(Some(i));
             }
+        }
     } else if app.navigate_focus == models::NavigateFocus::Tasks
         && key_match(&key, &app.config.keybindings.tasks.toggle)
     {
         if let Some(i) = app.tasks_state.selected()
-            && i < app.tasks.len() {
-                let task = app.tasks[i].clone();
-                if let Ok(completed) = storage::complete_task_chain(&app.config.data.log_path, &task)
-                    && task.carryover_from.is_some()
-                    && completed > 0 {
-                        let message = if completed == 1 {
-                            "Completed 1 carry-over task".to_string()
-                        } else {
-                            format!("Completed {} carry-over tasks", completed)
-                        };
-                        app.toast(message);
-                    }
-                app.update_logs();
+            && i < app.tasks.len()
+        {
+            let task = app.tasks[i].clone();
+            if let Ok(completed) = storage::complete_task_chain(&app.config.data.log_path, &task)
+                && task.carryover_from.is_some()
+                && completed > 0
+            {
+                let message = if completed == 1 {
+                    "Completed 1 carry-over task".to_string()
+                } else {
+                    format!("Completed {} carry-over tasks", completed)
+                };
+                app.toast(message);
             }
+            app.update_logs();
+        }
     } else if app.navigate_focus == models::NavigateFocus::Tasks
         && key_match(&key, &app.config.keybindings.tasks.start_pomodoro)
     {
@@ -924,7 +934,7 @@ fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
             let count = take_count_or_one(app);
             move_word(app, WordMotion::NextStart, true, count);
         }
-        KeyCode::Char('b') => {
+        KeyCode::Char('b') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             let count = take_count_or_one(app);
             move_word(app, WordMotion::PrevStart, false, count);
         }
@@ -945,17 +955,17 @@ fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
             move_line_start(app);
         }
         KeyCode::Char('$') => {
-            app.pending_count = 0;
-            move_line_end(app);
+            let count = take_count_or_one(app);
+            move_line_end_with_count(app, count);
         }
         KeyCode::Char('g') => {
             app.pending_command = Some(PendingEditCommand::GoToTop);
         }
         KeyCode::Char('G') => {
-            app.pending_count = 0;
-            move_doc_end(app);
+            let count = take_count(app);
+            move_doc_end_with_count(app, count);
         }
-        KeyCode::Char('d') => {
+        KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.pending_command = Some(PendingEditCommand::Delete);
         }
         KeyCode::Char('y') => {
@@ -967,6 +977,12 @@ fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('x') => {
             let count = take_count_or_one(app);
             if let Some(obj) = resolve_char_object(app, count) {
+                apply_operator(app, Operator::Delete, obj);
+            }
+        }
+        KeyCode::Char('X') => {
+            let count = take_count_or_one(app);
+            if let Some(obj) = resolve_char_before_object(app, count) {
                 apply_operator(app, Operator::Delete, obj);
             }
         }
@@ -982,6 +998,28 @@ fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
                 clamp_cursor_for_normal(app);
             }
         }
+        KeyCode::Char('P') => {
+            let count = take_count_or_one(app);
+            paste_before_cursor(app, count);
+        }
+        KeyCode::Char('D') => {
+            let count = take_count_or_one(app);
+            if let Some(obj) = resolve_line_end_object(app, count) {
+                apply_operator(app, Operator::Delete, obj);
+            }
+        }
+        KeyCode::Char('C') => {
+            let count = take_count_or_one(app);
+            if let Some(obj) = resolve_line_end_object(app, count) {
+                apply_operator(app, Operator::Change, obj);
+            }
+        }
+        KeyCode::Char('S') => {
+            let count = take_count_or_one(app);
+            if let Some(obj) = resolve_line_object(app, count) {
+                apply_operator(app, Operator::Change, obj);
+            }
+        }
         KeyCode::Char('s') => {
             let count = take_count_or_one(app);
             if let Some(obj) = resolve_char_object(app, count) {
@@ -990,6 +1028,22 @@ fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
         }
         KeyCode::Char('r') => {
             app.pending_command = Some(PendingEditCommand::Replace);
+        }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let count = take_count_or_one(app);
+            move_half_page_down(app, count);
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let count = take_count_or_one(app);
+            move_half_page_up(app, count);
+        }
+        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let count = take_count_or_one(app);
+            move_page_down(app, count);
+        }
+        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let count = take_count_or_one(app);
+            move_page_up(app, count);
         }
         _ => {
             app.pending_count = 0;
@@ -1002,8 +1056,8 @@ fn handle_editor_visual(app: &mut App, key: event::KeyEvent, kind: VisualKind) {
     if let Some(PendingEditCommand::GoToTop) = app.pending_command {
         if key.code == KeyCode::Char('g') {
             app.pending_command = None;
-            app.pending_count = 0;
-            move_doc_start(app);
+            let count = take_count(app);
+            move_doc_start_with_count(app, count);
             return;
         }
         app.pending_command = None;
@@ -1020,6 +1074,22 @@ fn handle_editor_visual(app: &mut App, key: event::KeyEvent, kind: VisualKind) {
     }
 
     match key.code {
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let count = take_count_or_one(app);
+            move_half_page_down(app, count);
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let count = take_count_or_one(app);
+            move_half_page_up(app, count);
+        }
+        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let count = take_count_or_one(app);
+            move_page_down(app, count);
+        }
+        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let count = take_count_or_one(app);
+            move_page_up(app, count);
+        }
         KeyCode::Char('h') => {
             let count = take_count_or_one(app);
             move_left(app, count);
@@ -1065,15 +1135,15 @@ fn handle_editor_visual(app: &mut App, key: event::KeyEvent, kind: VisualKind) {
             move_line_start(app);
         }
         KeyCode::Char('$') => {
-            app.pending_count = 0;
-            move_line_end(app);
+            let count = take_count_or_one(app);
+            move_line_end_with_count(app, count);
         }
         KeyCode::Char('g') => {
             app.pending_command = Some(PendingEditCommand::GoToTop);
         }
         KeyCode::Char('G') => {
-            app.pending_count = 0;
-            move_doc_end(app);
+            let count = take_count(app);
+            move_doc_end_with_count(app, count);
         }
         KeyCode::Char('y') => {
             if let Some(obj) = resolve_visual_text_object(app, kind) {
@@ -1174,8 +1244,8 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
         PendingEditCommand::GoToTop => {
             if key.code == KeyCode::Char('g') {
                 app.pending_command = None;
-                app.pending_count = 0;
-                move_doc_start(app);
+                let count = take_count(app);
+                move_doc_start_with_count(app, count);
                 return true;
             }
         }
@@ -1208,6 +1278,16 @@ fn take_count_or_one(app: &mut App) -> usize {
     };
     app.pending_count = 0;
     count
+}
+
+fn take_count(app: &mut App) -> Option<usize> {
+    if app.pending_count > 0 {
+        let count = app.pending_count;
+        app.pending_count = 0;
+        Some(count)
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1303,12 +1383,13 @@ fn move_word(app: &mut App, motion: WordMotion, big_word: bool, count: usize) {
 
 fn apply_operator(app: &mut App, operator: Operator, object: TextObject) {
     let text = text_object_text(app, object);
+    let is_linewise = object_is_line(object);
     let mut line_removed = false;
     let mut line_start_row = None;
 
     let modified = match operator {
         Operator::Yank => {
-            app.set_yank_buffer(text);
+            app.set_yank_buffer_with_kind(text, is_linewise);
             return;
         }
         Operator::Delete => {
@@ -1319,9 +1400,7 @@ fn apply_operator(app: &mut App, operator: Operator, object: TextObject) {
                     line_removed = line_object_removed(kind, start, end);
                     delete_range_object(app, kind, start, end)
                 }
-                TextObject::Block { start, end } => {
-                    delete_block_object(app, start, end)
-                }
+                TextObject::Block { start, end } => delete_block_object(app, start, end),
             }
         }
         Operator::Change => {
@@ -1332,36 +1411,34 @@ fn apply_operator(app: &mut App, operator: Operator, object: TextObject) {
                     line_removed = line_object_removed(kind, start, end);
                     delete_range_object(app, kind, start, end)
                 }
-                TextObject::Block { start, end } => {
-                    delete_block_object(app, start, end)
-                }
+                TextObject::Block { start, end } => delete_block_object(app, start, end),
             }
         }
     };
 
     match operator {
         Operator::Delete => {
-            app.set_yank_buffer(text);
+            app.set_yank_buffer_with_kind(text, is_linewise);
             if modified {
                 app.composer_dirty = true;
             }
             if let Some(row) = line_start_row
-                && object_is_line(object) {
-                    place_cursor_after_line_delete(app, row);
+                && object_is_line(object)
+            {
+                place_cursor_after_line_delete(app, row);
             } else {
                 clamp_cursor_for_normal(app);
             }
         }
         Operator::Change => {
-            app.set_yank_buffer(text);
+            app.set_yank_buffer_with_kind(text, is_linewise);
             if object_is_line(object) {
                 if line_removed {
                     if let Some(row) = line_start_row {
                         insert_empty_line_at(app, row);
                     }
                 } else if let Some(row) = line_start_row {
-                    app.textarea
-                        .move_cursor(CursorMove::Jump(row as u16, 0));
+                    app.textarea.move_cursor(CursorMove::Jump(row as u16, 0));
                 }
             }
             if modified {
@@ -1421,6 +1498,51 @@ fn resolve_char_object(app: &App, count: usize) -> Option<TextObject> {
     Some(TextObject::Range {
         kind: TextObjectKind::Char,
         start: (row, col),
+        end,
+    })
+}
+
+fn resolve_line_end_object(app: &App, count: usize) -> Option<TextObject> {
+    let lines = app.textarea.lines();
+    if lines.is_empty() {
+        return None;
+    }
+    let (row, col) = app.textarea.cursor();
+    let target_row = row
+        .saturating_add(count.saturating_sub(1))
+        .min(lines.len().saturating_sub(1));
+    let end_col = line_len(lines, target_row);
+    if (row, col) == (target_row, end_col) {
+        return None;
+    }
+    Some(TextObject::Range {
+        kind: TextObjectKind::Char,
+        start: (row, col),
+        end: (target_row, end_col),
+    })
+}
+
+fn resolve_char_before_object(app: &App, count: usize) -> Option<TextObject> {
+    let lines = app.textarea.lines();
+    if lines.is_empty() {
+        return None;
+    }
+    let end = app.textarea.cursor();
+    let mut start = end;
+    let mut remaining = count;
+    while remaining > 0 {
+        let Some(prev) = retreat_pos_for_delete(lines, start) else {
+            break;
+        };
+        start = prev;
+        remaining -= 1;
+    }
+    if start == end {
+        return None;
+    }
+    Some(TextObject::Range {
+        kind: TextObjectKind::Char,
+        start,
         end,
     })
 }
@@ -1527,13 +1649,13 @@ fn delete_range_object(
     end: (usize, usize),
 ) -> bool {
     let lines = app.textarea.lines();
-    let (delete_start, delete_end) = if kind == TextObjectKind::Line && start.0 == end.0 && start.0 > 0
-    {
-        let prev_len = line_len(lines, start.0.saturating_sub(1));
-        ((start.0 - 1, prev_len), end)
-    } else {
-        (start, end)
-    };
+    let (delete_start, delete_end) =
+        if kind == TextObjectKind::Line && start.0 == end.0 && start.0 > 0 {
+            let prev_len = line_len(lines, start.0.saturating_sub(1));
+            ((start.0 - 1, prev_len), end)
+        } else {
+            (start, end)
+        };
 
     delete_range(app, delete_start, delete_end)
 }
@@ -1542,7 +1664,11 @@ fn delete_range(app: &mut App, start: (usize, usize), end: (usize, usize)) -> bo
     if start == end {
         return false;
     }
-    let (start, end) = if start <= end { (start, end) } else { (end, start) };
+    let (start, end) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
     app.textarea
         .move_cursor(CursorMove::Jump(start.0 as u16, start.1 as u16));
     app.textarea.start_selection();
@@ -1585,11 +1711,9 @@ fn insert_empty_line_at(app: &mut App, row: usize) {
     }
 
     if row < lines.len() {
-        app.textarea
-            .move_cursor(CursorMove::Jump(row as u16, 0));
+        app.textarea.move_cursor(CursorMove::Jump(row as u16, 0));
         app.textarea.insert_newline();
-        app.textarea
-            .move_cursor(CursorMove::Jump(row as u16, 0));
+        app.textarea.move_cursor(CursorMove::Jump(row as u16, 0));
     } else {
         let last_row = lines.len().saturating_sub(1);
         let end_col = line_len(lines, last_row);
@@ -1601,15 +1725,8 @@ fn insert_empty_line_at(app: &mut App, row: usize) {
     }
 }
 
-fn ordered_positions(
-    a: (usize, usize),
-    b: (usize, usize),
-) -> ((usize, usize), (usize, usize)) {
-    if a <= b {
-        (a, b)
-    } else {
-        (b, a)
-    }
+fn ordered_positions(a: (usize, usize), b: (usize, usize)) -> ((usize, usize), (usize, usize)) {
+    if a <= b { (a, b) } else { (b, a) }
 }
 
 fn move_line_start(app: &mut App) {
@@ -1617,6 +1734,7 @@ fn move_line_start(app: &mut App) {
     app.textarea.move_cursor(CursorMove::Jump(row as u16, 0));
 }
 
+#[allow(dead_code)]
 fn move_line_end(app: &mut App) {
     let (row, _) = app.textarea.cursor();
     let line_len = current_line_len(app, row);
@@ -1627,6 +1745,20 @@ fn move_line_end(app: &mut App) {
     };
     app.textarea
         .move_cursor(CursorMove::Jump(row as u16, new_col as u16));
+}
+
+fn move_line_end_with_count(app: &mut App, count: usize) {
+    let lines = app.textarea.lines();
+    if lines.is_empty() {
+        return;
+    }
+    let (row, _) = app.textarea.cursor();
+    let target_row = row
+        .saturating_add(count.saturating_sub(1))
+        .min(lines.len().saturating_sub(1));
+    let col = line_end_cursor_col(lines, target_row);
+    app.textarea
+        .move_cursor(CursorMove::Jump(target_row as u16, col as u16));
 }
 
 fn move_doc_start(app: &mut App) {
@@ -1643,6 +1775,63 @@ fn move_doc_end(app: &mut App) {
     };
     app.textarea
         .move_cursor(CursorMove::Jump(last_row as u16, new_col as u16));
+}
+
+fn move_doc_start_with_count(app: &mut App, count: Option<usize>) {
+    if let Some(count) = count {
+        move_to_line_first_non_blank(app, count.saturating_sub(1));
+    } else {
+        move_doc_start(app);
+    }
+}
+
+fn move_doc_end_with_count(app: &mut App, count: Option<usize>) {
+    if let Some(count) = count {
+        move_to_line_first_non_blank(app, count.saturating_sub(1));
+    } else {
+        move_doc_end(app);
+    }
+}
+
+fn move_to_line_first_non_blank(app: &mut App, row: usize) {
+    let lines = app.textarea.lines();
+    if lines.is_empty() {
+        return;
+    }
+    let target_row = row.min(lines.len().saturating_sub(1));
+    let col = first_non_blank_col(lines.get(target_row).map(|s| s.as_str()).unwrap_or(""));
+    app.textarea
+        .move_cursor(CursorMove::Jump(target_row as u16, col as u16));
+    clamp_cursor_for_normal(app);
+}
+
+fn move_half_page_down(app: &mut App, count: usize) {
+    let step = page_step(app, true);
+    move_down(app, step.saturating_mul(count));
+}
+
+fn move_half_page_up(app: &mut App, count: usize) {
+    let step = page_step(app, true);
+    move_up(app, step.saturating_mul(count));
+}
+
+fn move_page_down(app: &mut App, count: usize) {
+    let step = page_step(app, false);
+    move_down(app, step.saturating_mul(count));
+}
+
+fn move_page_up(app: &mut App, count: usize) {
+    let step = page_step(app, false);
+    move_up(app, step.saturating_mul(count));
+}
+
+fn page_step(app: &App, half: bool) -> usize {
+    let height = app.textarea_viewport_height.max(1);
+    if half {
+        (height / 2).max(1)
+    } else {
+        height.max(1)
+    }
 }
 
 fn move_cursor_after(app: &mut App) {
@@ -1700,10 +1889,12 @@ fn char_kind(ch: char, big_word: bool) -> WordKind {
 }
 
 fn line_len(lines: &[String], row: usize) -> usize {
-    lines
-        .get(row)
-        .map(|line| line.chars().count())
-        .unwrap_or(0)
+    lines.get(row).map(|line| line.chars().count()).unwrap_or(0)
+}
+
+fn line_end_cursor_col(lines: &[String], row: usize) -> usize {
+    let len = line_len(lines, row);
+    if len == 0 { 0 } else { len.saturating_sub(1) }
 }
 
 fn char_at(lines: &[String], row: usize, col: usize) -> Option<char> {
@@ -1757,6 +1948,21 @@ fn prev_pos(lines: &[String], pos: (usize, usize)) -> Option<(usize, usize)> {
         let prev_len = line_len(lines, row - 1);
         let prev_col = if prev_len == 0 { 0 } else { prev_len - 1 };
         Some((row - 1, prev_col))
+    } else {
+        None
+    }
+}
+
+fn retreat_pos_for_delete(lines: &[String], pos: (usize, usize)) -> Option<(usize, usize)> {
+    if lines.is_empty() {
+        return None;
+    }
+    let (row, col) = pos;
+    if col > 0 {
+        Some((row, col.saturating_sub(1)))
+    } else if row > 0 {
+        let prev_len = line_len(lines, row - 1);
+        Some((row - 1, prev_len))
     } else {
         None
     }
@@ -1900,6 +2106,56 @@ fn delete_previous_word(app: &mut App) -> bool {
     app.textarea.delete_word()
 }
 
+/// Paste before cursor (P command in Vim)
+/// - For linewise yanks: paste above the current line
+/// - For charwise yanks: paste before the cursor position
+fn paste_before_cursor(app: &mut App, count: usize) {
+    if app.yank_buffer.is_empty() {
+        return;
+    }
+
+    app.record_undo_snapshot();
+
+    if app.yank_is_linewise {
+        // Linewise paste: insert above the current line
+        let (row, _) = app.textarea.cursor();
+        app.textarea.move_cursor(CursorMove::Jump(row as u16, 0));
+
+        for _ in 0..count {
+            // Insert the yanked text (which should end with newline for linewise)
+            let text = if app.yank_buffer.ends_with('\n') {
+                app.yank_buffer.clone()
+            } else {
+                format!("{}\n", app.yank_buffer)
+            };
+            app.textarea.insert_str(&text);
+        }
+
+        // Move cursor to the first non-blank of the first inserted line
+        let col = first_non_blank_col(
+            app.textarea
+                .lines()
+                .get(row)
+                .map(|s| s.as_str())
+                .unwrap_or(""),
+        );
+        app.textarea
+            .move_cursor(CursorMove::Jump(row as u16, col as u16));
+    } else {
+        // Charwise paste: insert before cursor position
+        app.textarea.set_yank_text(app.yank_buffer.clone());
+        for _ in 0..count {
+            // Move back one position before pasting (tui_textarea.paste() inserts after cursor)
+            // but we want to insert before, so we insert directly
+            let text = &app.yank_buffer;
+            app.textarea.insert_str(text);
+        }
+        clamp_cursor_for_normal(app);
+    }
+
+    app.composer_dirty = true;
+}
+
 fn replace_char(app: &mut App, c: char) -> bool {
     let (row, col) = app.textarea.cursor();
     let line_len = current_line_len(app, row);
@@ -1917,11 +2173,7 @@ fn replace_char(app: &mut App, c: char) -> bool {
     true
 }
 
-fn advance_pos_by_chars(
-    lines: &[String],
-    start: (usize, usize),
-    count: usize,
-) -> (usize, usize) {
+fn advance_pos_by_chars(lines: &[String], start: (usize, usize), count: usize) -> (usize, usize) {
     let mut row = start.0;
     let mut col = start.1;
     let mut remaining = count;
@@ -1991,11 +2243,7 @@ fn collect_block_object_text(
     blocks.join("\n")
 }
 
-fn delete_block_object(
-    app: &mut App,
-    start: (usize, usize),
-    end: (usize, usize),
-) -> bool {
+fn delete_block_object(app: &mut App, start: (usize, usize), end: (usize, usize)) -> bool {
     let row_start = start.0.min(end.0);
     let row_end = start.0.max(end.0);
     let col_start = start.1.min(end.1);
@@ -2003,7 +2251,12 @@ fn delete_block_object(
 
     let mut modified = false;
     for row in row_start..=row_end {
-        let line = app.textarea.lines().get(row).map(|s| s.as_str()).unwrap_or("");
+        let line = app
+            .textarea
+            .lines()
+            .get(row)
+            .map(|s| s.as_str())
+            .unwrap_or("");
         let line_len = line.chars().count();
         if line_len == 0 || col_start >= line_len {
             continue;
@@ -2076,15 +2329,15 @@ fn open_or_toggle_pomodoro_for_selected_task(app: &mut App) {
         ..
     }) = app.pomodoro_target.as_ref()
         && app.pomodoro_end.is_some()
-            && *file_path == task.file_path
-            && *line_number == task.line_number
-        {
-            app.pomodoro_end = None;
-            app.pomodoro_start = None;
-            app.pomodoro_target = None;
-            app.toast("Pomodoro stopped.");
-            return;
-        }
+        && *file_path == task.file_path
+        && *line_number == task.line_number
+    {
+        app.pomodoro_end = None;
+        app.pomodoro_start = None;
+        app.pomodoro_target = None;
+        app.toast("Pomodoro stopped.");
+        return;
+    }
 
     app.pomodoro_pending_task = Some(task);
     app.pomodoro_minutes_input = app.config.pomodoro.work_minutes.to_string();
@@ -2457,5 +2710,180 @@ mod tests {
         assert_eq!(app.textarea.cursor(), (0, 0));
         send_char(&mut app, 'E');
         assert_eq!(app.textarea.cursor(), (0, 6));
+    }
+
+    // ============ Tests for Shift+shortcut commands (D/C/S/X/P) ============
+
+    #[test]
+    fn uppercase_d_deletes_to_end_of_line() {
+        // D => d$ (delete to end of line, no newline removal)
+        let mut app = make_editing_app(&["hello world", "second line"]);
+        app.textarea.move_cursor(CursorMove::Jump(0, 6)); // position at 'w'
+        send_key(&mut app, KeyCode::Char('D'), KeyModifiers::SHIFT);
+        assert_eq!(app.textarea.lines(), ["hello ", "second line"]);
+        assert_eq!(app.yank_buffer, "world");
+    }
+
+    #[test]
+    fn uppercase_c_changes_to_end_of_line() {
+        // C => c$ (change to end of line, enter INSERT)
+        let mut app = make_editing_app(&["hello world", "second line"]);
+        app.textarea.move_cursor(CursorMove::Jump(0, 6)); // position at 'w'
+        send_key(&mut app, KeyCode::Char('C'), KeyModifiers::SHIFT);
+        assert_eq!(app.textarea.lines(), ["hello ", "second line"]);
+        assert_eq!(app.editor_mode, EditorMode::Insert);
+        assert_eq!(app.yank_buffer, "world");
+    }
+
+    #[test]
+    fn uppercase_s_changes_entire_line() {
+        // S => cc (change entire line, remove line incl newline, insert empty line)
+        let mut app = make_editing_app(&["first", "second", "third"]);
+        send_char(&mut app, 'j'); // move to "second"
+        send_key(&mut app, KeyCode::Char('S'), KeyModifiers::SHIFT);
+        assert_eq!(app.textarea.lines(), ["first", "", "third"]);
+        assert_eq!(app.editor_mode, EditorMode::Insert);
+        assert_eq!(app.yank_buffer, "second\n");
+    }
+
+    #[test]
+    fn uppercase_x_deletes_char_before_cursor() {
+        // X => dh (delete char before cursor)
+        let mut app = make_editing_app(&["abcd"]);
+        app.textarea.move_cursor(CursorMove::Jump(0, 2)); // position at 'c'
+        send_key(&mut app, KeyCode::Char('X'), KeyModifiers::SHIFT);
+        assert_eq!(app.textarea.lines(), ["acd"]);
+        assert_eq!(app.yank_buffer, "b");
+    }
+
+    #[test]
+    fn uppercase_x_at_start_of_line_does_nothing() {
+        // X at column 0 should not delete anything
+        let mut app = make_editing_app(&["abcd"]);
+        app.textarea.move_cursor(CursorMove::Jump(0, 0)); // position at 'a'
+        send_key(&mut app, KeyCode::Char('X'), KeyModifiers::SHIFT);
+        assert_eq!(app.textarea.lines(), ["abcd"]);
+    }
+
+    #[test]
+    fn uppercase_p_pastes_before_cursor_charwise() {
+        // P for charwise yank pastes before cursor
+        let mut app = make_editing_app(&["abcd"]);
+        send_char(&mut app, 'x'); // delete 'a', yank_buffer = "a"
+        assert_eq!(app.textarea.lines(), ["bcd"]);
+        send_key(&mut app, KeyCode::Char('P'), KeyModifiers::SHIFT);
+        assert_eq!(app.textarea.lines(), ["abcd"]);
+    }
+
+    #[test]
+    fn uppercase_p_pastes_above_line_linewise() {
+        // P for linewise yank pastes above current line
+        let mut app = make_editing_app(&["first", "second", "third"]);
+        send_char(&mut app, 'd');
+        send_char(&mut app, 'd'); // delete "first", linewise yank
+        assert_eq!(app.textarea.lines(), ["second", "third"]);
+        assert!(app.yank_is_linewise);
+        send_char(&mut app, 'j'); // move to "third"
+        send_key(&mut app, KeyCode::Char('P'), KeyModifiers::SHIFT);
+        assert_eq!(app.textarea.lines(), ["second", "first", "third"]);
+    }
+
+    // ============ Tests for Visual mode extended motions ============
+
+    #[test]
+    fn visual_zero_moves_to_line_start() {
+        let mut app = make_editing_app(&["hello world"]);
+        app.textarea.move_cursor(CursorMove::Jump(0, 6)); // position at 'w'
+        send_char(&mut app, 'v');
+        send_char(&mut app, '0');
+        assert_eq!(app.textarea.cursor(), (0, 0));
+        // Anchor should still be at original position
+        assert_eq!(app.visual_anchor, Some((0, 6)));
+    }
+
+    #[test]
+    fn visual_dollar_moves_to_line_end() {
+        let mut app = make_editing_app(&["hello world"]);
+        send_char(&mut app, 'v');
+        send_char(&mut app, '$');
+        // Should be at last character (0-indexed, 10 for 'd' in "hello world")
+        assert_eq!(app.textarea.cursor(), (0, 10));
+        assert_eq!(app.visual_anchor, Some((0, 0)));
+    }
+
+    #[test]
+    fn visual_gg_moves_to_document_start() {
+        let mut app = make_editing_app(&["first", "second", "third"]);
+        send_char(&mut app, 'j');
+        send_char(&mut app, 'j'); // move to "third"
+        send_char(&mut app, 'v');
+        send_char(&mut app, 'g');
+        send_char(&mut app, 'g');
+        assert_eq!(app.textarea.cursor(), (0, 0));
+        assert_eq!(app.visual_anchor, Some((2, 0)));
+    }
+
+    #[test]
+    fn visual_uppercase_g_moves_to_document_end() {
+        let mut app = make_editing_app(&["first", "second", "third"]);
+        send_char(&mut app, 'v');
+        send_key(&mut app, KeyCode::Char('G'), KeyModifiers::SHIFT);
+        // Should move to last line, last column
+        assert_eq!(app.textarea.cursor().0, 2); // row 2
+        assert_eq!(app.visual_anchor, Some((0, 0)));
+    }
+
+    #[test]
+    fn visual_ctrl_d_half_page_down() {
+        let mut app = make_editing_app(&[
+            "line1", "line2", "line3", "line4", "line5", "line6", "line7", "line8", "line9",
+            "line10",
+        ]);
+        app.textarea_viewport_height = 4; // simulate viewport
+        send_char(&mut app, 'v');
+        send_key(&mut app, KeyCode::Char('d'), KeyModifiers::CONTROL);
+        // Half page = 2 lines down from line 0
+        assert_eq!(app.textarea.cursor().0, 2);
+        assert_eq!(app.visual_anchor, Some((0, 0)));
+    }
+
+    #[test]
+    fn visual_ctrl_b_full_page_up() {
+        let mut app = make_editing_app(&[
+            "line1", "line2", "line3", "line4", "line5", "line6", "line7", "line8", "line9",
+            "line10",
+        ]);
+        app.textarea_viewport_height = 4; // simulate viewport
+        // Move to end first
+        send_key(&mut app, KeyCode::Char('G'), KeyModifiers::SHIFT);
+        send_char(&mut app, 'v');
+        let start_row = app.textarea.cursor().0;
+        send_key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        // Full page = 4 lines up
+        assert_eq!(app.textarea.cursor().0, start_row.saturating_sub(4));
+    }
+
+    #[test]
+    fn visual_count_with_uppercase_g() {
+        // 3G should go to line 3 (1-indexed, so row 2)
+        let mut app = make_editing_app(&["line1", "line2", "line3", "line4", "line5"]);
+        send_char(&mut app, 'v');
+        send_char(&mut app, '3');
+        send_key(&mut app, KeyCode::Char('G'), KeyModifiers::SHIFT);
+        assert_eq!(app.textarea.cursor().0, 2); // line 3, 0-indexed
+    }
+
+    #[test]
+    fn visual_count_with_ctrl_d() {
+        let mut app = make_editing_app(&[
+            "line1", "line2", "line3", "line4", "line5", "line6", "line7", "line8", "line9",
+            "line10",
+        ]);
+        app.textarea_viewport_height = 2; // half page = 1
+        send_char(&mut app, 'v');
+        send_char(&mut app, '2');
+        send_key(&mut app, KeyCode::Char('d'), KeyModifiers::CONTROL);
+        // 2 * half page (1) = 2 lines down
+        assert_eq!(app.textarea.cursor().0, 2);
     }
 }

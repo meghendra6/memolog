@@ -653,6 +653,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             let is_empty = lines.iter().all(|line| line.trim().is_empty());
             let visible_height = input_inner.height as usize;
             let (cursor_row, cursor_col) = app.textarea.cursor();
+            app.textarea_viewport_height = visible_height;
 
             // Build visual lines with wrapping and track cursor position
             let mut visual_lines: Vec<Line<'static>> = Vec::new();
