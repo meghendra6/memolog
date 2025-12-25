@@ -174,13 +174,13 @@ fn handle_day_rollover(app: &mut App) {
     if !storage::is_carryover_done(&app.config.data.log_path).unwrap_or(false)
         && let Ok(tasks) =
             storage::collect_carryover_tasks(&app.config.data.log_path, &app.active_date)
-    {
-        for task in &tasks {
-            let _ = storage::append_entry(&app.config.data.log_path, task);
+        {
+            for task in &tasks {
+                let _ = storage::append_entry(&app.config.data.log_path, task);
+            }
+            carried_tasks = tasks.len();
+            let _ = storage::mark_carryover_done(&app.config.data.log_path);
         }
-        carried_tasks = tasks.len();
-        let _ = storage::mark_carryover_done(&app.config.data.log_path);
-    }
 
     app.update_logs();
     if carried_tasks > 0 {
