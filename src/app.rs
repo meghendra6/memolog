@@ -52,12 +52,14 @@ pub struct App<'a> {
     pub textarea: TextArea<'a>,
     pub textarea_viewport_row: u16,
     pub textarea_viewport_col: u16,
+    pub textarea_viewport_height: usize,
     pub composer_dirty: bool,
     pub editor_mode: EditorMode,
     pub visual_anchor: Option<(usize, usize)>,
     pub pending_command: Option<PendingEditCommand>,
     pub pending_count: usize,
     pub yank_buffer: String,
+    pub yank_is_linewise: bool,
     pub editor_undo: Vec<EditorSnapshot>,
     pub editor_redo: Vec<EditorSnapshot>,
     pub insert_snapshot: Option<EditorSnapshot>,
@@ -204,12 +206,14 @@ impl<'a> App<'a> {
             textarea,
             textarea_viewport_row: 0,
             textarea_viewport_col: 0,
+            textarea_viewport_height: 0,
             composer_dirty: false,
             editor_mode: EditorMode::Normal,
             visual_anchor: None,
             pending_command: None,
             pending_count: 0,
             yank_buffer: String::new(),
+            yank_is_linewise: false,
             editor_undo: Vec::new(),
             editor_redo: Vec::new(),
             insert_snapshot: None,
@@ -600,6 +604,7 @@ impl<'a> App<'a> {
                 self.navigate_focus = NavigateFocus::Timeline;
                 self.textarea_viewport_row = 0;
                 self.textarea_viewport_col = 0;
+                self.textarea_viewport_height = 0;
                 self.composer_dirty = false;
                 self.reset_editor_state();
                 // Return to full log view when entering Compose from search results (unless editing an entry)
@@ -627,6 +632,7 @@ impl<'a> App<'a> {
                 self.textarea.set_placeholder_text(PLACEHOLDER_SEARCH);
                 self.textarea_viewport_row = 0;
                 self.textarea_viewport_col = 0;
+                self.textarea_viewport_height = 0;
                 self.composer_dirty = false;
                 self.reset_editor_state();
             }
@@ -711,7 +717,12 @@ impl<'a> App<'a> {
     }
 
     pub fn set_yank_buffer(&mut self, text: String) {
+        self.set_yank_buffer_with_kind(text, false);
+    }
+
+    pub fn set_yank_buffer_with_kind(&mut self, text: String, linewise: bool) {
         self.yank_buffer = text;
+        self.yank_is_linewise = linewise;
         self.textarea.set_yank_text(self.yank_buffer.clone());
     }
 
