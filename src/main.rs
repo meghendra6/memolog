@@ -2,8 +2,8 @@
 
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        self, DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -25,7 +25,6 @@ mod storage;
 mod ui;
 
 use app::App;
-use models::InputMode;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut app = App::new();
@@ -81,36 +80,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
 
         if event::poll(std::time::Duration::from_millis(250))? {
             let event = event::read()?;
-
-            if let Event::Mouse(mouse_event) = event {
-                match mouse_event.kind {
-                    event::MouseEventKind::ScrollUp => app.scroll_up(),
-                    event::MouseEventKind::ScrollDown => app.scroll_down(),
-                    _ => {}
-                }
-            }
-
-            if let Event::Key(key) = event
-                && key.kind == KeyEventKind::Press
-            {
-                handle_key_input(app, key);
-            }
+            input::handle_event(app, event);
         }
 
         if app.should_quit {
             return Ok(());
         }
-    }
-}
-
-fn handle_key_input(app: &mut App, key: event::KeyEvent) {
-    if input::popups::handle_popup_events(app, key) {
-        return;
-    }
-
-    match app.input_mode {
-        InputMode::Navigate => input::navigate::handle_normal_mode(app, key),
-        InputMode::Editing => input::editing::handle_editing_mode(app, key),
-        InputMode::Search => input::search::handle_search_mode(app, key),
     }
 }
