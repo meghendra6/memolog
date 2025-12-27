@@ -70,18 +70,19 @@ pub fn render_activity_popup(f: &mut Frame, app: &App) {
     let mut items = Vec::new();
 
     // Header row
-    items.push(ListItem::new(Line::from(vec![
-        Span::styled(
-            "Date        Logs  🍅   Activity                    Pomodoros",
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
-        ),
-    ])));
+    items.push(ListItem::new(Line::from(vec![Span::styled(
+        "Date        Logs  🍅   Activity                    Pomodoros",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )])));
     items.push(ListItem::new(Line::from("")));
 
     for i in 0..14 {
         let date = today - chrono::Duration::days(i);
         let date_str = date.format("%Y-%m-%d").to_string();
-        let (line_count, tomato_count) = app.activity_data.get(&date_str).cloned().unwrap_or((0, 0));
+        let (line_count, tomato_count) =
+            app.activity_data.get(&date_str).cloned().unwrap_or((0, 0));
 
         // Activity bar (based on log count)
         let bar_len = line_count.min(20);
@@ -108,9 +109,15 @@ pub fn render_activity_popup(f: &mut Frame, app: &App) {
 
         items.push(ListItem::new(Line::from(vec![
             Span::raw(format!("{} ", date_str)),
-            Span::styled(format!("{:3}", line_count), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:3}", line_count),
+                Style::default().fg(Color::Cyan),
+            ),
             Span::raw("  "),
-            Span::styled(format!("{:2}", tomato_count), Style::default().fg(Color::Red)),
+            Span::styled(
+                format!("{:2}", tomato_count),
+                Style::default().fg(Color::Red),
+            ),
             Span::raw("   "),
             Span::styled(format!("{:<20}", bar), Style::default().fg(activity_color)),
             Span::raw(" "),
@@ -200,7 +207,10 @@ pub fn render_tag_popup(f: &mut Frame, app: &mut App) {
         .iter()
         .map(|(tag, count)| {
             ListItem::new(Line::from(vec![
-                Span::styled(tag.clone(), Style::default().fg(tag_color).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    tag.clone(),
+                    Style::default().fg(tag_color).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(format!(" ({})", count)),
             ]))
         })
@@ -388,12 +398,7 @@ pub fn render_help_popup(f: &mut Frame, app: &App) {
     );
 }
 
-fn render_visual_help_popup(
-    f: &mut Frame,
-    _app: &App,
-    kind: VisualKind,
-    tokens: &ThemeTokens,
-) {
+fn render_visual_help_popup(f: &mut Frame, _app: &App, kind: VisualKind, tokens: &ThemeTokens) {
     let block = Block::default()
         .title(" Visual Help ")
         .borders(Borders::ALL)
