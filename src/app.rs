@@ -2,7 +2,8 @@ use crate::config::{Config, Theme};
 use crate::models::{
     DatePickerField, EditorMode, EntryIdentity, FoldOverride, FoldState, InputMode, LogEntry,
     NavigateFocus, PomodoroTarget, Priority, TaskFilter, TaskItem, TaskSchedule,
-    count_trailing_tomatoes, is_heading_timestamp_line, split_timestamp_line, strip_timestamp_prefix,
+    count_trailing_tomatoes, fold_override_from_line, is_heading_timestamp_line,
+    split_timestamp_line, strip_fold_marker, strip_timestamp_prefix,
 };
 use crate::storage;
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime, Timelike};
@@ -29,6 +30,7 @@ pub struct EditingEntry {
     pub timestamp_prefix: String, // e.g. "## [12:34:56]"
     pub from_search: bool,
     pub search_query: Option<String>,
+    pub fold_override: Option<FoldOverride>,
 }
 
 #[derive(Clone)]
@@ -326,6 +328,7 @@ impl<'a> App<'a> {
 
         app.apply_task_filter(true);
         app.refresh_agenda();
+        app.sync_fold_overrides_from_logs();
         app
     }
 
@@ -338,6 +341,8 @@ impl<'a> App<'a> {
         }
 
         let first_line = lines.remove(0);
+        let fold_override = fold_override_from_line(&first_line);
+        let first_line = strip_fold_marker(&first_line);
         let (timestamp_prefix, first_content) = split_timestamp_prefix(&first_line);
         if !first_content.is_empty() {
             lines.insert(0, first_content);
@@ -353,6 +358,7 @@ impl<'a> App<'a> {
             timestamp_prefix,
             from_search: self.is_search_result,
             search_query: self.last_search_query.clone(),
+            fold_override,
         });
         self.composer_dirty = false;
         self.transition_to(InputMode::Editing);
@@ -410,13 +416,7 @@ impl<'a> App<'a> {
 
         self.refresh_agenda();
 
-        if !self.fold_overrides.is_empty() {
-            let mut keep = std::collections::HashSet::new();
-            for entry in &self.logs {
-                keep.insert(EntryIdentity::from(entry));
-            }
-            self.fold_overrides.retain(|key, _| keep.contains(key));
-        }
+        self.sync_fold_overrides_from_logs();
 
         // Calculate stats from today's logs only
         let today_logs =
@@ -424,6 +424,18 @@ impl<'a> App<'a> {
         let (done, tomatoes) = compute_today_task_stats(&today_logs);
         self.today_done_tasks = done;
         self.today_tomatoes = tomatoes;
+    }
+
+    fn sync_fold_overrides_from_logs(&mut self) {
+        self.fold_overrides.clear();
+        for entry in &self.logs {
+            let Some(line) = entry.content.lines().next() else {
+                continue;
+            };
+            if let Some(state) = fold_override_from_line(line) {
+                self.fold_overrides.insert(EntryIdentity::from(entry), state);
+            }
+        }
     }
 
     /// Loads more historical entries when scrolling to the top.
@@ -498,6 +510,7 @@ impl<'a> App<'a> {
         let mut new_logs = older_logs;
         new_logs.extend(std::mem::take(&mut self.logs));
         self.logs = new_logs;
+        self.sync_fold_overrides_from_logs();
 
         // Preserve selection (same logical entry) after prepending.
         self.logs_state.select(Some(new_selected));
@@ -674,6 +687,12 @@ impl<'a> App<'a> {
         } else {
             FoldOverride::Folded
         };
+        if storage::set_entry_fold_marker(&entry.file_path, entry.line_number, override_state)
+            .is_err()
+        {
+            self.toast("Failed to update fold state.");
+            return;
+        }
         self.fold_overrides.insert(key, override_state);
         self.entry_scroll_offset = 0;
     }

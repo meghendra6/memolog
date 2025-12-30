@@ -2,7 +2,7 @@ use crate::{
     app::App,
     config::key_match,
     editor::markdown,
-    models::{EditorMode, InputMode},
+    models::{EditorMode, InputMode, apply_fold_marker},
     storage,
 };
 use chrono::{Duration, Local};
@@ -152,7 +152,9 @@ pub(crate) fn submit_composer(app: &mut App) {
                 Local::now().format("%H:%M:%S").to_string()
             };
 
-            new_lines.push(format!("## [{heading_time}]"));
+            let heading_line =
+                apply_fold_marker(&format!("## [{heading_time}]"), editing.fold_override);
+            new_lines.push(heading_line);
             new_lines.extend(lines);
         }
 

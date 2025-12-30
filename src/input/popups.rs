@@ -391,7 +391,7 @@ enum DatePickerValue {
 
 fn handle_exit_popup(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
             app.show_exit_popup = false;
             app.commit_insert_group();
             editing::submit_composer(app);

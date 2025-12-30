@@ -1,6 +1,7 @@
 use crate::models::{
-    AgendaItem, AgendaItemKind, Priority, LogEntry, TaskItem, count_trailing_tomatoes,
-    is_timestamped_line, strip_timestamp_prefix, strip_trailing_tomatoes,
+    AgendaItem, AgendaItemKind, FoldOverride, LogEntry, Priority, TaskItem,
+    apply_fold_marker, count_trailing_tomatoes, is_timestamped_line, strip_timestamp_prefix,
+    strip_trailing_tomatoes,
 };
 use crate::task_metadata::{parse_task_metadata, strip_task_metadata_tokens};
 use chrono::{Duration, Local, NaiveDate};
@@ -618,6 +619,35 @@ pub fn toggle_task_status(file_path: &str, line_number: usize) -> io::Result<()>
     file.write_all(new_content.as_bytes())?;
 
     Ok(())
+}
+
+/// Persists fold override marker for a log entry heading line.
+pub fn set_entry_fold_marker(
+    file_path: &str,
+    line_number: usize,
+    state: FoldOverride,
+) -> io::Result<bool> {
+    let content = fs::read_to_string(file_path)?;
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+
+    if line_number >= lines.len() {
+        return Ok(false);
+    }
+
+    let updated_line = apply_fold_marker(&lines[line_number], Some(state));
+    if updated_line == lines[line_number] {
+        return Ok(false);
+    }
+    lines[line_number] = updated_line;
+
+    let mut new_content = lines.join("\n");
+    if !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    let mut file = fs::File::create(file_path)?;
+    file.write_all(new_content.as_bytes())?;
+
+    Ok(true)
 }
 
 /// Cycles task priority marker (None -> A -> B -> C -> None) at the given line.

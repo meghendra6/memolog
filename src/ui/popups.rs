@@ -1,7 +1,7 @@
 use super::components::{centered_rect, parse_markdown_spans, wrap_markdown_line};
 use crate::app::App;
 use crate::config::{EditorStyle, ThemePreset};
-use crate::models::{DatePickerField, EditorMode, InputMode, Mood, VisualKind};
+use crate::models::{DatePickerField, EditorMode, InputMode, Mood, VisualKind, strip_fold_marker};
 use crate::ui::color_parser::parse_color;
 use crate::ui::theme::ThemeTokens;
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, Timelike};
@@ -162,7 +162,8 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     for raw_line in entry.content.lines() {
-        let wrapped = wrap_markdown_line(raw_line, width);
+        let line = strip_fold_marker(raw_line);
+        let wrapped = wrap_markdown_line(&line, width);
         for line in wrapped {
             lines.push(Line::from(parse_markdown_spans(
                 &line,
@@ -873,7 +874,7 @@ pub fn render_exit_popup(f: &mut Frame, _app: &App) {
         .style(Style::default().add_modifier(Modifier::BOLD))
         .wrap(ratatui::widgets::Wrap { trim: true });
 
-    let help_text = Paragraph::new("[y] Save & exit    [d] Discard    [n]/[Esc] Cancel")
+    let help_text = Paragraph::new("[y]/[Enter] Save & exit    [d] Discard    [n]/[Esc] Cancel")
         .style(Style::default().fg(Color::DarkGray));
 
     f.render_widget(body, text_area[0]);

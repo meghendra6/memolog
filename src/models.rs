@@ -118,6 +118,45 @@ pub enum FoldOverride {
     Expanded,
 }
 
+pub const FOLD_MARKER_FOLDED: &str = "<!-- memolog:folded -->";
+pub const FOLD_MARKER_EXPANDED: &str = "<!-- memolog:expanded -->";
+
+pub fn fold_override_from_line(line: &str) -> Option<FoldOverride> {
+    if line.contains(FOLD_MARKER_FOLDED) {
+        Some(FoldOverride::Folded)
+    } else if line.contains(FOLD_MARKER_EXPANDED) {
+        Some(FoldOverride::Expanded)
+    } else {
+        None
+    }
+}
+
+pub fn strip_fold_marker(line: &str) -> String {
+    let mut stripped = line.to_string();
+    if let Some(pos) = stripped.find(FOLD_MARKER_FOLDED) {
+        stripped.replace_range(pos..pos + FOLD_MARKER_FOLDED.len(), "");
+    }
+    if let Some(pos) = stripped.find(FOLD_MARKER_EXPANDED) {
+        stripped.replace_range(pos..pos + FOLD_MARKER_EXPANDED.len(), "");
+    }
+    stripped.trim_end().to_string()
+}
+
+pub fn apply_fold_marker(line: &str, state: Option<FoldOverride>) -> String {
+    let mut base = strip_fold_marker(line);
+    if let Some(state) = state {
+        let marker = match state {
+            FoldOverride::Folded => FOLD_MARKER_FOLDED,
+            FoldOverride::Expanded => FOLD_MARKER_EXPANDED,
+        };
+        if !base.is_empty() {
+            base.push(' ');
+        }
+        base.push_str(marker);
+    }
+    base
+}
+
 #[derive(Clone)]
 pub struct AgendaItem {
     pub kind: AgendaItemKind,
