@@ -5,7 +5,7 @@
 log_path = "logs"
 
 [keybindings.composer]
-submit = ["ctrl+s", "ctrl+d"]
+submit = ["ctrl+s"]
 newline = ["enter"]
 cancel = ["esc"]
 clear = ["ctrl+l"]

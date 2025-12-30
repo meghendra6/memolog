@@ -91,10 +91,42 @@ Available presets:
 
 All keybindings are configurable in `config.toml`.
 
-- Global: `?` help, `h/l` focus, `i` compose, `/` search, `t` tags, `T` theme presets, `p` pomodoro, `g` activity, `o` log dir, `Ctrl+Q` quit
-- Timeline: `j/k` move, `e` edit entry, `Enter/Space` toggle checkbox
-- Tasks: `j/k` move, `Enter/Space` toggle checkbox, `p` start/stop pomodoro, `e` edit source entry
-- Composer: `Enter` newline, `Shift+Enter` save, `Tab/Shift+Tab` indent/outdent, `Esc` back
+Global:
+- `?` help
+- `h`/`left` focus timeline, `l`/`right` focus tasks
+- `i` compose, `Tab`/`Shift+Tab` focus next/prev
+- `q` quick capture, `/` search, `t` tags, `a` activity
+- `o` log dir, `p` pomodoro, `N` jump to Now
+- `T` theme presets, `V` editor style, `Ctrl+Q` quit
+
+Timeline:
+- `j`/`k` or `down`/`up` move, `Ctrl+d`/`Ctrl+u` page
+- `g` top, `G` bottom
+- `Enter`/`Space` toggle checkbox
+- `e` edit entry, `Delete`/`x` delete entry
+
+Tasks:
+- `j`/`k` or `down`/`up` move
+- `Enter`/`Space` toggle checkbox
+- `p` pomodoro, `e` edit source entry
+- `n` mark/unmark Now, `f` filter toggle, `1/2/3` open/done/all
+
+Composer:
+- `Ctrl+S` save, `Enter` newline
+- `Tab`/`Shift+Tab` indent/outdent
+- `Esc` back, `Ctrl+L` clear
+
+Search:
+- `Enter` apply, `Esc` cancel, `Ctrl+L` clear
+
+Popups:
+- `Enter`/`y` confirm, `Esc`/`n` cancel
+- `j`/`k` or `down`/`up` move
+
+Quick Capture popup:
+- `Enter` save, `Ctrl+Enter` save & continue, `Esc` cancel
+
+Vim mode: the composer editor uses Vim-like normal/insert/visual motions in addition to the bindings above.
 
 ## License
 

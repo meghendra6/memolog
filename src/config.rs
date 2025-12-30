@@ -239,13 +239,13 @@ impl Default for GlobalBindings {
         Self {
             quit: vec!["ctrl+q".to_string()],
             help: vec!["?".to_string()],
-            focus_timeline: vec!["left".to_string()],
-            focus_tasks: vec!["right".to_string()],
-            focus_composer: vec!["c".to_string()],
+            focus_timeline: vec!["h".to_string(), "left".to_string()],
+            focus_tasks: vec!["l".to_string(), "right".to_string()],
+            focus_composer: vec!["i".to_string()],
             focus_next: vec!["tab".to_string()],
             focus_prev: vec!["backtab".to_string()],
-            quick_capture: vec!["q".to_string(), "ctrl+enter".to_string()],
-            search: vec!["ctrl+f".to_string(), "/".to_string()],
+            quick_capture: vec!["q".to_string()],
+            search: vec!["/".to_string()],
             tags: vec!["t".to_string()],
             activity: vec!["a".to_string()],
             log_dir: vec!["o".to_string()],
@@ -279,8 +279,8 @@ impl Default for TimelineBindings {
             down: vec!["j".to_string(), "down".to_string()],
             page_up: vec!["ctrl+u".to_string(), "pageup".to_string()],
             page_down: vec!["ctrl+d".to_string(), "pagedown".to_string()],
-            top: vec!["home".to_string()],
-            bottom: vec!["end".to_string()],
+            top: vec!["g".to_string(), "home".to_string()],
+            bottom: vec!["shift+g".to_string(), "end".to_string()],
             toggle_todo: vec!["enter".to_string(), "space".to_string()],
             open: vec!["enter".to_string()],
             edit: vec!["e".to_string()],
@@ -339,7 +339,7 @@ impl Default for ComposerBindings {
         Self {
             cancel: vec!["esc".to_string()],
             newline: vec!["enter".to_string()],
-            submit: vec!["shift+enter".to_string()],
+            submit: vec!["ctrl+s".to_string()],
             clear: vec!["ctrl+l".to_string()],
             indent: vec!["tab".to_string()],
             outdent: vec!["backtab".to_string()],
@@ -765,25 +765,6 @@ impl Config {
 
     fn normalize_keybindings(&mut self) -> bool {
         let mut changed = false;
-
-        // Migration: old default save bindings were Ctrl+S/Ctrl+D (often unreliable under some IME setups).
-        // Move to Shift+Enter by default.
-        if self
-            .keybindings
-            .composer
-            .submit
-            .iter()
-            .any(|k| k.eq_ignore_ascii_case("ctrl+s") || k.eq_ignore_ascii_case("ctrl+d"))
-            && !self
-                .keybindings
-                .composer
-                .submit
-                .iter()
-                .any(|k| k.eq_ignore_ascii_case("shift+enter"))
-        {
-            self.keybindings.composer.submit = vec!["shift+enter".to_string()];
-            changed = true;
-        }
 
         let quick_has_q = self
             .keybindings
