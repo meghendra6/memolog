@@ -222,5 +222,6 @@ fn refresh_search_results(app: &mut App, query: &str) {
         app.logs_state.select(Some(0));
         app.search_highlight_query = Some(query.to_string());
         app.search_highlight_ready_at = Some(Local::now() + Duration::milliseconds(150));
+        app.apply_fold_markers();
     }
 }
