@@ -1023,7 +1023,7 @@ pub fn render_exit_popup(f: &mut Frame, _app: &App) {
         .style(Style::default().add_modifier(Modifier::BOLD))
         .wrap(ratatui::widgets::Wrap { trim: true });
 
-    let help_text = Paragraph::new("[y] Save & exit    [d] Discard    [n]/[Esc] Cancel")
+    let help_text = Paragraph::new("[Enter]/[y] Save & Exit    [d] Discard    [n]/[Esc] Cancel")
         .style(Style::default().fg(Color::DarkGray));
 
     f.render_widget(body, text_area[0]);

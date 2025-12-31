@@ -1547,7 +1547,7 @@ fn compose_wrapped_line(
     content_override: Option<Vec<StyledSegment>>,
 ) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    let prefix_selected = selection.map(|range| range.start == 0).unwrap_or(false);
+    let prefix_selected = selection.is_some();
     let prefix_style = if prefix_selected {
         Style::default()
             .fg(tokens.ui_muted)
@@ -1628,7 +1628,14 @@ fn compose_wrapped_line(
     spans.extend(selection_spans);
 
     let mut rendered = Line::from(spans);
-    if is_cursor {
+    let segment_len = line.chars().count();
+    let selection_covers_segment = selection.map_or(false, |range| {
+        range.start <= wrap_start_col
+            && range.end >= wrap_start_col.saturating_add(segment_len)
+    });
+    if selection_covers_segment {
+        rendered.style = Style::default().bg(tokens.ui_selection_bg);
+    } else if is_cursor {
         rendered.style = Style::default().bg(tokens.ui_cursorline_bg);
     }
     rendered
