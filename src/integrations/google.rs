@@ -422,6 +422,9 @@ fn handle_auth_request(
     token_path: &Path,
 ) -> Result<AuthRequestOutcome, String> {
     stream
+        .set_nonblocking(false)
+        .map_err(|e| e.to_string())?;
+    stream
         .set_read_timeout(Some(StdDuration::from_secs(10)))
         .map_err(|e| e.to_string())?;
     let mut reader = BufReader::new(
@@ -430,9 +433,18 @@ fn handle_auth_request(
             .map_err(|e| e.to_string())?,
     );
     let mut request_line = String::new();
-    let bytes_read = reader
-        .read_line(&mut request_line)
-        .map_err(|e| e.to_string())?;
+    let bytes_read = match reader.read_line(&mut request_line) {
+        Ok(bytes_read) => bytes_read,
+        Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+            let _ = respond_with_message(stream, "Waiting for request.");
+            return Ok(AuthRequestOutcome::Continue);
+        }
+        Err(err) if err.kind() == io::ErrorKind::TimedOut => {
+            let _ = respond_with_message(stream, "Request timed out.");
+            return Ok(AuthRequestOutcome::Continue);
+        }
+        Err(err) => return Err(err.to_string()),
+    };
     if bytes_read == 0 || request_line.trim().is_empty() {
         let _ = respond_with_message(stream, "Invalid request.");
         return Ok(AuthRequestOutcome::Continue);
