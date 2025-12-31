@@ -162,6 +162,11 @@ Environment variables:
 - `MEMOLOG_LOG_DIR`: override default log directory (used as default `data.log_path`)
 
 The repository root includes a small `config.toml` you can copy and edit.
+You can also open the active config directly inside MemoLog:
+
+- Press `,` to open `config.toml` in the composer.
+- Edit and save with `Shift+Enter`.
+- Restart MemoLog to apply changes.
 
 ### Google sync (Calendar + Tasks)
 
