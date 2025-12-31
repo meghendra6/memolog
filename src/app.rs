@@ -31,6 +31,7 @@ pub struct EditingEntry {
     pub timestamp_prefix: String, // e.g. "## [12:34:56]"
     pub from_search: bool,
     pub search_query: Option<String>,
+    pub is_raw: bool,
 }
 
 #[derive(Clone)]
@@ -361,6 +362,26 @@ impl<'a> App<'a> {
             timestamp_prefix,
             from_search: self.is_search_result,
             search_query: self.last_search_query.clone(),
+            is_raw: false,
+        });
+        self.composer_dirty = false;
+        self.transition_to(InputMode::Editing);
+    }
+
+    pub fn start_edit_raw_file(&mut self, file_path: String, mut lines: Vec<String>) {
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        let end_line = lines.len().saturating_sub(1);
+        self.textarea = TextArea::from(lines);
+        self.editing_entry = Some(EditingEntry {
+            file_path,
+            start_line: 0,
+            end_line,
+            timestamp_prefix: String::new(),
+            from_search: false,
+            search_query: None,
+            is_raw: true,
         });
         self.composer_dirty = false;
         self.transition_to(InputMode::Editing);
