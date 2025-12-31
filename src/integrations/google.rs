@@ -249,9 +249,12 @@ pub fn start_device_flow(config: &GoogleConfig) -> Result<DeviceAuthSession, Syn
         .map_err(|e| SyncError::Request(e.to_string()))?;
 
     if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        let detail = format_oauth_error(status, &body);
         return Err(SyncError::Request(format!(
-            "Device flow failed: HTTP {}",
-            resp.status()
+            "Device flow failed: {}",
+            detail
         )));
     }
 
@@ -423,9 +426,12 @@ fn refresh_access_token(
         .map_err(|e| SyncError::Request(e.to_string()))?;
 
     if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        let detail = format_oauth_error(status, &body);
         return Err(SyncError::Request(format!(
-            "Token refresh failed: HTTP {}",
-            resp.status()
+            "Token refresh failed: {}",
+            detail
         )));
     }
 
@@ -444,6 +450,33 @@ fn load_token(path: &Path) -> Result<StoredToken, SyncError> {
     let token: StoredToken = serde_json::from_str(&content)
         .map_err(|e| SyncError::Request(e.to_string()))?;
     Ok(token)
+}
+
+fn format_oauth_error(status: reqwest::StatusCode, body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return format!("HTTP {}", status);
+    }
+
+    let summary = if let Ok(err) = serde_json::from_str::<TokenErrorResponse>(trimmed) {
+        if let Some(desc) = err.error_description {
+            format!("{} ({})", desc, err.error)
+        } else {
+            err.error
+        }
+    } else {
+        truncate_error(trimmed)
+    };
+    format!("HTTP {}: {}", status, summary)
+}
+
+fn truncate_error(message: &str) -> String {
+    let mut out = message.replace(['\n', '\r'], " ");
+    if out.len() > 240 {
+        out.truncate(240);
+        out.push_str("...");
+    }
+    out
 }
 
 fn save_token(path: &Path, token: &StoredToken) -> Result<(), SyncError> {
