@@ -135,6 +135,14 @@ pub(crate) fn submit_composer(app: &mut App) {
     let is_empty = lines.iter().all(|l| l.trim().is_empty());
 
     if let Some(editing) = app.editing_entry.take() {
+        if editing.is_raw {
+            let lines = app.textarea.lines().to_vec();
+            if let Err(e) = storage::write_file_lines(&editing.file_path, &lines) {
+                eprintln!("Error saving file: {}", e);
+            } else {
+                app.toast("Config saved. Restart to apply changes.");
+            }
+        } else {
         let selection_hint = (editing.file_path.clone(), editing.start_line);
         let mut new_lines: Vec<String> = Vec::new();
         if !is_empty {
@@ -179,6 +187,7 @@ pub(crate) fn submit_composer(app: &mut App) {
             }
         } else {
             app.update_logs();
+        }
         }
     } else {
         let input = lines.join("\n");

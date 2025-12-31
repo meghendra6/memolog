@@ -162,7 +162,11 @@ Environment variables:
 - `MEMOLOG_LOG_DIR`: override default log directory (used as default `data.log_path`)
 
 The repository root includes a small `config.toml` you can copy and edit.
+You can also open the active config directly inside MemoLog:
 
+- Press `,` to open `config.toml` in the composer.
+- Edit and save with `Shift+Enter`.
+- Restart MemoLog to apply changes.
 ### Theme
 
 You can customize UI colors by adding a `[theme]` section to `config.toml`.
@@ -212,6 +216,7 @@ Global
 - `T` theme presets
 - `p` pomodoro
 - `o` log dir
+- `,` open config
 - `Ctrl+Q` quit
 
 Timeline

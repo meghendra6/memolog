@@ -807,6 +807,7 @@ pub fn render_help_popup(f: &mut Frame, app: &App) {
                 ("Activity", fmt_keys(&kb.global.activity)),
                 ("Focus agenda", fmt_keys(&kb.global.agenda)),
                 ("Log dir", fmt_keys(&kb.global.log_dir)),
+                ("Config", fmt_keys(&kb.global.edit_config)),
                 ("Theme presets", fmt_keys(&kb.global.theme_switcher)),
                 ("Editor style", fmt_keys(&kb.global.editor_style_switcher)),
                 ("Google sync", fmt_keys(&kb.global.sync_google)),
