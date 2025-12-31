@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, Tim
 use reqwest::blocking::Client;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -725,6 +725,21 @@ fn sync_tasks(
     for item in remote_items {
         remote_by_id.insert(item.id.clone(), item.clone());
     }
+    let claimed_remote: HashSet<String> =
+        state.tasks.values().map(|entry| entry.google_id.clone()).collect();
+    let mut remote_match: HashMap<String, Vec<RemoteTask>> = HashMap::new();
+    for item in remote_items {
+        if claimed_remote.contains(&item.id) {
+            continue;
+        }
+        let schedule = schedule_from_remote_task(item);
+        let key = task_match_key(
+            item.title.as_deref().unwrap_or("Untitled task"),
+            item.status.as_deref() == Some("completed"),
+            &schedule,
+        );
+        remote_match.entry(key).or_default().push(item.clone());
+    }
 
     for item in local_items {
         if item.kind != AgendaItemKind::Task {
@@ -735,10 +750,27 @@ fn sync_tasks(
         }
         let key = local_task_key(item);
         let hash = task_hash(item);
-        let stored = state.tasks.get(&key).cloned();
+        let stored = match state.tasks.get(&key).cloned() {
+            Some(entry) => Some(entry),
+            None => rekey_state_by_hash(&mut state.tasks, &key, &hash),
+        };
         let remote = stored
             .as_ref()
             .and_then(|entry| remote_by_id.get(&entry.google_id));
+        let match_key = task_match_key(&item.text, item.is_done, &item.schedule);
+        if stored.is_none() || remote.is_none() {
+            if let Some(remote) = take_match(&mut remote_match, &match_key) {
+                state.tasks.insert(
+                    key,
+                    SyncItem {
+                        google_id: remote.id.clone(),
+                        hash,
+                        remote_updated: remote.updated.clone(),
+                    },
+                );
+                continue;
+            }
+        }
 
         match (stored, remote) {
             (Some(entry), Some(remote)) => {
@@ -867,9 +899,21 @@ fn sync_tasks(
             let line = storage::compose_task_line(&update);
             let date = schedule_anchor_date(&update.schedule)
                 .unwrap_or_else(|| Local::now().date_naive());
+            let log_file = log_path_for_date(&config.data.log_path, date);
+            if let Some(line_number) = find_last_line_number(&log_file, &line) {
+                let key = local_task_key_for_path(&log_file, line_number);
+                state.tasks.insert(
+                    key,
+                    SyncItem {
+                        google_id: remote.id.clone(),
+                        hash: task_hash_from_update(&update),
+                        remote_updated: remote.updated.clone(),
+                    },
+                );
+                continue;
+            }
             storage::append_entry_to_date(&config.data.log_path, date, &line)?;
             report.tasks_imported += 1;
-            let log_file = log_path_for_date(&config.data.log_path, date);
             let key = find_last_line_number(&log_file, &line)
                 .map(|line_number| local_task_key_for_path(&log_file, line_number))
                 .unwrap_or_else(|| local_key_for_import(&config.data.log_path, date, &line));
@@ -901,6 +945,23 @@ fn sync_events(
     for item in remote_items {
         remote_by_id.insert(item.id.clone(), item.clone());
     }
+    let claimed_remote: HashSet<String> =
+        state.events.values().map(|entry| entry.google_id.clone()).collect();
+    let mut remote_match: HashMap<String, Vec<RemoteEvent>> = HashMap::new();
+    for item in remote_items {
+        if claimed_remote.contains(&item.id) {
+            continue;
+        }
+        let schedule = schedule_from_remote_event(item);
+        let anchor_date = schedule_anchor_date(&schedule)
+            .unwrap_or_else(|| Local::now().date_naive());
+        let key = event_match_key(
+            item.summary.as_deref().unwrap_or("Untitled event"),
+            &schedule,
+            anchor_date,
+        );
+        remote_match.entry(key).or_default().push(item.clone());
+    }
 
     for item in local_items {
         if item.kind == AgendaItemKind::Task && is_carryover_task_text(&item.text) {
@@ -908,10 +969,27 @@ fn sync_events(
         }
         let key = local_event_key(item);
         let hash = event_hash(item);
-        let stored = state.events.get(&key).cloned();
+        let stored = match state.events.get(&key).cloned() {
+            Some(entry) => Some(entry),
+            None => rekey_state_by_hash(&mut state.events, &key, &hash),
+        };
         let remote = stored
             .as_ref()
             .and_then(|entry| remote_by_id.get(&entry.google_id));
+        let match_key = event_match_key(&item.text, &item.schedule, item.date);
+        if stored.is_none() || remote.is_none() {
+            if let Some(remote) = take_match(&mut remote_match, &match_key) {
+                state.events.insert(
+                    key,
+                    SyncItem {
+                        google_id: remote.id.clone(),
+                        hash,
+                        remote_updated: remote.updated.clone(),
+                    },
+                );
+                continue;
+            }
+        }
 
         match (stored, remote) {
             (Some(entry), Some(remote)) => {
@@ -1041,9 +1119,21 @@ fn sync_events(
             let line = storage::compose_note_line(&update);
             let date = schedule_anchor_date(&update.schedule)
                 .unwrap_or_else(|| Local::now().date_naive());
+            let log_file = log_path_for_date(&config.data.log_path, date);
+            if let Some(line_number) = find_last_line_number(&log_file, &line) {
+                let key = local_event_key_for_path(&log_file, line_number);
+                state.events.insert(
+                    key,
+                    SyncItem {
+                        google_id: remote.id.clone(),
+                        hash: event_hash_from_update(&update),
+                        remote_updated: remote.updated.clone(),
+                    },
+                );
+                continue;
+            }
             storage::append_entry_to_date(&config.data.log_path, date, &line)?;
             report.events_imported += 1;
-            let log_file = log_path_for_date(&config.data.log_path, date);
             let key = find_last_line_number(&log_file, &line)
                 .map(|line_number| local_event_key_for_path(&log_file, line_number))
                 .unwrap_or_else(|| local_key_for_import(&config.data.log_path, date, &line));
@@ -1330,6 +1420,83 @@ fn local_event_key_for_path(path: &Path, line_number: usize) -> String {
 fn local_key_for_import(log_path: &Path, date: NaiveDate, line: &str) -> String {
     let path = log_path.join(format!("{}.md", date.format("%Y-%m-%d")));
     format!("import:{}:{}", path.to_string_lossy(), stable_hash(line))
+}
+
+fn take_match<T>(matches: &mut HashMap<String, Vec<T>>, key: &str) -> Option<T> {
+    let (item, empty) = match matches.get_mut(key) {
+        Some(values) => {
+            let item = values.pop();
+            let empty = values.is_empty();
+            (item, empty)
+        }
+        None => return None,
+    };
+    if empty {
+        matches.remove(key);
+    }
+    item
+}
+
+fn rekey_state_by_hash(
+    state: &mut HashMap<String, SyncItem>,
+    key: &str,
+    hash: &str,
+) -> Option<SyncItem> {
+    let mut match_key = None;
+    for (existing_key, item) in state.iter() {
+        if item.hash == hash {
+            if match_key.is_some() {
+                return None;
+            }
+            match_key = Some(existing_key.clone());
+        }
+    }
+    let match_key = match_key?;
+    if match_key == key {
+        return state.get(key).cloned();
+    }
+    let entry = state.remove(&match_key)?;
+    let cloned = entry.clone();
+    state.insert(key.to_string(), entry);
+    Some(cloned)
+}
+
+fn normalize_match_text(text: &str) -> String {
+    text.trim().to_lowercase()
+}
+
+fn task_match_key(text: &str, is_done: bool, schedule: &TaskSchedule) -> String {
+    let normalized = normalize_match_text(text);
+    let due = schedule_to_task_due(schedule).unwrap_or_default();
+    format!("{normalized}|{is_done}|{due}")
+}
+
+fn event_match_key(text: &str, schedule: &TaskSchedule, fallback_date: NaiveDate) -> String {
+    let normalized = normalize_match_text(text);
+    let date = schedule
+        .scheduled
+        .or(schedule.start)
+        .or(schedule.due)
+        .unwrap_or(fallback_date);
+    let time = schedule
+        .time
+        .map(|t| t.format("%H:%M").to_string())
+        .unwrap_or_default();
+    let duration = if schedule.time.is_some() {
+        schedule
+            .duration_minutes
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| DEFAULT_EVENT_DURATION_MINUTES.to_string())
+    } else {
+        schedule
+            .duration_minutes
+            .map(|m| m.to_string())
+            .unwrap_or_default()
+    };
+    format!(
+        "{normalized}|{}|{time}|{duration}",
+        date.format("%Y-%m-%d")
+    )
 }
 
 fn task_hash(item: &AgendaItem) -> String {
