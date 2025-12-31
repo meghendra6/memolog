@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 use crate::app::{App, PLACEHOLDER_COMPOSE};
+use crate::config::{Theme, ThemePreset, ThemeToastOverrides, ThemeUiOverrides};
 use crate::models::{
     AgendaItemKind, EditorMode, InputMode, NavigateFocus, VisualKind,
     is_heading_timestamp_line, is_timestamped_line, split_timestamp_line,
@@ -26,7 +27,7 @@ pub mod components;
 pub mod popups;
 pub mod theme;
 
-use components::{centered_column, parse_markdown_spans, wrap_markdown_line};
+use components::{centered_column, markdown_prefix_width, parse_markdown_spans, wrap_markdown_line};
 use popups::{
     render_activity_popup, render_date_picker_popup, render_delete_entry_popup,
     render_editor_style_popup, render_exit_popup, render_help_popup, render_memo_preview_popup,
@@ -36,6 +37,10 @@ use popups::{
 
 pub fn ui(f: &mut Frame, app: &mut App) {
     let tokens = theme::ThemeTokens::from_theme(&app.config.theme);
+    let theme_preset = resolve_theme_preset(&app.config);
+    let syntax_set = syntax_set();
+    let syntax_theme = select_syntax_theme(syntax_theme_set(), &tokens, theme_preset);
+    let code_bg = code_block_background(&tokens);
     let (main_area, search_area, status_area) = match app.input_mode {
         InputMode::Editing => {
             let chunks = Layout::default()
@@ -156,6 +161,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             // Render the actual entry
             let mut lines: Vec<Line<'static>> = Vec::new();
             let mut in_code_block = false;
+            let mut code_highlighter: Option<HighlightLines> = None;
+            let fence_style = code_fallback_style(code_bg).fg(tokens.ui_muted);
 
             let date_prefix = if app.is_search_result {
                 file_date(&entry.file_path)
@@ -233,7 +240,15 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                         ("", raw_line)
                     };
 
-                let is_fence = content_line.trim_start().starts_with("```");
+                let trimmed = content_line.trim_start();
+                let is_fence = trimmed.starts_with("```");
+                let opening_fence = is_fence && !in_code_block;
+                let closing_fence = is_fence && in_code_block;
+                if opening_fence {
+                    let language = parse_fence_language(trimmed);
+                    let syntax = syntax_for_language(syntax_set, language.as_deref());
+                    code_highlighter = Some(HighlightLines::new(syntax, syntax_theme));
+                }
                 let line_in_code_block = in_code_block || is_fence;
 
                 let is_first_visible = displayed_raw == 0;
@@ -243,6 +258,34 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                     content_width.max(1)
                 };
                 let wrapped = wrap_markdown_line(content_line, wrap_width);
+                let code_segments = if line_in_code_block {
+                    if is_fence {
+                        Some(vec![StyledSegment {
+                            text: content_line.to_string(),
+                            style: fence_style,
+                        }])
+                    } else if let Some(highlighter) = code_highlighter.as_mut() {
+                        Some(highlight_code_line(
+                            content_line,
+                            highlighter,
+                            syntax_set,
+                            code_bg,
+                        ))
+                    } else {
+                        Some(vec![StyledSegment {
+                            text: content_line.to_string(),
+                            style: code_fallback_style(code_bg),
+                        }])
+                    }
+                } else {
+                    None
+                };
+                let prefix_width = if code_segments.is_some() {
+                    markdown_prefix_width(content_line)
+                } else {
+                    0
+                };
+                let mut segment_start_col = 0usize;
                 for (wrap_idx, wline) in wrapped.iter().enumerate() {
                     let mut spans = Vec::new();
 
@@ -280,18 +323,35 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                             Style::default().fg(tokens.ui_muted),
                         ));
                     }
-                    spans.extend(parse_markdown_spans(
-                        wline,
-                        &app.config.theme,
-                        line_in_code_block,
-                        highlight_here,
-                        search_style,
-                    ));
+                    if let Some(segments) = code_segments.as_ref() {
+                        let segment_len = wline.chars().count();
+                        let (code_spans, consumed_len) = code_spans_for_wrapped_line(
+                            segments,
+                            wrap_idx,
+                            segment_start_col,
+                            segment_len,
+                            prefix_width,
+                            code_bg,
+                        );
+                        spans.extend(code_spans);
+                        segment_start_col = segment_start_col.saturating_add(consumed_len);
+                    } else {
+                        spans.extend(parse_markdown_spans(
+                            wline,
+                            &app.config.theme,
+                            line_in_code_block,
+                            highlight_here,
+                            search_style,
+                        ));
+                    }
                     lines.push(Line::from(spans));
                 }
 
-                if is_fence {
-                    in_code_block = !in_code_block;
+                if closing_fence {
+                    in_code_block = false;
+                    code_highlighter = None;
+                } else if opening_fence {
+                    in_code_block = true;
                 }
                 displayed_raw += 1;
             }
@@ -734,9 +794,6 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             } else {
                 let (code_block_info, cursor_block_id) =
                     collect_code_block_info(lines, cursor_row);
-                let syntax_set = syntax_set();
-                let syntax_theme = select_syntax_theme(syntax_theme_set(), &tokens);
-                let code_bg = code_block_background(&tokens);
                 let mut active_block_id: Option<usize> = None;
                 let mut highlighter: Option<HighlightLines> = None;
 
@@ -746,7 +803,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                         active_block_id = line_info.block_id;
                         highlighter = None;
                         if active_block_id.is_some() {
-                            let syntax = syntax_for_language(syntax_set, line_info.language.as_deref());
+                            let syntax =
+                                syntax_for_language(syntax_set, line_info.language.as_deref());
                             highlighter = Some(HighlightLines::new(syntax, syntax_theme));
                         }
                     }
@@ -1189,7 +1247,16 @@ fn syntax_theme_set() -> &'static ThemeSet {
 fn select_syntax_theme<'a>(
     theme_set: &'a ThemeSet,
     tokens: &theme::ThemeTokens,
+    theme_preset: Option<ThemePreset>,
 ) -> &'a syntect::highlighting::Theme {
+    if let Some(preset) = theme_preset {
+        for &name in syntax_theme_candidates_for_preset(preset) {
+            if let Some(theme) = theme_set.themes.get(name) {
+                return theme;
+            }
+        }
+    }
+
     let prefer_light = is_light_color(tokens.ui_bg).unwrap_or(false);
     let candidates = if prefer_light {
         ["InspiredGitHub", "base16-ocean.light"]
@@ -1208,6 +1275,74 @@ fn select_syntax_theme<'a>(
         .values()
         .next()
         .expect("syntect theme set is empty")
+}
+
+fn syntax_theme_candidates_for_preset(preset: ThemePreset) -> &'static [&'static str] {
+    match preset {
+        ThemePreset::DraculaDark => &["Dracula", "base16-ocean.dark", "Solarized (dark)"],
+        ThemePreset::SolarizedDark => &["Solarized (dark)", "base16-ocean.dark", "Dracula"],
+        ThemePreset::SolarizedLight => &["Solarized (light)", "InspiredGitHub", "base16-ocean.light"],
+        ThemePreset::NordCalm => &["Nord", "base16-ocean.dark", "Solarized (dark)"],
+        ThemePreset::MonoContrast => &["base16-ocean.dark", "Monokai Extended", "Dracula"],
+    }
+}
+
+fn resolve_theme_preset(config: &crate::config::Config) -> Option<ThemePreset> {
+    config
+        .ui
+        .theme_preset
+        .as_deref()
+        .and_then(ThemePreset::from_name)
+        .or_else(|| detect_theme_preset(&config.theme))
+}
+
+fn detect_theme_preset(theme: &Theme) -> Option<ThemePreset> {
+    ThemePreset::all()
+        .iter()
+        .copied()
+        .find(|preset| theme_matches_preset(theme, *preset))
+}
+
+fn theme_matches_preset(theme: &Theme, preset: ThemePreset) -> bool {
+    let candidate = Theme::preset(preset);
+    theme.border_default == candidate.border_default
+        && theme.border_editing == candidate.border_editing
+        && theme.border_search == candidate.border_search
+        && theme.border_todo_header == candidate.border_todo_header
+        && theme.text_highlight == candidate.text_highlight
+        && theme.todo_done == candidate.todo_done
+        && theme.todo_wip == candidate.todo_wip
+        && theme.tag == candidate.tag
+        && theme.mood == candidate.mood
+        && theme.timestamp == candidate.timestamp
+        && ui_overrides_equal(theme.ui.as_ref(), candidate.ui.as_ref())
+}
+
+fn ui_overrides_equal(a: Option<&ThemeUiOverrides>, b: Option<&ThemeUiOverrides>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => {
+            a.fg == b.fg
+                && a.bg == b.bg
+                && a.muted == b.muted
+                && a.accent == b.accent
+                && a.selection_bg == b.selection_bg
+                && a.cursorline_bg == b.cursorline_bg
+                && toast_overrides_equal(a.toast.as_ref(), b.toast.as_ref())
+        }
+        _ => false,
+    }
+}
+
+fn toast_overrides_equal(
+    a: Option<&ThemeToastOverrides>,
+    b: Option<&ThemeToastOverrides>,
+) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.info == b.info && a.success == b.success && a.error == b.error,
+        _ => false,
+    }
 }
 
 fn syntax_for_language<'a>(
@@ -1360,6 +1495,39 @@ fn slice_segments(
     }
 
     out
+}
+
+fn styled_segments_to_spans(segments: Vec<StyledSegment>) -> Vec<Span<'static>> {
+    segments
+        .into_iter()
+        .map(|seg| Span::styled(seg.text, seg.style))
+        .collect()
+}
+
+fn code_spans_for_wrapped_line(
+    segments: &[StyledSegment],
+    wrap_idx: usize,
+    segment_start_col: usize,
+    segment_len: usize,
+    prefix_width: usize,
+    code_bg: Option<Color>,
+) -> (Vec<Span<'static>>, usize) {
+    let inserted_prefix = if wrap_idx > 0 { prefix_width } else { 0 };
+    let consumed_len = segment_len.saturating_sub(inserted_prefix);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    if inserted_prefix > 0 {
+        spans.push(Span::styled(
+            " ".repeat(inserted_prefix),
+            code_fallback_style(code_bg),
+        ));
+    }
+    let slice = slice_segments(
+        segments,
+        segment_start_col,
+        segment_start_col.saturating_add(consumed_len),
+    );
+    spans.extend(styled_segments_to_spans(slice));
+    (spans, consumed_len)
 }
 
 // UI render helper keeps explicit parameters.
