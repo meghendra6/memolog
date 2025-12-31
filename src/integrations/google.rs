@@ -19,6 +19,7 @@ const OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const CALENDAR_API: &str = "https://www.googleapis.com/calendar/v3";
 const TASKS_API: &str = "https://tasks.googleapis.com/tasks/v1";
 const DEFAULT_EVENT_DURATION_MINUTES: i64 = 60;
+const LOCAL_SYNC_FUTURE_DAYS: i64 = 3650;
 
 #[derive(Debug)]
 pub enum SyncError {
@@ -206,9 +207,13 @@ pub fn sync(config: &Config) -> Result<SyncReport, SyncError> {
     let mut state = load_sync_state(&google_sync_state_path(config))?;
     let policy = conflict_policy(&config.google.conflict_policy);
 
+    let today = Local::now().date_naive();
     let (start_date, end_date) = sync_range(config);
-    let local_tasks = storage::read_tasks_for_date_range(&config.data.log_path, start_date, end_date)?;
-    let mut local_events = storage::read_agenda_entries(&config.data.log_path, start_date, end_date)?;
+    let local_end_date = end_date.max(today + Duration::days(LOCAL_SYNC_FUTURE_DAYS));
+    let local_tasks =
+        storage::read_tasks_for_date_range(&config.data.log_path, start_date, local_end_date)?;
+    let mut local_events =
+        storage::read_agenda_entries(&config.data.log_path, start_date, local_end_date)?;
     if !config.google.sync_tasks_to_calendar {
         local_events.retain(|item| item.kind == AgendaItemKind::Note);
     }
@@ -240,6 +245,8 @@ pub fn sync(config: &Config) -> Result<SyncReport, SyncError> {
         &mut state,
         &local_events,
         &remote_events,
+        start_date,
+        end_date,
         policy,
         &mut report,
     )?;
@@ -938,6 +945,8 @@ fn sync_events(
     state: &mut SyncState,
     local_items: &[AgendaItem],
     remote_items: &[RemoteEvent],
+    remote_start: NaiveDate,
+    remote_end: NaiveDate,
     policy: ConflictPolicy,
     report: &mut SyncReport,
 ) -> Result<(), SyncError> {
@@ -972,6 +981,7 @@ fn sync_events(
         }
         let key = local_event_key(item);
         let hash = event_hash(item);
+        let out_of_range = item.date < remote_start || item.date > remote_end;
         let mut stored = match state.events.get(&key).cloned() {
             Some(entry) => Some(entry),
             None => rekey_state_by_hash(&mut state.events, &key, &hash),
@@ -1088,22 +1098,44 @@ fn sync_events(
                     (false, false) => {}
                 }
             }
-            (Some(_entry), None) => {
-                let created = create_remote_event(
-                    client,
-                    access_token,
-                    &config.google.calendar_id,
-                    item,
-                )?;
-                report.events_created += 1;
-                state.events.insert(
-                    key,
-                    SyncItem {
-                        google_id: created.id,
-                        hash,
-                        remote_updated: created.updated,
-                    },
-                );
+            (Some(entry), None) => {
+                if out_of_range {
+                    let local_changed = entry.hash != hash;
+                    if local_changed {
+                        let updated = update_remote_event(
+                            client,
+                            access_token,
+                            &config.google.calendar_id,
+                            &entry.google_id,
+                            item,
+                        )?;
+                        report.events_updated += 1;
+                        state.events.insert(
+                            key,
+                            SyncItem {
+                                google_id: entry.google_id,
+                                hash,
+                                remote_updated: updated.updated,
+                            },
+                        );
+                    }
+                } else {
+                    let created = create_remote_event(
+                        client,
+                        access_token,
+                        &config.google.calendar_id,
+                        item,
+                    )?;
+                    report.events_created += 1;
+                    state.events.insert(
+                        key,
+                        SyncItem {
+                            google_id: created.id,
+                            hash,
+                            remote_updated: created.updated,
+                        },
+                    );
+                }
             }
             (None, _) => {
                 let created = create_remote_event(
@@ -1626,8 +1658,8 @@ fn schedule_to_event_times(
 ) -> (EventDateTime, EventDateTime) {
     let date = schedule
         .scheduled
-        .or(schedule.start)
         .or(schedule.due)
+        .or(schedule.start)
         .unwrap_or(fallback_date);
     if let Some(time) = schedule.time {
         let start = to_rfc3339(date, time);
