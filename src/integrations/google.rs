@@ -616,6 +616,25 @@ fn generate_state() -> String {
         .collect()
 }
 
+fn is_carryover_task_text(text: &str) -> bool {
+    let trimmed = text.trim_end();
+    let open = '⟦';
+    let close = '⟧';
+    let Some(start) = trimmed.rfind(open) else {
+        return false;
+    };
+    let Some(close_offset) = trimmed[start..].find(close) else {
+        return false;
+    };
+    let close_index = start + close_offset;
+    let close_len = close.len_utf8();
+    if close_index + close_len != trimmed.len() {
+        return false;
+    }
+    let date = &trimmed[start + open.len_utf8()..close_index];
+    NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok()
+}
+
 fn format_oauth_error(status: reqwest::StatusCode, body: &str) -> String {
     let trimmed = body.trim();
     if trimmed.is_empty() {
@@ -709,6 +728,9 @@ fn sync_tasks(
 
     for item in local_items {
         if item.kind != AgendaItemKind::Task {
+            continue;
+        }
+        if is_carryover_task_text(&item.text) {
             continue;
         }
         let key = local_task_key(item);
@@ -881,6 +903,9 @@ fn sync_events(
     }
 
     for item in local_items {
+        if item.kind == AgendaItemKind::Task && is_carryover_task_text(&item.text) {
+            continue;
+        }
         let key = local_event_key(item);
         let hash = event_hash(item);
         let stored = state.events.get(&key).cloned();
