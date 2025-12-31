@@ -187,9 +187,10 @@ impl<'a> App<'a> {
             .map(|e| e.max(start_date))
             .unwrap_or(start_date);
 
-        let logs =
+        let mut logs =
             storage::read_entries_for_date_range(&config.data.log_path, effective_start, today)
                 .unwrap_or_else(|_| Vec::new());
+        let fold_overrides = extract_fold_markers_from_logs(&mut logs);
 
         let mut logs_state = ListState::default();
         if !logs.is_empty() {
@@ -262,7 +263,7 @@ impl<'a> App<'a> {
             timeline_ui_state: ListState::default(),
             editing_entry: None,
             fold_state: FoldState::default(),
-            fold_overrides: HashMap::new(),
+            fold_overrides,
             all_tasks,
             tasks: Vec::new(),
             tasks_state,
@@ -407,6 +408,7 @@ impl<'a> App<'a> {
                 self.is_search_result = false;
                 self.search_highlight_query = None;
                 self.search_highlight_ready_at = None;
+                self.apply_fold_markers();
                 if !self.logs.is_empty() {
                     // Try to preserve the previous selection position
                     let new_selection = preserve_selection
@@ -428,6 +430,7 @@ impl<'a> App<'a> {
                 self.is_search_result = false;
                 self.search_highlight_query = None;
                 self.search_highlight_ready_at = None;
+                self.apply_fold_markers();
                 if !self.logs.is_empty() {
                     self.logs_state.select(Some(self.logs.len() - 1));
                 }
@@ -529,6 +532,7 @@ impl<'a> App<'a> {
         let mut new_logs = older_logs;
         new_logs.extend(std::mem::take(&mut self.logs));
         self.logs = new_logs;
+        self.apply_fold_markers();
 
         // Preserve selection (same logical entry) after prepending.
         self.logs_state.select(Some(new_selected));
@@ -756,6 +760,13 @@ impl<'a> App<'a> {
             count = count.saturating_sub(1);
         }
         count.max(1)
+    }
+
+    pub(crate) fn apply_fold_markers(&mut self) {
+        let overrides = extract_fold_markers_from_logs(&mut self.logs);
+        for (key, value) in overrides {
+            self.fold_overrides.insert(key, value);
+        }
     }
 
     pub fn apply_task_filter(&mut self, reset_selection: bool) {
@@ -1219,6 +1230,52 @@ fn compute_today_task_stats(logs: &[LogEntry]) -> (usize, usize) {
 /// Checks if a task line contains a carryover date marker (⟦YYYY-MM-DD⟧)
 fn is_carryover_task(text: &str) -> bool {
     text.contains("⟦") && text.contains("⟧")
+}
+
+fn extract_fold_markers_from_logs(
+    logs: &mut Vec<LogEntry>,
+) -> HashMap<EntryIdentity, FoldOverride> {
+    let mut overrides = HashMap::new();
+    for entry in logs.iter_mut() {
+        let (override_state, cleaned) = strip_fold_markers(&entry.content);
+        if let Some(state) = override_state {
+            overrides.insert(EntryIdentity::from(&*entry), state);
+        }
+        entry.content = cleaned;
+    }
+    overrides
+}
+
+fn strip_fold_markers(content: &str) -> (Option<FoldOverride>, String) {
+    if !content.contains("memolog:") {
+        return (None, content.to_string());
+    }
+    let mut override_state = None;
+    let mut lines = Vec::new();
+    for line in content.lines() {
+        if let Some(state) = parse_fold_marker(line) {
+            override_state = Some(state);
+            continue;
+        }
+        lines.push(line);
+    }
+    (override_state, lines.join("\n"))
+}
+
+fn parse_fold_marker(line: &str) -> Option<FoldOverride> {
+    let trimmed = line.trim();
+    let Some(inner) = trimmed
+        .strip_prefix("<!--")
+        .and_then(|rest| rest.strip_suffix("-->"))
+    else {
+        return None;
+    };
+    let marker = inner.trim();
+    match marker {
+        "memolog:expanded" => Some(FoldOverride::Expanded),
+        "memolog:folded" | "memolog:collapsed" => Some(FoldOverride::Folded),
+        _ => None,
+    }
 }
 
 fn count_distinct_entry_dates(entries: &[LogEntry]) -> usize {
