@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, Tim
 use reqwest::blocking::Client;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -19,6 +19,7 @@ const OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const CALENDAR_API: &str = "https://www.googleapis.com/calendar/v3";
 const TASKS_API: &str = "https://tasks.googleapis.com/tasks/v1";
 const DEFAULT_EVENT_DURATION_MINUTES: i64 = 60;
+const LOCAL_SYNC_FUTURE_DAYS: i64 = 3650;
 
 #[derive(Debug)]
 pub enum SyncError {
@@ -173,6 +174,13 @@ struct EventDateTime {
 }
 
 #[derive(Serialize)]
+struct EventDateTimePatch {
+    #[serde(rename = "dateTime")]
+    date_time: Option<String>,
+    date: Option<String>,
+}
+
+#[derive(Serialize)]
 struct TaskUpdateRequest {
     title: String,
     status: String,
@@ -185,6 +193,13 @@ struct EventUpdateRequest {
     summary: String,
     start: EventDateTime,
     end: EventDateTime,
+}
+
+#[derive(Serialize)]
+struct EventUpdatePatchRequest {
+    summary: String,
+    start: EventDateTimePatch,
+    end: EventDateTimePatch,
 }
 
 pub fn spawn_sync(config: Config) -> Receiver<SyncOutcome> {
@@ -206,9 +221,13 @@ pub fn sync(config: &Config) -> Result<SyncReport, SyncError> {
     let mut state = load_sync_state(&google_sync_state_path(config))?;
     let policy = conflict_policy(&config.google.conflict_policy);
 
+    let today = Local::now().date_naive();
     let (start_date, end_date) = sync_range(config);
-    let local_tasks = storage::read_tasks_for_date_range(&config.data.log_path, start_date, end_date)?;
-    let mut local_events = storage::read_agenda_entries(&config.data.log_path, start_date, end_date)?;
+    let local_end_date = end_date.max(today + Duration::days(LOCAL_SYNC_FUTURE_DAYS));
+    let local_tasks =
+        storage::read_tasks_for_date_range(&config.data.log_path, start_date, local_end_date)?;
+    let mut local_events =
+        storage::read_agenda_entries(&config.data.log_path, start_date, local_end_date)?;
     if !config.google.sync_tasks_to_calendar {
         local_events.retain(|item| item.kind == AgendaItemKind::Note);
     }
@@ -240,6 +259,8 @@ pub fn sync(config: &Config) -> Result<SyncReport, SyncError> {
         &mut state,
         &local_events,
         &remote_events,
+        start_date,
+        end_date,
         policy,
         &mut report,
     )?;
@@ -725,6 +746,17 @@ fn sync_tasks(
     for item in remote_items {
         remote_by_id.insert(item.id.clone(), item.clone());
     }
+    let claimed_remote: HashSet<String> =
+        state.tasks.values().map(|entry| entry.google_id.clone()).collect();
+    let mut remote_match: HashMap<String, Vec<RemoteTask>> = HashMap::new();
+    for item in remote_items {
+        if claimed_remote.contains(&item.id) {
+            continue;
+        }
+        let schedule = schedule_from_remote_task(item);
+        let key = task_match_key(item.title.as_deref().unwrap_or("Untitled task"), &schedule);
+        remote_match.entry(key).or_default().push(item.clone());
+    }
 
     for item in local_items {
         if item.kind != AgendaItemKind::Task {
@@ -735,50 +767,122 @@ fn sync_tasks(
         }
         let key = local_task_key(item);
         let hash = task_hash(item);
-        let stored = state.tasks.get(&key).cloned();
+        let stored = match state.tasks.get(&key).cloned() {
+            Some(entry) => Some(entry),
+            None => rekey_state_by_hash(&mut state.tasks, &key, &hash),
+        };
         let remote = stored
             .as_ref()
             .and_then(|entry| remote_by_id.get(&entry.google_id));
+        let match_key = task_match_key(&item.text, &item.schedule);
+        if stored.is_none() || remote.is_none() {
+            if let Some(matched_remote) = take_match(&mut remote_match, &match_key) {
+                let remote_hash = task_hash_from_remote(&matched_remote);
+                if remote_hash == hash {
+                    state.tasks.insert(
+                        key,
+                        SyncItem {
+                            google_id: matched_remote.id.clone(),
+                            hash,
+                            remote_updated: matched_remote.updated.clone(),
+                        },
+                    );
+                } else {
+                    report.conflicts += 1;
+                    match policy {
+                        ConflictPolicy::PreferLocal => {
+                            let updated = update_remote_task(
+                                client,
+                                access_token,
+                                &config.google.tasks_list_id,
+                                &matched_remote.id,
+                                item,
+                            )?;
+                            report.tasks_updated += 1;
+                            state.tasks.insert(
+                                key,
+                                SyncItem {
+                                    google_id: matched_remote.id.clone(),
+                                    hash,
+                                    remote_updated: updated
+                                        .updated
+                                        .clone()
+                                        .or(matched_remote.updated.clone()),
+                                },
+                            );
+                        }
+                        ConflictPolicy::PreferRemote => {
+                            let applied = apply_remote_task_update(item, &matched_remote)?;
+                            report.tasks_imported += 1;
+                            state.tasks.insert(
+                                key,
+                                SyncItem {
+                                    google_id: matched_remote.id.clone(),
+                                    hash: task_hash_from_update(&applied),
+                                    remote_updated: matched_remote.updated.clone(),
+                                },
+                            );
+                        }
+                    }
+                }
+                continue;
+            }
+        }
 
         match (stored, remote) {
             (Some(entry), Some(remote)) => {
                 let local_changed = entry.hash != hash;
+                let remote_hash = task_hash_from_remote(remote);
                 let remote_updated = remote.updated.clone();
-                let remote_changed = entry.remote_updated != remote_updated;
+                let remote_changed = entry.hash != remote_hash;
 
                 match (local_changed, remote_changed) {
                     (true, true) => {
-                        report.conflicts += 1;
-                        match policy {
-                            ConflictPolicy::PreferLocal => {
-                                let updated = update_remote_task(
-                                    client,
-                                    access_token,
-                                    &config.google.tasks_list_id,
-                                    &entry.google_id,
-                                    item,
-                                )?;
-                                report.tasks_updated += 1;
-                                state.tasks.insert(
-                                    key,
-                                    SyncItem {
-                                        google_id: entry.google_id,
-                                        hash,
-                                        remote_updated: updated.updated.clone().or(remote_updated),
-                                    },
-                                );
-                            }
-                            ConflictPolicy::PreferRemote => {
-                                let applied = apply_remote_task_update(item, remote)?;
-                                report.tasks_imported += 1;
-                                state.tasks.insert(
-                                    key,
-                                    SyncItem {
-                                        google_id: entry.google_id,
-                                        hash: task_hash_from_update(&applied),
-                                        remote_updated: remote_updated.clone(),
-                                    },
-                                );
+                        if hash == remote_hash {
+                            state.tasks.insert(
+                                key,
+                                SyncItem {
+                                    google_id: entry.google_id,
+                                    hash,
+                                    remote_updated: remote_updated.clone(),
+                                },
+                            );
+                        } else {
+                            report.conflicts += 1;
+                            match policy {
+                                ConflictPolicy::PreferLocal => {
+                                    let updated = update_remote_task(
+                                        client,
+                                        access_token,
+                                        &config.google.tasks_list_id,
+                                        &entry.google_id,
+                                        item,
+                                    )?;
+                                    report.tasks_updated += 1;
+                                    state.tasks.insert(
+                                        key,
+                                        SyncItem {
+                                            google_id: entry.google_id,
+                                            hash,
+                                            remote_updated: updated
+                                                .updated
+                                                .clone()
+                                                .or(remote_updated),
+                                        },
+                                    );
+                                }
+                                ConflictPolicy::PreferRemote => {
+                                    let applied = apply_remote_task_update(item, remote)?;
+                                    report.tasks_imported += 1;
+                                    state.tasks.insert(
+                                        key,
+                                        SyncItem {
+                                            google_id: entry.google_id,
+                                            hash: task_hash_from_update(&applied),
+                                            remote_updated: remote_updated.clone(),
+                                        },
+                                    );
+                                }
                             }
                         }
                     }
@@ -812,7 +916,18 @@ fn sync_tasks(
                             },
                         );
                     }
-                    (false, false) => {}
+                    (false, false) => {
+                        if entry.remote_updated != remote_updated {
+                            state.tasks.insert(
+                                key,
+                                SyncItem {
+                                    google_id: entry.google_id,
+                                    hash: entry.hash,
+                                    remote_updated: remote_updated.clone(),
+                                },
+                            );
+                        }
+                    }
                 }
             }
             (Some(_entry), None) => {
@@ -867,9 +982,21 @@ fn sync_tasks(
             let line = storage::compose_task_line(&update);
             let date = schedule_anchor_date(&update.schedule)
                 .unwrap_or_else(|| Local::now().date_naive());
+            let log_file = log_path_for_date(&config.data.log_path, date);
+            if let Some(line_number) = find_last_line_number(&log_file, &line) {
+                let key = local_task_key_for_path(&log_file, line_number);
+                state.tasks.insert(
+                    key,
+                    SyncItem {
+                        google_id: remote.id.clone(),
+                        hash: task_hash_from_update(&update),
+                        remote_updated: remote.updated.clone(),
+                    },
+                );
+                continue;
+            }
             storage::append_entry_to_date(&config.data.log_path, date, &line)?;
             report.tasks_imported += 1;
-            let log_file = log_path_for_date(&config.data.log_path, date);
             let key = find_last_line_number(&log_file, &line)
                 .map(|line_number| local_task_key_for_path(&log_file, line_number))
                 .unwrap_or_else(|| local_key_for_import(&config.data.log_path, date, &line));
@@ -894,6 +1021,8 @@ fn sync_events(
     state: &mut SyncState,
     local_items: &[AgendaItem],
     remote_items: &[RemoteEvent],
+    remote_start: NaiveDate,
+    remote_end: NaiveDate,
     policy: ConflictPolicy,
     report: &mut SyncReport,
 ) -> Result<(), SyncError> {
@@ -901,57 +1030,137 @@ fn sync_events(
     for item in remote_items {
         remote_by_id.insert(item.id.clone(), item.clone());
     }
+    let claimed_remote: HashSet<String> =
+        state.events.values().map(|entry| entry.google_id.clone()).collect();
+    let mut remote_match: HashMap<String, Vec<RemoteEvent>> = HashMap::new();
+    let mut remote_text_match: HashMap<String, Vec<RemoteEvent>> = HashMap::new();
+    for item in remote_items {
+        if claimed_remote.contains(&item.id) {
+            continue;
+        }
+        let schedule = schedule_from_remote_event(item);
+        let anchor_date = schedule_anchor_date(&schedule)
+            .unwrap_or_else(|| Local::now().date_naive());
+        let key = event_match_key(
+            item.summary.as_deref().unwrap_or("Untitled event"),
+            &schedule,
+            anchor_date,
+        );
+        remote_match.entry(key).or_default().push(item.clone());
+        let text_key = normalize_match_text(&normalize_event_text(
+            item.summary.as_deref().unwrap_or("Untitled event"),
+        ));
+        remote_text_match.entry(text_key).or_default().push(item.clone());
+    }
 
     for item in local_items {
         if item.kind == AgendaItemKind::Task && is_carryover_task_text(&item.text) {
             continue;
         }
+        if item.kind == AgendaItemKind::Task && item.schedule.is_empty() {
+            continue;
+        }
         let key = local_event_key(item);
         let hash = event_hash(item);
-        let stored = state.events.get(&key).cloned();
-        let remote = stored
+        let out_of_range = item.date < remote_start || item.date > remote_end;
+        let mut stored = match state.events.get(&key).cloned() {
+            Some(entry) => Some(entry),
+            None => rekey_state_by_hash(&mut state.events, &key, &hash),
+        };
+        let mut remote = stored
             .as_ref()
             .and_then(|entry| remote_by_id.get(&entry.google_id));
+        let match_key = event_match_key(&item.text, &item.schedule, item.date);
+        if stored.is_none() || remote.is_none() {
+            if let Some(matched_remote) = take_match(&mut remote_match, &match_key) {
+                let entry = SyncItem {
+                    google_id: matched_remote.id.clone(),
+                    hash: event_hash_from_remote(&matched_remote),
+                    remote_updated: matched_remote.updated.clone(),
+                };
+                state.events.insert(key.clone(), entry.clone());
+                stored = Some(entry);
+                remote = remote_by_id.get(&matched_remote.id);
+            } else if !out_of_range {
+                let text_key = normalize_match_text(&normalize_event_text(&item.text));
+                if let Some(matched_remote) =
+                    take_unique_match(&mut remote_text_match, &text_key)
+                {
+                    let schedule = schedule_from_remote_event(&matched_remote);
+                    let anchor_date = schedule_anchor_date(&schedule)
+                        .unwrap_or_else(|| Local::now().date_naive());
+                    let strict_key = event_match_key(
+                        matched_remote.summary.as_deref().unwrap_or("Untitled event"),
+                        &schedule,
+                        anchor_date,
+                    );
+                    remove_event_match(&mut remote_match, &strict_key, &matched_remote.id);
+                    let entry = SyncItem {
+                        google_id: matched_remote.id.clone(),
+                        hash: event_hash_from_remote(&matched_remote),
+                        remote_updated: matched_remote.updated.clone(),
+                    };
+                    state.events.insert(key.clone(), entry.clone());
+                    stored = Some(entry);
+                    remote = remote_by_id.get(&matched_remote.id);
+                }
+            }
+        }
 
         match (stored, remote) {
             (Some(entry), Some(remote)) => {
                 let local_changed = entry.hash != hash;
+                let remote_hash = event_hash_from_remote(remote);
                 let remote_updated = remote.updated.clone();
-                let remote_changed = entry.remote_updated != remote_updated;
+                let remote_changed = entry.hash != remote_hash;
 
                 match (local_changed, remote_changed) {
                     (true, true) => {
-                        report.conflicts += 1;
-                        match policy {
-                            ConflictPolicy::PreferLocal => {
-                                let updated = update_remote_event(
-                                    client,
-                                    access_token,
-                                    &config.google.calendar_id,
-                                    &entry.google_id,
-                                    item,
-                                )?;
-                                report.events_updated += 1;
-                                state.events.insert(
-                                    key,
-                                    SyncItem {
-                                        google_id: entry.google_id,
-                                        hash,
-                                        remote_updated: updated.updated.clone().or(remote_updated),
-                                    },
-                                );
-                            }
-                            ConflictPolicy::PreferRemote => {
-                                let applied = apply_remote_event_update(item, remote)?;
-                                report.events_imported += 1;
-                                state.events.insert(
-                                    key,
-                                    SyncItem {
-                                        google_id: entry.google_id,
-                                        hash: event_hash_from_update(&applied),
-                                        remote_updated: remote_updated.clone(),
-                                    },
-                                );
+                        if hash == remote_hash {
+                            state.events.insert(
+                                key,
+                                SyncItem {
+                                    google_id: entry.google_id,
+                                    hash,
+                                    remote_updated: remote_updated.clone(),
+                                },
+                            );
+                        } else {
+                            report.conflicts += 1;
+                            match policy {
+                                ConflictPolicy::PreferLocal => {
+                                    let updated = update_remote_event(
+                                        client,
+                                        access_token,
+                                        &config.google.calendar_id,
+                                        &entry.google_id,
+                                        item,
+                                    )?;
+                                    report.events_updated += 1;
+                                    state.events.insert(
+                                        key,
+                                        SyncItem {
+                                            google_id: entry.google_id,
+                                            hash,
+                                            remote_updated: updated
+                                                .updated
+                                                .clone()
+                                                .or(remote_updated),
+                                        },
+                                    );
+                                }
+                                ConflictPolicy::PreferRemote => {
+                                    let applied = apply_remote_event_update(item, remote)?;
+                                    report.events_imported += 1;
+                                    state.events.insert(
+                                        key,
+                                        SyncItem {
+                                            google_id: entry.google_id,
+                                            hash: event_hash_from_update(&applied),
+                                            remote_updated: remote_updated.clone(),
+                                        },
+                                    );
+                                }
                             }
                         }
                     }
@@ -985,25 +1194,58 @@ fn sync_events(
                             },
                         );
                     }
-                    (false, false) => {}
+                    (false, false) => {
+                        if entry.remote_updated != remote_updated {
+                            state.events.insert(
+                                key,
+                                SyncItem {
+                                    google_id: entry.google_id,
+                                    hash: entry.hash,
+                                    remote_updated: remote_updated.clone(),
+                                },
+                            );
+                        }
+                    }
                 }
             }
-            (Some(_entry), None) => {
-                let created = create_remote_event(
-                    client,
-                    access_token,
-                    &config.google.calendar_id,
-                    item,
-                )?;
-                report.events_created += 1;
-                state.events.insert(
-                    key,
-                    SyncItem {
-                        google_id: created.id,
-                        hash,
-                        remote_updated: created.updated,
-                    },
-                );
+            (Some(entry), None) => {
+                if out_of_range {
+                    let local_changed = entry.hash != hash;
+                    if local_changed {
+                        let updated = update_remote_event(
+                            client,
+                            access_token,
+                            &config.google.calendar_id,
+                            &entry.google_id,
+                            item,
+                        )?;
+                        report.events_updated += 1;
+                        state.events.insert(
+                            key,
+                            SyncItem {
+                                google_id: entry.google_id,
+                                hash,
+                                remote_updated: updated.updated,
+                            },
+                        );
+                    }
+                } else {
+                    let created = create_remote_event(
+                        client,
+                        access_token,
+                        &config.google.calendar_id,
+                        item,
+                    )?;
+                    report.events_created += 1;
+                    state.events.insert(
+                        key,
+                        SyncItem {
+                            google_id: created.id,
+                            hash,
+                            remote_updated: created.updated,
+                        },
+                    );
+                }
             }
             (None, _) => {
                 let created = create_remote_event(
@@ -1041,9 +1283,21 @@ fn sync_events(
             let line = storage::compose_note_line(&update);
             let date = schedule_anchor_date(&update.schedule)
                 .unwrap_or_else(|| Local::now().date_naive());
+            let log_file = log_path_for_date(&config.data.log_path, date);
+            if let Some(line_number) = find_last_line_number(&log_file, &line) {
+                let key = local_event_key_for_path(&log_file, line_number);
+                state.events.insert(
+                    key,
+                    SyncItem {
+                        google_id: remote.id.clone(),
+                        hash: event_hash_from_update(&update),
+                        remote_updated: remote.updated.clone(),
+                    },
+                );
+                continue;
+            }
             storage::append_entry_to_date(&config.data.log_path, date, &line)?;
             report.events_imported += 1;
-            let log_file = log_path_for_date(&config.data.log_path, date);
             let key = find_last_line_number(&log_file, &line)
                 .map(|line_number| local_event_key_for_path(&log_file, line_number))
                 .unwrap_or_else(|| local_key_for_import(&config.data.log_path, date, &line));
@@ -1234,9 +1488,9 @@ fn update_remote_event(
     item: &AgendaItem,
 ) -> Result<RemoteEvent, SyncError> {
     let url = format!("{CALENDAR_API}/calendars/{calendar_id}/events/{event_id}");
-    let (start, end) = schedule_to_event_times(&item.schedule, item.date);
-    let update = EventUpdateRequest {
-        summary: item.text.clone(),
+    let (start, end) = schedule_to_event_times_patch(&item.schedule, item.date);
+    let update = EventUpdatePatchRequest {
+        summary: event_summary_text(&item.text),
         start,
         end,
     };
@@ -1246,15 +1500,22 @@ fn update_remote_event(
         .json(&update)
         .send()
         .map_err(|e| SyncError::Request(e.to_string()))?;
-    if !resp.status().is_success() {
+    let status = resp.status();
+    let body = resp
+        .text()
+        .map_err(|e| SyncError::Request(e.to_string()))?;
+    if !status.is_success() {
         return Err(SyncError::Request(format!(
-            "Event update failed: HTTP {}",
-            resp.status()
+            "Event update failed ({} | {} | {}): HTTP {}: {}",
+            event_id,
+            item.text,
+            schedule_signature(&item.schedule),
+            status,
+            truncate_error(&body)
         )));
     }
-    let updated: RemoteEvent = resp
-        .json()
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let updated: RemoteEvent =
+        serde_json::from_str(&body).map_err(|e| SyncError::Request(e.to_string()))?;
     Ok(updated)
 }
 
@@ -1267,7 +1528,7 @@ fn create_remote_event(
     let url = format!("{CALENDAR_API}/calendars/{calendar_id}/events");
     let (start, end) = schedule_to_event_times(&item.schedule, item.date);
     let update = EventUpdateRequest {
-        summary: item.text.clone(),
+        summary: event_summary_text(&item.text),
         start,
         end,
     };
@@ -1277,15 +1538,19 @@ fn create_remote_event(
         .json(&update)
         .send()
         .map_err(|e| SyncError::Request(e.to_string()))?;
-    if !resp.status().is_success() {
+    let status = resp.status();
+    let body = resp
+        .text()
+        .map_err(|e| SyncError::Request(e.to_string()))?;
+    if !status.is_success() {
         return Err(SyncError::Request(format!(
-            "Event create failed: HTTP {}",
-            resp.status()
+            "Event create failed: HTTP {}: {}",
+            status,
+            truncate_error(&body)
         )));
     }
-    let created: RemoteEvent = resp
-        .json()
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let created: RemoteEvent =
+        serde_json::from_str(&body).map_err(|e| SyncError::Request(e.to_string()))?;
     Ok(created)
 }
 
@@ -1294,21 +1559,27 @@ fn apply_remote_event_update(
     remote: &RemoteEvent,
 ) -> Result<NoteLineUpdate, SyncError> {
     let schedule = schedule_from_remote_event(remote);
-    let update = NoteLineUpdate {
-        text: remote
-            .summary
-            .clone()
-            .unwrap_or_else(|| local.text.clone()),
-        schedule: schedule.clone(),
-    };
-    storage::update_note_line(&local.file_path, local.line_number, update)?;
-    Ok(NoteLineUpdate {
-        text: remote
-            .summary
-            .clone()
-            .unwrap_or_else(|| local.text.clone()),
-        schedule,
-    })
+    let raw_text = remote.summary.clone().unwrap_or_else(|| local.text.clone());
+    let text = normalize_event_text(&raw_text);
+    match local.kind {
+        AgendaItemKind::Task => {
+            let update = TaskLineUpdate {
+                text: text.clone(),
+                is_done: local.is_done,
+                priority: local.priority,
+                schedule: schedule.clone(),
+            };
+            storage::update_task_line(&local.file_path, local.line_number, update)?;
+        }
+        _ => {
+            let update = NoteLineUpdate {
+                text: text.clone(),
+                schedule: schedule.clone(),
+            };
+            storage::update_note_line(&local.file_path, local.line_number, update)?;
+        }
+    }
+    Ok(NoteLineUpdate { text, schedule })
 }
 
 fn local_task_key(item: &AgendaItem) -> String {
@@ -1332,6 +1603,150 @@ fn local_key_for_import(log_path: &Path, date: NaiveDate, line: &str) -> String 
     format!("import:{}:{}", path.to_string_lossy(), stable_hash(line))
 }
 
+fn take_match<T>(matches: &mut HashMap<String, Vec<T>>, key: &str) -> Option<T> {
+    let (item, empty) = match matches.get_mut(key) {
+        Some(values) => {
+            let item = values.pop();
+            let empty = values.is_empty();
+            (item, empty)
+        }
+        None => return None,
+    };
+    if empty {
+        matches.remove(key);
+    }
+    item
+}
+
+fn take_unique_match<T>(matches: &mut HashMap<String, Vec<T>>, key: &str) -> Option<T> {
+    let Some(values) = matches.get_mut(key) else {
+        return None;
+    };
+    if values.len() != 1 {
+        return None;
+    }
+    let item = values.pop();
+    matches.remove(key);
+    item
+}
+
+fn remove_event_match(
+    matches: &mut HashMap<String, Vec<RemoteEvent>>,
+    key: &str,
+    id: &str,
+) {
+    if let Some(values) = matches.get_mut(key) {
+        values.retain(|item| item.id != id);
+        if values.is_empty() {
+            matches.remove(key);
+        }
+    }
+}
+
+fn rekey_state_by_hash(
+    state: &mut HashMap<String, SyncItem>,
+    key: &str,
+    hash: &str,
+) -> Option<SyncItem> {
+    let mut match_key = None;
+    for (existing_key, item) in state.iter() {
+        if item.hash == hash {
+            if match_key.is_some() {
+                return None;
+            }
+            match_key = Some(existing_key.clone());
+        }
+    }
+    let match_key = match_key?;
+    if match_key == key {
+        return state.get(key).cloned();
+    }
+    let entry = state.remove(&match_key)?;
+    let cloned = entry.clone();
+    state.insert(key.to_string(), entry);
+    Some(cloned)
+}
+
+fn normalize_match_text(text: &str) -> String {
+    text.trim().to_lowercase()
+}
+
+fn normalize_event_text(text: &str) -> String {
+    let trimmed = text.trim();
+    let trimmed = strip_task_checkbox_prefix(trimmed);
+    let trimmed = strip_list_prefix(trimmed);
+    trimmed.trim().to_string()
+}
+
+fn strip_task_checkbox_prefix(text: &str) -> &str {
+    if let Some(rest) = text.strip_prefix("- [ ] ") {
+        return rest;
+    }
+    if let Some(rest) = text.strip_prefix("- [x] ") {
+        return rest;
+    }
+    if let Some(rest) = text.strip_prefix("- [X] ") {
+        return rest;
+    }
+    text
+}
+
+fn strip_list_prefix(text: &str) -> &str {
+    if let Some(rest) = text.strip_prefix("- ") {
+        return rest;
+    }
+    if let Some(rest) = text.strip_prefix("* ") {
+        return rest;
+    }
+    if let Some(rest) = text.strip_prefix("+ ") {
+        return rest;
+    }
+    text
+}
+
+fn event_summary_text(text: &str) -> String {
+    let normalized = normalize_event_text(text);
+    if normalized.is_empty() {
+        "Untitled event".to_string()
+    } else {
+        normalized
+    }
+}
+
+fn task_match_key(text: &str, schedule: &TaskSchedule) -> String {
+    let normalized = normalize_match_text(text);
+    let due = schedule_to_task_due(schedule).unwrap_or_default();
+    format!("{normalized}|{due}")
+}
+
+fn event_match_key(text: &str, schedule: &TaskSchedule, fallback_date: NaiveDate) -> String {
+    let normalized = normalize_match_text(&normalize_event_text(text));
+    let date = schedule
+        .scheduled
+        .or(schedule.due)
+        .or(schedule.start)
+        .unwrap_or(fallback_date);
+    let time = schedule
+        .time
+        .map(|t| t.format("%H:%M").to_string())
+        .unwrap_or_default();
+    let duration = if schedule.time.is_some() {
+        schedule
+            .duration_minutes
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| DEFAULT_EVENT_DURATION_MINUTES.to_string())
+    } else {
+        schedule
+            .duration_minutes
+            .map(|m| m.to_string())
+            .unwrap_or_default()
+    };
+    format!(
+        "{normalized}|{}|{time}|{duration}",
+        date.format("%Y-%m-%d")
+    )
+}
+
 fn task_hash(item: &AgendaItem) -> String {
     let schedule = schedule_signature(&item.schedule);
     let priority = item.priority.map(|p| p.as_char()).unwrap_or('-');
@@ -1343,7 +1758,8 @@ fn task_hash(item: &AgendaItem) -> String {
 
 fn event_hash(item: &AgendaItem) -> String {
     let schedule = schedule_signature(&item.schedule);
-    stable_hash(&format!("{}|{}", item.text, schedule))
+    let text = normalize_event_text(&item.text);
+    stable_hash(&format!("{}|{}", text, schedule))
 }
 
 fn task_hash_from_update(update: &TaskLineUpdate) -> String {
@@ -1357,7 +1773,32 @@ fn task_hash_from_update(update: &TaskLineUpdate) -> String {
 
 fn event_hash_from_update(update: &NoteLineUpdate) -> String {
     let schedule = schedule_signature(&update.schedule);
-    stable_hash(&format!("{}|{}", update.text, schedule))
+    let text = normalize_event_text(&update.text);
+    stable_hash(&format!("{}|{}", text, schedule))
+}
+
+fn task_hash_from_remote(remote: &RemoteTask) -> String {
+    let update = TaskLineUpdate {
+        text: remote
+            .title
+            .clone()
+            .unwrap_or_else(|| "Untitled task".to_string()),
+        is_done: remote.status.as_deref() == Some("completed"),
+        priority: None,
+        schedule: schedule_from_remote_task(remote),
+    };
+    task_hash_from_update(&update)
+}
+
+fn event_hash_from_remote(remote: &RemoteEvent) -> String {
+    let update = NoteLineUpdate {
+        text: remote
+            .summary
+            .clone()
+            .unwrap_or_else(|| "Untitled event".to_string()),
+        schedule: schedule_from_remote_event(remote),
+    };
+    event_hash_from_update(&update)
 }
 
 fn schedule_signature(schedule: &TaskSchedule) -> String {
@@ -1401,8 +1842,8 @@ fn schedule_to_event_times(
 ) -> (EventDateTime, EventDateTime) {
     let date = schedule
         .scheduled
-        .or(schedule.start)
         .or(schedule.due)
+        .or(schedule.start)
         .unwrap_or(fallback_date);
     if let Some(time) = schedule.time {
         let start = to_rfc3339(date, time);
@@ -1431,6 +1872,49 @@ fn schedule_to_event_times(
             date: Some(date.format("%Y-%m-%d").to_string()),
         };
         let end = EventDateTime {
+            date_time: None,
+            date: Some((date + Duration::days(1)).format("%Y-%m-%d").to_string()),
+        };
+        (start, end)
+    }
+}
+
+fn schedule_to_event_times_patch(
+    schedule: &TaskSchedule,
+    fallback_date: NaiveDate,
+) -> (EventDateTimePatch, EventDateTimePatch) {
+    let date = schedule
+        .scheduled
+        .or(schedule.due)
+        .or(schedule.start)
+        .unwrap_or(fallback_date);
+    if let Some(time) = schedule.time {
+        let start = to_rfc3339(date, time);
+        let duration = schedule
+            .duration_minutes
+            .map(|m| m as i64)
+            .unwrap_or(DEFAULT_EVENT_DURATION_MINUTES);
+        let start_dt = Local
+            .from_local_datetime(&NaiveDateTime::new(date, time))
+            .unwrap();
+        let end_dt = start_dt + Duration::minutes(duration);
+        let end = end_dt.to_rfc3339();
+        (
+            EventDateTimePatch {
+                date_time: Some(start),
+                date: None,
+            },
+            EventDateTimePatch {
+                date_time: Some(end),
+                date: None,
+            },
+        )
+    } else {
+        let start = EventDateTimePatch {
+            date_time: None,
+            date: Some(date.format("%Y-%m-%d").to_string()),
+        };
+        let end = EventDateTimePatch {
             date_time: None,
             date: Some((date + Duration::days(1)).format("%Y-%m-%d").to_string()),
         };
