@@ -1022,6 +1022,21 @@ pub fn read_lines_range(
     Ok(lines[start_line..=end_line].to_vec())
 }
 
+pub fn write_file_lines(file_path: &str, lines: &[String]) -> io::Result<()> {
+    let path = Path::new(file_path);
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut content = lines.join("\n");
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    fs::write(path, content)
+}
+
 pub fn append_tomato_to_line(file_path: &str, line_number: usize) -> io::Result<()> {
     let content = fs::read_to_string(file_path)?;
     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();

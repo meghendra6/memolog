@@ -1,11 +1,12 @@
 use crate::{
     app::App,
-    config::{EditorStyle, ThemePreset, google_token_path},
+    config::{EditorStyle, ThemePreset, config_path, google_token_path},
     integrations::google,
     models::{self, Priority},
     storage,
 };
 use chrono::{Duration, Local};
+use std::fs;
 
 pub fn open_tag_popup(app: &mut App) {
     if let Ok(tags) = storage::get_all_tags(&app.config.data.log_path) {
@@ -122,6 +123,16 @@ pub fn sync_google(app: &mut App) {
             app.toast(err.message());
         }
     }
+}
+
+pub fn open_config_in_composer(app: &mut App) {
+    let path = config_path();
+    if !path.exists() {
+        let _ = app.config.save_to_path(&path);
+    }
+    let content = fs::read_to_string(&path).unwrap_or_default();
+    let lines = content.lines().map(|line| line.to_string()).collect();
+    app.start_edit_raw_file(path.to_string_lossy().to_string(), lines);
 }
 
 fn next_priority(current: Option<Priority>) -> Option<Priority> {

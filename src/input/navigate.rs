@@ -20,6 +20,8 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         app.show_help_popup = true;
     } else if key_match(&key, &app.config.keybindings.global.tags) {
         actions::open_tag_popup(app);
+    } else if key_match(&key, &app.config.keybindings.global.edit_config) {
+        actions::open_config_in_composer(app);
     } else if key_match(&key, &app.config.keybindings.global.sync_google) {
         actions::sync_google(app);
     } else if key_match(&key, &app.config.keybindings.global.quit) {
