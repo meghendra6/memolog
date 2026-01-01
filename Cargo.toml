@@ -26,3 +26,4 @@ syntect = "5.2.0"
 reqwest = { version = "0.12.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde_json = "1.0.145"
 rand = "0.8.5"
+arboard = "3.4.1"
