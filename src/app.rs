@@ -6,6 +6,7 @@ use crate::models::{
     count_trailing_tomatoes, is_heading_timestamp_line, split_timestamp_line, strip_timestamp_prefix,
 };
 use crate::storage;
+use arboard::Clipboard;
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime, Timelike};
 use ratatui::widgets::ListState;
 use std::collections::HashMap;
@@ -1164,22 +1165,36 @@ impl<'a> App<'a> {
         self.set_yank_buffer_with_kind(text, false);
     }
 
+    pub fn set_yank_buffer_with_kind_and_clipboard(&mut self, text: String, linewise: bool) {
+        self.set_yank_buffer_with_kind(text, linewise);
+        copy_to_clipboard(&self.yank_buffer);
+    }
+
     pub fn set_yank_buffer_with_kind(&mut self, text: String, linewise: bool) {
         self.yank_buffer = text;
         self.yank_is_linewise = linewise;
         self.textarea.set_yank_text(self.yank_buffer.clone());
     }
 
-    pub fn show_visual_hint(&mut self, message: impl Into<String>) {
-        self.visual_hint_message = Some(message.into());
-        self.visual_hint_expiry = Some(Local::now() + Duration::seconds(2));
-        self.visual_hint_active = true;
-    }
+pub fn show_visual_hint(&mut self, message: impl Into<String>) {
+    self.visual_hint_message = Some(message.into());
+    self.visual_hint_expiry = Some(Local::now() + Duration::seconds(2));
+    self.visual_hint_active = true;
+}
 
-    pub fn clear_visual_hint(&mut self) {
-        self.visual_hint_message = None;
-        self.visual_hint_expiry = None;
-        self.visual_hint_active = false;
+pub fn clear_visual_hint(&mut self) {
+    self.visual_hint_message = None;
+    self.visual_hint_expiry = None;
+    self.visual_hint_active = false;
+}
+}
+
+fn copy_to_clipboard(text: &str) {
+    if text.trim().is_empty() {
+        return;
+    }
+    if let Ok(mut clipboard) = Clipboard::new() {
+        let _ = clipboard.set_text(text.to_string());
     }
 }
 
