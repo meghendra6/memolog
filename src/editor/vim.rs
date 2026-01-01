@@ -636,7 +636,7 @@ fn apply_operator(app: &mut App, operator: Operator, object: TextObject) {
 
     let modified = match operator {
         Operator::Yank => {
-            app.set_yank_buffer_with_kind(text, is_linewise);
+            app.set_yank_buffer_with_kind_and_clipboard(text, is_linewise);
             return;
         }
         Operator::Delete => {
