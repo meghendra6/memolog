@@ -33,6 +33,18 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         && key_match(&key, &app.config.keybindings.timeline.filter_all)
     {
         app.set_timeline_filter(TimelineFilter::All);
+    } else if app.navigate_focus == models::NavigateFocus::Timeline
+        && key_match(&key, &app.config.keybindings.timeline.context_work)
+    {
+        app.set_selected_entry_context(TimelineFilter::Work);
+    } else if app.navigate_focus == models::NavigateFocus::Timeline
+        && key_match(&key, &app.config.keybindings.timeline.context_personal)
+    {
+        app.set_selected_entry_context(TimelineFilter::Personal);
+    } else if app.navigate_focus == models::NavigateFocus::Timeline
+        && key_match(&key, &app.config.keybindings.timeline.context_clear)
+    {
+        app.set_selected_entry_context(TimelineFilter::All);
     } else if key_match(&key, &app.config.keybindings.global.help) {
         app.show_help_popup = true;
     } else if key_match(&key, &app.config.keybindings.global.tags) {
