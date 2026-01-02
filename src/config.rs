@@ -402,9 +402,9 @@ impl Default for TimelineBindings {
             filter_work: vec!["1".to_string()],
             filter_personal: vec!["2".to_string()],
             filter_all: vec!["3".to_string()],
-            context_work: vec!["alt+w".to_string()],
-            context_personal: vec!["alt+p".to_string()],
-            context_clear: vec!["alt+c".to_string()],
+            context_work: vec!["ctrl+w".to_string()],
+            context_personal: vec!["ctrl+e".to_string()],
+            context_clear: vec!["ctrl+r".to_string()],
             fold_toggle: vec!["tab".to_string()],
             fold_cycle: vec!["backtab".to_string()],
             toggle_todo: vec!["space".to_string()],
@@ -512,9 +512,9 @@ impl Default for ComposerBindings {
             task_toggle: vec!["ctrl+t".to_string()],
             priority_cycle: vec!["ctrl+p".to_string()],
             date_picker: vec!["ctrl+;".to_string()],
-            context_work: vec!["alt+w".to_string()],
-            context_personal: vec!["alt+p".to_string()],
-            context_clear: vec!["alt+c".to_string()],
+            context_work: vec!["ctrl+w".to_string()],
+            context_personal: vec!["ctrl+e".to_string()],
+            context_clear: vec!["ctrl+r".to_string()],
         }
     }
 }
