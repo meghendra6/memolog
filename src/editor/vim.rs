@@ -1,6 +1,6 @@
 use crate::{
     app::{App, PendingEditCommand},
-    config::key_match,
+    config::{key_code_for_shortcuts, key_match},
     editor::markdown,
     input::editing,
     models::{EditorMode, VisualKind},
@@ -9,7 +9,8 @@ use crossterm::event::{self, KeyCode, KeyModifiers};
 use tui_textarea::CursorMove;
 
 pub(crate) fn handle_editor_insert(app: &mut App, key: event::KeyEvent) {
-    if key.code == KeyCode::Char('u') && key.modifiers.contains(KeyModifiers::CONTROL) {
+    let key_code = key_code_for_shortcuts(&key);
+    if key_code == KeyCode::Char('u') && key.modifiers.contains(KeyModifiers::CONTROL) {
         if delete_to_line_start(app) {
             app.set_yank_buffer(app.textarea.yank_text());
             app.mark_insert_modified();
@@ -18,7 +19,7 @@ pub(crate) fn handle_editor_insert(app: &mut App, key: event::KeyEvent) {
         return;
     }
 
-    if key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL) {
+    if key_code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL) {
         if delete_previous_word(app) {
             app.set_yank_buffer(app.textarea.yank_text());
             app.mark_insert_modified();
@@ -66,7 +67,8 @@ pub(crate) fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
         return;
     }
 
-    if let KeyCode::Char(c) = key.code
+    let key_code = key_code_for_shortcuts(&key);
+    if let KeyCode::Char(c) = key_code
         && c.is_ascii_digit()
         && c != '0'
         && !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -76,7 +78,7 @@ pub(crate) fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
         return;
     }
 
-    if key.code == KeyCode::Char('r') && key.modifiers.contains(KeyModifiers::CONTROL) {
+    if key_code == KeyCode::Char('r') && key.modifiers.contains(KeyModifiers::CONTROL) {
         if app.editor_redo() {
             app.composer_dirty = true;
             clamp_cursor_for_normal(app);
@@ -84,7 +86,7 @@ pub(crate) fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
         return;
     }
 
-    if key.code == KeyCode::Char('u') && !key.modifiers.contains(KeyModifiers::CONTROL) {
+    if key_code == KeyCode::Char('u') && !key.modifiers.contains(KeyModifiers::CONTROL) {
         if app.editor_undo() {
             app.composer_dirty = true;
             clamp_cursor_for_normal(app);
@@ -92,7 +94,7 @@ pub(crate) fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
         return;
     }
 
-    match key.code {
+    match key_code {
         KeyCode::Char('i') => {
             enter_insert_mode(app);
         }
@@ -283,8 +285,9 @@ pub(crate) fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
 }
 
 pub(crate) fn handle_editor_visual(app: &mut App, key: event::KeyEvent, kind: VisualKind) {
+    let key_code = key_code_for_shortcuts(&key);
     if let Some(PendingEditCommand::GoToTop) = app.pending_command {
-        if key.code == KeyCode::Char('g') {
+        if key_code == KeyCode::Char('g') {
             app.pending_command = None;
             let count = take_count(app);
             move_doc_start_with_count(app, count);
@@ -293,7 +296,7 @@ pub(crate) fn handle_editor_visual(app: &mut App, key: event::KeyEvent, kind: Vi
         app.pending_command = None;
     }
 
-    if let KeyCode::Char(c) = key.code
+    if let KeyCode::Char(c) = key_code
         && c.is_ascii_digit()
         && c != '0'
         && !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -303,7 +306,7 @@ pub(crate) fn handle_editor_visual(app: &mut App, key: event::KeyEvent, kind: Vi
         return;
     }
 
-    match key.code {
+    match key_code {
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             let count = take_count_or_one(app);
             move_half_page_down(app, count);
@@ -461,13 +464,14 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
         return false;
     };
 
+    let key_code = key_code_for_shortcuts(&key);
     match pending {
         PendingEditCommand::Delete => {
-            if key.code == KeyCode::Char('i') {
+            if key_code == KeyCode::Char('i') {
                 app.pending_command = Some(PendingEditCommand::DeleteInner);
                 return true;
             }
-            if key.code == KeyCode::Char('d') {
+            if key_code == KeyCode::Char('d') {
                 let count = take_count_or_one(app);
                 if let Some(obj) = resolve_line_object(app, count) {
                     apply_operator(app, Operator::Delete, obj);
@@ -477,11 +481,11 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
             }
         }
         PendingEditCommand::Yank => {
-            if key.code == KeyCode::Char('i') {
+            if key_code == KeyCode::Char('i') {
                 app.pending_command = Some(PendingEditCommand::YankInner);
                 return true;
             }
-            if key.code == KeyCode::Char('y') {
+            if key_code == KeyCode::Char('y') {
                 let count = take_count_or_one(app);
                 if let Some(obj) = resolve_line_object(app, count) {
                     apply_operator(app, Operator::Yank, obj);
@@ -491,11 +495,11 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
             }
         }
         PendingEditCommand::Change => {
-            if key.code == KeyCode::Char('i') {
+            if key_code == KeyCode::Char('i') {
                 app.pending_command = Some(PendingEditCommand::ChangeInner);
                 return true;
             }
-            if key.code == KeyCode::Char('c') {
+            if key_code == KeyCode::Char('c') {
                 let count = take_count_or_one(app);
                 if let Some(obj) = resolve_line_object(app, count) {
                     apply_operator(app, Operator::Change, obj);
@@ -505,7 +509,7 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
             }
         }
         PendingEditCommand::GoToTop => {
-            if key.code == KeyCode::Char('g') {
+            if key_code == KeyCode::Char('g') {
                 app.pending_command = None;
                 let count = take_count(app);
                 move_doc_start_with_count(app, count);
@@ -527,7 +531,7 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
             }
         }
         PendingEditCommand::DeleteInner => {
-            if key.code == KeyCode::Char('w') {
+            if key_code == KeyCode::Char('w') {
                 let count = take_count_or_one(app);
                 if let Some(obj) = resolve_inner_word_object(app, count) {
                     apply_operator(app, Operator::Delete, obj);
@@ -537,7 +541,7 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
             }
         }
         PendingEditCommand::YankInner => {
-            if key.code == KeyCode::Char('w') {
+            if key_code == KeyCode::Char('w') {
                 let count = take_count_or_one(app);
                 if let Some(obj) = resolve_inner_word_object(app, count) {
                     apply_operator(app, Operator::Yank, obj);
@@ -547,7 +551,7 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
             }
         }
         PendingEditCommand::ChangeInner => {
-            if key.code == KeyCode::Char('w') {
+            if key_code == KeyCode::Char('w') {
                 let count = take_count_or_one(app);
                 if let Some(obj) = resolve_inner_word_object(app, count) {
                     apply_operator(app, Operator::Change, obj);
@@ -557,7 +561,7 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
             }
         }
         PendingEditCommand::ZCommand => {
-            match key.code {
+            match key_code {
                 KeyCode::Char('Z') => {
                     app.pending_command = None;
                     app.pending_count = 0;
