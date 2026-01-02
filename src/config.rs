@@ -378,6 +378,9 @@ pub struct TimelineBindings {
     pub filter_work: Vec<String>,
     pub filter_personal: Vec<String>,
     pub filter_all: Vec<String>,
+    pub context_work: Vec<String>,
+    pub context_personal: Vec<String>,
+    pub context_clear: Vec<String>,
     pub fold_toggle: Vec<String>,
     pub fold_cycle: Vec<String>,
     pub toggle_todo: Vec<String>,
@@ -399,6 +402,9 @@ impl Default for TimelineBindings {
             filter_work: vec!["1".to_string()],
             filter_personal: vec!["2".to_string()],
             filter_all: vec!["3".to_string()],
+            context_work: vec!["alt+w".to_string()],
+            context_personal: vec!["alt+p".to_string()],
+            context_clear: vec!["alt+c".to_string()],
             fold_toggle: vec!["tab".to_string()],
             fold_cycle: vec!["backtab".to_string()],
             toggle_todo: vec!["space".to_string()],
@@ -489,6 +495,9 @@ pub struct ComposerBindings {
     pub task_toggle: Vec<String>,
     pub priority_cycle: Vec<String>,
     pub date_picker: Vec<String>,
+    pub context_work: Vec<String>,
+    pub context_personal: Vec<String>,
+    pub context_clear: Vec<String>,
 }
 
 impl Default for ComposerBindings {
@@ -503,6 +512,9 @@ impl Default for ComposerBindings {
             task_toggle: vec!["ctrl+t".to_string()],
             priority_cycle: vec!["ctrl+p".to_string()],
             date_picker: vec!["ctrl+;".to_string()],
+            context_work: vec!["alt+w".to_string()],
+            context_personal: vec!["alt+p".to_string()],
+            context_clear: vec!["alt+c".to_string()],
         }
     }
 }

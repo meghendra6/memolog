@@ -3,7 +3,8 @@ use crate::integrations::google::{AuthDisplay, AuthPollResult};
 use crate::models::{
     DatePickerField, EditorMode, EntryIdentity, FoldOverride, FoldState, InputMode, LogEntry,
     NavigateFocus, PomodoroTarget, Priority, TaskFilter, TaskItem, TaskSchedule, TimelineFilter,
-    count_trailing_tomatoes, is_heading_timestamp_line, split_timestamp_line, strip_timestamp_prefix,
+    count_trailing_tomatoes, is_heading_timestamp_line, is_timestamped_line, split_timestamp_line,
+    strip_timestamp_prefix,
 };
 use crate::storage;
 use arboard::Clipboard;
@@ -850,6 +851,67 @@ impl<'a> App<'a> {
         }
     }
 
+    pub fn set_selected_entry_context(&mut self, context: TimelineFilter) {
+        let Some(i) = self.logs_state.selected() else {
+            self.toast("No entry selected.");
+            return;
+        };
+        let Some(entry) = self.logs.get(i) else {
+            self.toast("No entry selected.");
+            return;
+        };
+
+        let mut lines =
+            storage::read_lines_range(&entry.file_path, entry.line_number, entry.end_line)
+                .unwrap_or_else(|_| entry.content.lines().map(|s| s.to_string()).collect());
+        let changed = apply_context_tag_to_lines(&mut lines, context);
+        if !changed {
+            return;
+        }
+
+        if let Err(err) = storage::replace_entry_lines(
+            &entry.file_path,
+            entry.line_number,
+            entry.end_line,
+            &lines,
+        ) {
+            eprintln!("Failed to update context tag: {}", err);
+            self.toast("Failed to update context tag.");
+            return;
+        }
+
+        let message = match context {
+            TimelineFilter::Work => "Context set to Work.",
+            TimelineFilter::Personal => "Context set to Personal.",
+            TimelineFilter::All => "Context cleared.",
+        };
+        self.update_logs();
+        self.toast(message);
+    }
+
+    pub fn update_composer_context(&mut self, context: TimelineFilter) -> bool {
+        let mut lines = self.textarea.lines().to_vec();
+        let changed = apply_context_tag_to_lines(&mut lines, context);
+        if !changed {
+            return false;
+        }
+
+        let (row, col) = self.textarea.cursor();
+        self.textarea = TextArea::from(lines);
+        self.textarea.set_placeholder_text(PLACEHOLDER_COMPOSE);
+        let row = row.min(self.textarea.lines().len().saturating_sub(1));
+        let col = col.min(
+            self.textarea
+                .lines()
+                .get(row)
+                .map(|line| line.chars().count())
+                .unwrap_or(0),
+        );
+        self.textarea
+            .move_cursor(CursorMove::Jump(row as u16, col as u16));
+        true
+    }
+
     pub fn apply_task_filter(&mut self, reset_selection: bool) {
         self.tasks = match self.task_filter {
             TaskFilter::Open => self
@@ -1328,45 +1390,67 @@ fn is_carryover_task(text: &str) -> bool {
 }
 
 fn entry_matches_timeline_filter(entry: &LogEntry, filter: TimelineFilter) -> bool {
-    if filter == TimelineFilter::All {
-        return true;
-    }
     let (has_work, has_personal) = entry_context_flags(entry);
+    let is_default_personal = !has_work && !has_personal;
     match filter {
         TimelineFilter::All => true,
         TimelineFilter::Work => has_work,
-        TimelineFilter::Personal => has_personal,
+        TimelineFilter::Personal => has_personal || is_default_personal,
     }
 }
 
-fn entry_context_flags(entry: &LogEntry) -> (bool, bool) {
+pub(crate) fn entry_context_kind(entry: &LogEntry) -> TimelineFilter {
+    let (has_work, has_personal) = entry_context_flags(entry);
+    if has_work {
+        TimelineFilter::Work
+    } else if has_personal {
+        TimelineFilter::Personal
+    } else {
+        TimelineFilter::Personal
+    }
+}
+
+pub(crate) fn entry_context_flags(entry: &LogEntry) -> (bool, bool) {
     let mut has_work = false;
     let mut has_personal = false;
-    let mut chars = entry.content.chars().peekable();
 
-    while let Some(ch) = chars.next() {
-        if ch != '#' {
-            continue;
-        }
-
-        let mut tag = String::new();
-        while let Some(&next) = chars.peek() {
-            if is_context_tag_char(next) {
-                tag.push(next.to_ascii_lowercase());
-                chars.next();
-            } else {
-                break;
+    for line in entry.content.lines() {
+        let mut chars = line.char_indices().peekable();
+        while let Some((idx, ch)) = chars.next() {
+            if ch != '#' {
+                continue;
             }
-        }
 
-        if tag == "work" {
-            has_work = true;
-        } else if tag == "personal" {
-            has_personal = true;
-        }
+            let prev = line[..idx].chars().last();
+            let prev_ok = prev.map_or(true, |c| !is_context_tag_char(c));
 
-        if has_work && has_personal {
-            break;
+            let mut token_lower = String::new();
+            let mut end_idx = idx + ch.len_utf8();
+            while let Some(&(next_idx, next_ch)) = chars.peek() {
+                if is_context_tag_char(next_ch) {
+                    token_lower.push(next_ch.to_ascii_lowercase());
+                    end_idx = next_idx + next_ch.len_utf8();
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+
+            let next = line[end_idx..].chars().next();
+            let next_ok = next.map_or(true, |c| !is_context_tag_char(c));
+            if !(prev_ok && next_ok) {
+                continue;
+            }
+
+            if token_lower == "work" {
+                has_work = true;
+            } else if token_lower == "personal" {
+                has_personal = true;
+            }
+
+            if has_work && has_personal {
+                return (true, true);
+            }
         }
     }
 
@@ -1375,6 +1459,111 @@ fn entry_context_flags(entry: &LogEntry) -> (bool, bool) {
 
 fn is_context_tag_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
+pub(crate) fn strip_context_tags_from_line(line: &str) -> (String, bool) {
+    let mut out = String::with_capacity(line.len());
+    let mut changed = false;
+    let mut chars = line.char_indices().peekable();
+
+    while let Some((idx, ch)) = chars.next() {
+        if ch != '#' {
+            out.push(ch);
+            continue;
+        }
+
+        let prev = line[..idx].chars().last();
+        let prev_ok = prev.map_or(true, |c| !is_context_tag_char(c));
+
+        let mut token = String::new();
+        let mut token_lower = String::new();
+        let mut end_idx = idx + ch.len_utf8();
+        while let Some(&(next_idx, next_ch)) = chars.peek() {
+            if is_context_tag_char(next_ch) {
+                token.push(next_ch);
+                token_lower.push(next_ch.to_ascii_lowercase());
+                end_idx = next_idx + next_ch.len_utf8();
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        let next = line[end_idx..].chars().next();
+        let next_ok = next.map_or(true, |c| !is_context_tag_char(c));
+        let is_context = token_lower == "work" || token_lower == "personal";
+
+        if prev_ok && next_ok && is_context {
+            changed = true;
+            if let Some(&(_, next_ch)) = chars.peek() {
+                let out_has_ws =
+                    out.is_empty() || out.chars().last().is_some_and(|c| c.is_whitespace());
+                if next_ch.is_whitespace() && out_has_ws {
+                    chars.next();
+                }
+            }
+            continue;
+        }
+
+        out.push('#');
+        out.push_str(&token);
+    }
+
+    (out, changed)
+}
+
+fn apply_context_tag_to_lines(lines: &mut Vec<String>, context: TimelineFilter) -> bool {
+    let mut changed = false;
+    for line in lines.iter_mut() {
+        let (updated, did_change) = strip_context_tags_from_line(line);
+        if did_change {
+            *line = updated;
+            changed = true;
+        }
+    }
+
+    if context == TimelineFilter::All {
+        return changed;
+    }
+
+    let tag = match context {
+        TimelineFilter::Work => "#work",
+        TimelineFilter::Personal => "#personal",
+        TimelineFilter::All => return changed,
+    };
+
+    let mut start_idx = 0;
+    if lines
+        .first()
+        .is_some_and(|line| is_timestamped_line(line))
+    {
+        start_idx = 1;
+    }
+
+    let insert_idx = lines
+        .iter()
+        .enumerate()
+        .skip(start_idx)
+        .find(|(_, line)| !line.trim().is_empty())
+        .map(|(idx, _)| idx)
+        .unwrap_or(start_idx);
+
+    if insert_idx >= lines.len() {
+        lines.push(tag.to_string());
+        return true;
+    }
+
+    let target = &mut lines[insert_idx];
+    if target.trim().is_empty() {
+        *target = tag.to_string();
+    } else {
+        if !target.ends_with(' ') {
+            target.push(' ');
+        }
+        target.push_str(tag);
+    }
+
+    true
 }
 
 fn extract_fold_markers_from_logs(
