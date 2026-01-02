@@ -9,6 +9,67 @@ pub fn key_match(key: &KeyEvent, bindings: &[String]) -> bool {
     bindings.iter().any(|binding| is_match(key, binding))
 }
 
+pub fn key_code_for_shortcuts(key: &KeyEvent) -> KeyCode {
+    match key.code {
+        KeyCode::Char(c) => {
+            if let Some(mapped) = map_korean_2set_char(c) {
+                let mapped = if key.modifiers.contains(KeyModifiers::SHIFT)
+                    && mapped.is_ascii_alphabetic()
+                {
+                    mapped.to_ascii_uppercase()
+                } else {
+                    mapped
+                };
+                KeyCode::Char(mapped)
+            } else {
+                KeyCode::Char(c)
+            }
+        }
+        _ => key.code,
+    }
+}
+
+fn map_korean_2set_char(c: char) -> Option<char> {
+    let mapped = match c {
+        // Korean 2-set layout (compatibility jamo + jamo) to Latin key mapping.
+        '\u{3131}' | '\u{1100}' => 'r',
+        '\u{3132}' | '\u{1101}' => 'R',
+        '\u{3134}' | '\u{1102}' => 's',
+        '\u{3137}' | '\u{1103}' => 'e',
+        '\u{3138}' | '\u{1104}' => 'E',
+        '\u{3139}' | '\u{1105}' => 'f',
+        '\u{3141}' | '\u{1106}' => 'a',
+        '\u{3142}' | '\u{1107}' => 'q',
+        '\u{3143}' | '\u{1108}' => 'Q',
+        '\u{3145}' | '\u{1109}' => 't',
+        '\u{3146}' | '\u{110A}' => 'T',
+        '\u{3147}' | '\u{110B}' => 'd',
+        '\u{3148}' | '\u{110C}' => 'w',
+        '\u{3149}' | '\u{110D}' => 'W',
+        '\u{314A}' | '\u{110E}' => 'c',
+        '\u{314B}' | '\u{110F}' => 'z',
+        '\u{314C}' | '\u{1110}' => 'x',
+        '\u{314D}' | '\u{1111}' => 'v',
+        '\u{314E}' | '\u{1112}' => 'g',
+        '\u{314F}' | '\u{1161}' => 'k',
+        '\u{3150}' | '\u{1162}' => 'o',
+        '\u{3151}' | '\u{1163}' => 'i',
+        '\u{3152}' | '\u{1164}' => 'O',
+        '\u{3153}' | '\u{1165}' => 'j',
+        '\u{3154}' | '\u{1166}' => 'p',
+        '\u{3155}' | '\u{1167}' => 'u',
+        '\u{3156}' | '\u{1168}' => 'P',
+        '\u{3157}' | '\u{1169}' => 'h',
+        '\u{315B}' | '\u{116D}' => 'y',
+        '\u{315C}' | '\u{116E}' => 'n',
+        '\u{3160}' | '\u{1172}' => 'b',
+        '\u{3161}' | '\u{1173}' => 'm',
+        '\u{3163}' | '\u{1175}' => 'l',
+        _ => return None,
+    };
+    Some(mapped)
+}
+
 fn is_match(key: &KeyEvent, binding: &str) -> bool {
     let binding = binding.to_lowercase();
     let parts: Vec<&str> = binding.split('+').collect();
@@ -47,9 +108,10 @@ fn is_match(key: &KeyEvent, binding: &str) -> bool {
     }
 
     // KeyCode match (case-insensitive for Char).
-    let code_matches = if key.code == target_code {
+    let key_code = key_code_for_shortcuts(key);
+    let code_matches = if key_code == target_code {
         true
-    } else if let (KeyCode::Char(c), KeyCode::Char(tc)) = (key.code, target_code) {
+    } else if let (KeyCode::Char(c), KeyCode::Char(tc)) = (key_code, target_code) {
         c.to_lowercase().next() == Some(tc)
     } else {
         false
@@ -895,7 +957,8 @@ fn remove_keybinding(list: &mut Vec<String>, key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Theme, ThemePreset};
+    use super::{key_match, Theme, ThemePreset};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
     fn presets_construct_without_panicking() {
@@ -917,5 +980,22 @@ mod tests {
             Some(ThemePreset::SolarizedLight)
         );
         assert_eq!(ThemePreset::from_name("unknown"), None);
+    }
+
+    #[test]
+    fn key_match_maps_korean_jamo_to_latin() {
+        let key = KeyEvent::new(KeyCode::Char('\u{3131}'), KeyModifiers::NONE);
+        assert!(key_match(&key, &[String::from("r")]));
+
+        let key = KeyEvent::new(KeyCode::Char('\u{3153}'), KeyModifiers::NONE);
+        assert!(key_match(&key, &[String::from("j")]));
+
+        let key = KeyEvent::new(KeyCode::Char('\u{3152}'), KeyModifiers::SHIFT);
+        assert!(key_match(&key, &[String::from("shift+o")]));
+        assert!(!key_match(&key, &[String::from("o")]));
+
+        let key = KeyEvent::new(KeyCode::Char('\u{314E}'), KeyModifiers::SHIFT);
+        assert!(key_match(&key, &[String::from("shift+g")]));
+        assert!(!key_match(&key, &[String::from("g")]));
     }
 }
