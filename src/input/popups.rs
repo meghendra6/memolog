@@ -1,6 +1,6 @@
 use crate::{
     app::App,
-    config::{self, EditorStyle, ThemePreset, config_path, key_match},
+    config::{self, key_code_for_shortcuts, key_match, config_path, EditorStyle, ThemePreset},
     date_input::{parse_duration_input, parse_relative_date_input, parse_time_input},
     editor::markdown,
     input::editing,
@@ -77,13 +77,14 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
 }
 
 fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
+    let key_code = key_code_for_shortcuts(&key);
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
         app.show_memo_preview_popup = false;
         app.memo_preview_entry = None;
         return;
     }
 
-    if let KeyCode::Char('e') | KeyCode::Char('E') = key.code {
+    if matches!(key_code, KeyCode::Char('e') | KeyCode::Char('E')) {
         if let Some(entry) = app.memo_preview_entry.clone() {
             app.show_memo_preview_popup = false;
             app.memo_preview_entry = None;
@@ -101,7 +102,7 @@ fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    match key.code {
+    match key_code {
         KeyCode::PageUp => {
             app.memo_preview_scroll = app.memo_preview_scroll.saturating_sub(5);
         }
@@ -113,6 +114,7 @@ fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_date_picker_popup(app: &mut App, key: KeyEvent) {
+    let key_code = key_code_for_shortcuts(&key);
     if app.date_picker_input_mode {
         handle_date_picker_relative_input(app, key);
         return;
@@ -139,7 +141,7 @@ fn handle_date_picker_popup(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    match key.code {
+    match key_code {
         KeyCode::Left => {
             adjust_date_picker_value(app, -1, 0);
         }
@@ -394,7 +396,8 @@ enum DatePickerValue {
 }
 
 fn handle_exit_popup(app: &mut App, key: KeyEvent) {
-    match key.code {
+    let key_code = key_code_for_shortcuts(&key);
+    match key_code {
         KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
             app.show_exit_popup = false;
             app.commit_insert_group();

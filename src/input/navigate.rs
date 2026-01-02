@@ -1,13 +1,14 @@
 use crate::{
     actions,
     app::App,
-    config::key_match,
+    config::{key_code_for_shortcuts, key_match},
     models::{self, InputMode},
 };
 use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
+    let key_code = key_code_for_shortcuts(&key);
     if app.navigate_focus == models::NavigateFocus::Timeline
         && key_match(&key, &app.config.keybindings.timeline.fold_toggle)
     {
@@ -27,7 +28,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     } else if key_match(&key, &app.config.keybindings.global.quit) {
         app.quit();
     } else if key.modifiers.contains(KeyModifiers::CONTROL) {
-        let handled = match key.code {
+        let handled = match key_code {
             KeyCode::Char('h')
                 if matches!(
                     app.navigate_focus,
