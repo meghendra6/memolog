@@ -965,6 +965,36 @@ impl Config {
             changed = true;
         }
 
+        let migrated_timeline = migrate_single_binding(
+            &mut self.keybindings.timeline.context_work,
+            "alt+w",
+            "ctrl+w",
+        ) | migrate_single_binding(
+            &mut self.keybindings.timeline.context_personal,
+            "alt+p",
+            "ctrl+e",
+        ) | migrate_single_binding(
+            &mut self.keybindings.timeline.context_clear,
+            "alt+c",
+            "ctrl+r",
+        );
+        let migrated_composer = migrate_single_binding(
+            &mut self.keybindings.composer.context_work,
+            "alt+w",
+            "ctrl+w",
+        ) | migrate_single_binding(
+            &mut self.keybindings.composer.context_personal,
+            "alt+p",
+            "ctrl+e",
+        ) | migrate_single_binding(
+            &mut self.keybindings.composer.context_clear,
+            "alt+c",
+            "ctrl+r",
+        );
+        if migrated_timeline || migrated_composer {
+            changed = true;
+        }
+
         changed
     }
 }
@@ -973,6 +1003,14 @@ fn remove_keybinding(list: &mut Vec<String>, key: &str) -> bool {
     let before = list.len();
     list.retain(|k| !k.eq_ignore_ascii_case(key));
     before != list.len()
+}
+
+fn migrate_single_binding(list: &mut Vec<String>, old: &str, new: &str) -> bool {
+    if list.len() == 1 && list[0].eq_ignore_ascii_case(old) {
+        list[0] = new.to_string();
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
