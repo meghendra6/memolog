@@ -12,12 +12,18 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+const CARRYOVER_CHECKED_MARKER: &str = "<!-- memolog:carryover-checked -->";
+
 pub fn ensure_log_dir(log_path: &Path) -> io::Result<()> {
     let path = PathBuf::from(log_path);
     if !path.exists() {
         fs::create_dir_all(path)?;
     }
     Ok(())
+}
+
+fn is_carryover_marker_line(line: &str) -> bool {
+    line.trim() == CARRYOVER_CHECKED_MARKER
 }
 
 fn get_today_file_path(log_path: &Path) -> PathBuf {
@@ -31,6 +37,35 @@ fn get_file_path_for_date(log_path: &Path, date: &str) -> PathBuf {
     let mut path = PathBuf::from(log_path);
     path.push(format!("{date}.md"));
     path
+}
+
+fn has_carryover_marker(log_path: &Path, date: &str) -> io::Result<bool> {
+    let path = get_file_path_for_date(log_path, date);
+    if !path.exists() {
+        return Ok(false);
+    }
+    let content = fs::read_to_string(path)?;
+    Ok(content.lines().any(is_carryover_marker_line))
+}
+
+fn ensure_carryover_marker(log_path: &Path, date: &str) -> io::Result<()> {
+    ensure_log_dir(log_path)?;
+    let path = get_file_path_for_date(log_path, date);
+    let mut existing = String::new();
+    if path.exists() {
+        existing = fs::read_to_string(&path).unwrap_or_default();
+        if existing.lines().any(is_carryover_marker_line) {
+            return Ok(());
+        }
+    }
+
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        file.write_all(b"\n")?;
+    }
+    file.write_all(CARRYOVER_CHECKED_MARKER.as_bytes())?;
+    file.write_all(b"\n")?;
+    Ok(())
 }
 
 pub fn append_entry(log_path: &Path, content: &str) -> io::Result<()> {
@@ -342,7 +377,7 @@ fn parse_log_content(content: &str, path_str: &str) -> Vec<LogEntry> {
     let lines: Vec<&str> = content.lines().collect();
 
     for (i, line) in lines.iter().enumerate() {
-        if line.contains("System: Carryover Checked") {
+        if line.contains("System: Carryover Checked") || is_carryover_marker_line(line) {
             continue;
         }
 
@@ -376,7 +411,7 @@ fn parse_log_content(content: &str, path_str: &str) -> Vec<LogEntry> {
 
 fn next_non_empty_is_timestamp(lines: &[&str], start: usize) -> bool {
     for line in lines.iter().skip(start) {
-        if line.contains("System: Carryover Checked") {
+        if line.contains("System: Carryover Checked") || is_carryover_marker_line(line) {
             continue;
         }
         if line.trim().is_empty() {
@@ -579,7 +614,7 @@ fn parse_task_content(content: &str, path_str: &str) -> Vec<TaskItem> {
     let mut tasks: Vec<TaskItem> = Vec::new();
 
     for (i, line) in content.lines().enumerate() {
-        if line.contains("System: Carryover Checked") {
+        if line.contains("System: Carryover Checked") || is_carryover_marker_line(line) {
             continue;
         }
 
@@ -649,7 +684,7 @@ struct ParsedTaskLine {
 }
 
 fn parse_task_line(line: &str) -> Option<ParsedTaskLine> {
-    if line.contains("System: Carryover Checked") {
+    if line.contains("System: Carryover Checked") || is_carryover_marker_line(line) {
         return None;
     }
 
@@ -1340,13 +1375,18 @@ pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
 pub fn is_carryover_done(log_path: &Path) -> io::Result<bool> {
     let state = load_state(log_path)?;
     let today = Local::now().format("%Y-%m-%d").to_string();
-    Ok(state.carryover_checked_date.as_deref() == Some(today.as_str()))
+    if state.carryover_checked_date.as_deref() != Some(today.as_str()) {
+        return Ok(false);
+    }
+    has_carryover_marker(log_path, &today)
 }
 
 pub fn mark_carryover_done(log_path: &Path) -> io::Result<()> {
+    let today = Local::now().format("%Y-%m-%d").to_string();
     let mut state = load_state(log_path)?;
-    state.carryover_checked_date = Some(Local::now().format("%Y-%m-%d").to_string());
-    save_state(log_path, &state)
+    state.carryover_checked_date = Some(today.clone());
+    save_state(log_path, &state)?;
+    ensure_carryover_marker(log_path, &today)
 }
 
 /// Returns activity statistics for each date: (line_count, tomato_count).
@@ -1371,7 +1411,10 @@ pub fn get_activity_stats(
                 let mut tomato_count = 0usize;
 
                 for line in content.lines() {
-                    if line.trim().is_empty() || line.contains("System: Carryover Checked") {
+                    if line.trim().is_empty()
+                        || line.contains("System: Carryover Checked")
+                        || is_carryover_marker_line(line)
+                    {
                         continue;
                     }
                     line_count += 1;
@@ -1697,5 +1740,23 @@ mod tests {
         let tasks = collect_carryover_tasks(&dir, "2024-12-25").expect("collect");
 
         assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn is_carryover_done_requires_marker_line() {
+        let dir = temp_log_dir();
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let mut state = AppState::default();
+        state.carryover_checked_date = Some(today.clone());
+        save_state(&dir, &state).expect("save state");
+
+        assert!(!is_carryover_done(&dir).expect("checked"));
+
+        ensure_carryover_marker(&dir, &today).expect("marker");
+        assert!(is_carryover_done(&dir).expect("checked"));
+
+        let path = get_file_path_for_date(&dir, &today);
+        fs::remove_file(path).expect("remove");
+        assert!(!is_carryover_done(&dir).expect("checked"));
     }
 }
