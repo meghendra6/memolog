@@ -1,4 +1,6 @@
-use super::components::{centered_rect, markdown_prefix_width, parse_markdown_spans, wrap_markdown_line};
+use super::components::{
+    centered_rect, markdown_prefix_width, parse_markdown_spans, wrap_markdown_line,
+};
 use crate::app::App;
 use crate::config::{EditorStyle, ThemePreset};
 use crate::models::{DatePickerField, EditorMode, InputMode, Mood, VisualKind};
@@ -242,9 +244,7 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
         }
     }
 
-    let max_scroll = lines
-        .len()
-        .saturating_sub(content_area.height as usize);
+    let max_scroll = lines.len().saturating_sub(content_area.height as usize);
     let scroll = app.memo_preview_scroll.min(max_scroll);
 
     let paragraph = Paragraph::new(Text::from(lines))
@@ -270,7 +270,11 @@ pub fn render_date_picker_popup(f: &mut Frame, app: &App) {
 
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .margin(1)
         .split(inner);
 
@@ -301,7 +305,12 @@ pub fn render_date_picker_popup(f: &mut Frame, app: &App) {
     );
 }
 
-fn render_date_picker_fields(f: &mut Frame, app: &App, area: ratatui::layout::Rect, tokens: &ThemeTokens) {
+fn render_date_picker_fields(
+    f: &mut Frame,
+    app: &App,
+    area: ratatui::layout::Rect,
+    tokens: &ThemeTokens,
+) {
     let fields = [
         DatePickerField::Scheduled,
         DatePickerField::Due,
@@ -319,7 +328,10 @@ fn render_date_picker_fields(f: &mut Frame, app: &App, area: ratatui::layout::Re
         let label = date_picker_field_label(field);
         let value = date_picker_field_value(app, field);
         let line = Line::from(vec![
-            Span::styled(format!("{:<10}", label), Style::default().fg(tokens.ui_accent)),
+            Span::styled(
+                format!("{:<10}", label),
+                Style::default().fg(tokens.ui_accent),
+            ),
             Span::styled(value, Style::default().fg(tokens.ui_fg)),
         ]);
         items.push(ListItem::new(line));
@@ -328,7 +340,9 @@ fn render_date_picker_fields(f: &mut Frame, app: &App, area: ratatui::layout::Re
     let highlight = Style::default()
         .bg(tokens.ui_selection_bg)
         .add_modifier(Modifier::BOLD);
-    let list = List::new(items).highlight_style(highlight).highlight_symbol(" ");
+    let list = List::new(items)
+        .highlight_style(highlight)
+        .highlight_symbol(" ");
     let mut state = ratatui::widgets::ListState::default();
     state.select(Some(selected));
     f.render_stateful_widget(list, area, &mut state);
@@ -368,8 +382,8 @@ fn render_date_picker_calendar(
     )));
     lines.push(Line::from("Mo Tu We Th Fr Sa Su"));
 
-    let month_start = NaiveDate::from_ymd_opt(selected.year(), selected.month(), 1)
-        .unwrap_or(selected);
+    let month_start =
+        NaiveDate::from_ymd_opt(selected.year(), selected.month(), 1).unwrap_or(selected);
     let first_weekday = month_start.weekday().num_days_from_monday() as usize;
     let days_in_month = last_day_of_month(selected.year(), selected.month());
 
@@ -383,8 +397,8 @@ fn render_date_picker_calendar(
                 continue;
             }
 
-            let date = NaiveDate::from_ymd_opt(selected.year(), selected.month(), day)
-                .unwrap_or(selected);
+            let date =
+                NaiveDate::from_ymd_opt(selected.year(), selected.month(), day).unwrap_or(selected);
             let mut style = Style::default().fg(tokens.ui_fg);
             if date == today {
                 style = style.fg(tokens.ui_accent);
@@ -463,7 +477,10 @@ fn render_date_picker_duration(
                 .bg(tokens.ui_selection_bg)
                 .add_modifier(Modifier::BOLD);
         }
-        spans.push(Span::styled(format!("{:>4}", format_duration(preset)), style));
+        spans.push(Span::styled(
+            format!("{:>4}", format_duration(preset)),
+            style,
+        ));
         spans.push(Span::raw(" "));
     }
 
@@ -795,42 +812,44 @@ pub fn render_help_popup(f: &mut Frame, app: &App) {
     let column_count = help_column_count(content_area.width);
     let mut sections = help_sections(app, false);
     let mut block_gap = 1;
-    let max_height = content_area.height as usize * column_count;
-    if help_sections_height(&sections, block_gap) > max_height {
+    let (mut columns, mut overflow) =
+        layout_help_sections(&sections, column_count, content_area.height, block_gap);
+    if overflow {
         sections = help_sections(app, true);
         block_gap = 0;
-    }
-    if column_count == 1 {
-        render_help_blocks_column(f, content_area, &sections, &tokens, block_gap);
-    } else {
-        let splits = split_help_sections_by_height(&sections, column_count, block_gap);
-        let columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(help_column_constraints(column_count))
-            .split(content_area);
-        let mut start = 0usize;
-        for (idx, column) in columns.iter().enumerate() {
-            let end = splits.get(idx).copied().unwrap_or(sections.len());
-            if start >= end {
-                continue;
-            }
-            render_help_blocks_column(f, *column, &sections[start..end], &tokens, block_gap);
-            start = end;
-        }
-        if start < sections.len() {
-            if let Some(last) = columns.last() {
-                render_help_blocks_column(f, *last, &sections[start..], &tokens, block_gap);
-            }
-        }
+        let layout = layout_help_sections(&sections, column_count, content_area.height, block_gap);
+        columns = layout.0;
+        overflow = layout.1;
     }
 
+    let column_areas = if column_count == 1 {
+        vec![content_area]
+    } else {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(help_column_constraints(column_count))
+            .split(content_area)
+            .to_vec()
+    };
+
+    for (idx, area) in column_areas.iter().enumerate() {
+        if let Some(section_list) = columns.get(idx) {
+            render_help_blocks_column(f, *area, section_list, &tokens, block_gap);
+        }
+    }
+    let footer_text = if overflow {
+        "Some sections hidden (widen window) · Esc / ?: close"
+    } else {
+        "Esc / ?: close"
+    };
     let muted_style = Style::default().fg(tokens.ui_muted);
     f.render_widget(
-        Paragraph::new("Esc / ?: close").style(muted_style),
+        Paragraph::new(footer_text).style(muted_style),
         inner_area[1],
     );
 }
 
+#[derive(Clone)]
 struct HelpSection {
     title: String,
     entries: Vec<(String, String)>,
@@ -859,34 +878,34 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
 
     let timeline_filter_keys = join_key_groups_with_sep(
         &[
-        fmt_keys(&kb.timeline.filter_work),
-        fmt_keys(&kb.timeline.filter_personal),
-        fmt_keys(&kb.timeline.filter_all),
-    ],
+            fmt_keys(&kb.timeline.filter_work),
+            fmt_keys(&kb.timeline.filter_personal),
+            fmt_keys(&kb.timeline.filter_all),
+        ],
         " / ",
     );
     let timeline_context_keys = join_key_groups_with_sep(
         &[
-        fmt_keys(&kb.timeline.context_work),
-        fmt_keys(&kb.timeline.context_personal),
-        fmt_keys(&kb.timeline.context_clear),
-    ],
+            fmt_keys(&kb.timeline.context_work),
+            fmt_keys(&kb.timeline.context_personal),
+            fmt_keys(&kb.timeline.context_clear),
+        ],
         " / ",
     );
     let tasks_filter_keys = join_key_groups_with_sep(
         &[
-        fmt_keys(&kb.tasks.filter_open),
-        fmt_keys(&kb.tasks.filter_done),
-        fmt_keys(&kb.tasks.filter_all),
-    ],
+            fmt_keys(&kb.tasks.filter_open),
+            fmt_keys(&kb.tasks.filter_done),
+            fmt_keys(&kb.tasks.filter_all),
+        ],
         " / ",
     );
     let composer_context_keys = join_key_groups_with_sep(
         &[
-        fmt_keys(&kb.composer.context_work),
-        fmt_keys(&kb.composer.context_personal),
-        fmt_keys(&kb.composer.context_clear),
-    ],
+            fmt_keys(&kb.composer.context_work),
+            fmt_keys(&kb.composer.context_personal),
+            fmt_keys(&kb.composer.context_clear),
+        ],
         " / ",
     );
 
@@ -910,12 +929,21 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                     " | ",
                 ),
             ),
-            ("Date picker".to_string(), fmt_keys(&kb.composer.date_picker)),
-            ("Context: work/personal/clear".to_string(), composer_context_keys),
+            (
+                "Date picker".to_string(),
+                fmt_keys(&kb.composer.date_picker),
+            ),
+            (
+                "Context: work/personal/clear".to_string(),
+                composer_context_keys,
+            ),
             (
                 "Indent / Outdent".to_string(),
                 join_key_groups_with_sep(
-                    &[fmt_keys(&kb.composer.indent), fmt_keys(&kb.composer.outdent)],
+                    &[
+                        fmt_keys(&kb.composer.indent),
+                        fmt_keys(&kb.composer.outdent),
+                    ],
                     " | ",
                 ),
             ),
@@ -925,13 +953,22 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
         vec![
             ("Save".to_string(), fmt_keys(&kb.composer.submit)),
             ("New line".to_string(), fmt_keys(&kb.composer.newline)),
-            ("Toggle task".to_string(), fmt_keys(&kb.composer.task_toggle)),
+            (
+                "Toggle task".to_string(),
+                fmt_keys(&kb.composer.task_toggle),
+            ),
             (
                 "Priority cycle".to_string(),
                 fmt_keys(&kb.composer.priority_cycle),
             ),
-            ("Date picker".to_string(), fmt_keys(&kb.composer.date_picker)),
-            ("Context: work/personal/clear".to_string(), composer_context_keys),
+            (
+                "Date picker".to_string(),
+                fmt_keys(&kb.composer.date_picker),
+            ),
+            (
+                "Context: work/personal/clear".to_string(),
+                composer_context_keys,
+            ),
             ("Indent".to_string(), fmt_keys(&kb.composer.indent)),
             ("Outdent".to_string(), fmt_keys(&kb.composer.outdent)),
             ("Clear".to_string(), fmt_keys(&kb.composer.clear)),
@@ -944,6 +981,9 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
     }
     if compact {
         composer_entries.retain(|(_, keys)| keys != "-");
+        if composer_entries.is_empty() {
+            composer_entries.push(("No bindings".to_string(), "-".to_string()));
+        }
     }
 
     let global_entries = if compact {
@@ -972,7 +1012,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             (
                 "Log dir / Config".to_string(),
                 join_key_groups_with_sep(
-                    &[fmt_keys(&kb.global.log_dir), fmt_keys(&kb.global.edit_config)],
+                    &[
+                        fmt_keys(&kb.global.log_dir),
+                        fmt_keys(&kb.global.edit_config),
+                    ],
                     " | ",
                 ),
             ),
@@ -986,10 +1029,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                     " | ",
                 ),
             ),
-            (
-                "Google sync".to_string(),
-                fmt_keys(&kb.global.sync_google),
-            ),
+            ("Google sync".to_string(), fmt_keys(&kb.global.sync_google)),
             ("Quit".to_string(), fmt_keys(&kb.global.quit)),
         ]
     } else {
@@ -1004,7 +1044,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             ("Focus agenda".to_string(), fmt_keys(&kb.global.agenda)),
             ("Log dir".to_string(), fmt_keys(&kb.global.log_dir)),
             ("Config".to_string(), fmt_keys(&kb.global.edit_config)),
-            ("Theme presets".to_string(), fmt_keys(&kb.global.theme_switcher)),
+            (
+                "Theme presets".to_string(),
+                fmt_keys(&kb.global.theme_switcher),
+            ),
             (
                 "Editor style".to_string(),
                 fmt_keys(&kb.global.editor_style_switcher),
@@ -1041,14 +1084,20 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             (
                 "Fold toggle / cycle".to_string(),
                 join_key_groups_with_sep(
-                    &[fmt_keys(&kb.timeline.fold_toggle), fmt_keys(&kb.timeline.fold_cycle)],
+                    &[
+                        fmt_keys(&kb.timeline.fold_toggle),
+                        fmt_keys(&kb.timeline.fold_cycle),
+                    ],
                     " | ",
                 ),
             ),
             (
                 "Filter cycle / set".to_string(),
                 join_key_groups_with_sep(
-                    &[fmt_keys(&kb.timeline.filter_toggle), timeline_filter_keys.clone()],
+                    &[
+                        fmt_keys(&kb.timeline.filter_toggle),
+                        timeline_filter_keys.clone(),
+                    ],
                     " | ",
                 ),
             ),
@@ -1059,7 +1108,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             (
                 "Edit / Complete tasks".to_string(),
                 join_key_groups_with_sep(
-                    &[fmt_keys(&kb.timeline.edit), fmt_keys(&kb.timeline.toggle_todo)],
+                    &[
+                        fmt_keys(&kb.timeline.edit),
+                        fmt_keys(&kb.timeline.toggle_todo),
+                    ],
                     " | ",
                 ),
             ),
@@ -1072,10 +1124,19 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             ("Page down".to_string(), fmt_keys(&kb.timeline.page_down)),
             ("Top".to_string(), fmt_keys(&kb.timeline.top)),
             ("Bottom".to_string(), fmt_keys(&kb.timeline.bottom)),
-            ("Fold toggle".to_string(), fmt_keys(&kb.timeline.fold_toggle)),
+            (
+                "Fold toggle".to_string(),
+                fmt_keys(&kb.timeline.fold_toggle),
+            ),
             ("Fold cycle".to_string(), fmt_keys(&kb.timeline.fold_cycle)),
-            ("Filter cycle".to_string(), fmt_keys(&kb.timeline.filter_toggle)),
-            ("Filter: work/personal/all".to_string(), timeline_filter_keys.clone()),
+            (
+                "Filter cycle".to_string(),
+                fmt_keys(&kb.timeline.filter_toggle),
+            ),
+            (
+                "Filter: work/personal/all".to_string(),
+                timeline_filter_keys.clone(),
+            ),
             (
                 "Context: work/personal/clear".to_string(),
                 timeline_context_keys.clone(),
@@ -1107,7 +1168,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             (
                 "Priority / Pomodoro".to_string(),
                 join_key_groups_with_sep(
-                    &[fmt_keys(&kb.tasks.priority_cycle), fmt_keys(&kb.tasks.start_pomodoro)],
+                    &[
+                        fmt_keys(&kb.tasks.priority_cycle),
+                        fmt_keys(&kb.tasks.start_pomodoro),
+                    ],
                     " | ",
                 ),
             ),
@@ -1132,8 +1196,14 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             ),
             ("Pomodoro".to_string(), fmt_keys(&kb.tasks.start_pomodoro)),
             ("Edit".to_string(), fmt_keys(&kb.tasks.edit)),
-            ("Filter cycle".to_string(), fmt_keys(&kb.tasks.filter_toggle)),
-            ("Filter: open/done/all".to_string(), tasks_filter_keys.clone()),
+            (
+                "Filter cycle".to_string(),
+                fmt_keys(&kb.tasks.filter_toggle),
+            ),
+            (
+                "Filter: open/done/all".to_string(),
+                tasks_filter_keys.clone(),
+            ),
         ]
     };
 
@@ -1164,14 +1234,20 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             (
                 "Prev/Next week".to_string(),
                 join_key_groups_with_sep(
-                    &[fmt_keys(&kb.agenda.prev_week), fmt_keys(&kb.agenda.next_week)],
+                    &[
+                        fmt_keys(&kb.agenda.prev_week),
+                        fmt_keys(&kb.agenda.next_week),
+                    ],
                     " | ",
                 ),
             ),
             (
                 "Today / Unscheduled".to_string(),
                 join_key_groups_with_sep(
-                    &[fmt_keys(&kb.agenda.today), fmt_keys(&kb.agenda.toggle_unscheduled)],
+                    &[
+                        fmt_keys(&kb.agenda.today),
+                        fmt_keys(&kb.agenda.toggle_unscheduled),
+                    ],
                     " | ",
                 ),
             ),
@@ -1215,6 +1291,9 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
     };
     if compact {
         search_entries.retain(|(_, keys)| keys != "-");
+        if search_entries.is_empty() {
+            search_entries.push(("No bindings".to_string(), "-".to_string()));
+        }
     }
 
     vec![
@@ -1261,17 +1340,6 @@ fn help_section_height(section: &HelpSection) -> usize {
     content_lines + 2
 }
 
-fn help_sections_height(sections: &[HelpSection], block_gap: usize) -> usize {
-    let mut total = 0usize;
-    for (idx, section) in sections.iter().enumerate() {
-        total += help_section_height(section);
-        if idx + 1 < sections.len() {
-            total += block_gap;
-        }
-    }
-    total
-}
-
 fn help_column_count(width: u16) -> usize {
     if width >= 120 {
         3
@@ -1301,34 +1369,52 @@ fn help_column_constraints(column_count: usize) -> Vec<Constraint> {
     constraints
 }
 
-fn split_help_sections_by_height(
+fn layout_help_sections(
     sections: &[HelpSection],
     column_count: usize,
+    column_height: u16,
     block_gap: usize,
-) -> Vec<usize> {
-    if column_count <= 1 {
-        return Vec::new();
-    }
-    let mut counts = Vec::with_capacity(sections.len());
-    let mut total = 0usize;
+) -> (Vec<Vec<HelpSection>>, bool) {
+    let mut columns: Vec<Vec<HelpSection>> = vec![Vec::new(); column_count.max(1)];
+    let mut heights = vec![0usize; column_count.max(1)];
+    let max_height = column_height as usize;
+    let mut col_idx = 0usize;
+    let mut overflow = false;
+
     for section in sections {
-        let count = help_section_height(section) + block_gap;
-        counts.push(count);
-        total += count;
-    }
-    let target = total / column_count.max(1);
-    let mut splits = Vec::new();
-    let mut acc = 0usize;
-    let mut columns = 1usize;
-    for (idx, count) in counts.iter().enumerate() {
-        if columns < column_count && acc + count > target && acc > 0 {
-            splits.push(idx);
-            columns += 1;
-            acc = 0;
+        let section_height = help_section_height(section);
+        let required = if heights[col_idx] == 0 {
+            section_height
+        } else {
+            section_height + block_gap
+        };
+        if heights[col_idx] + required <= max_height {
+            heights[col_idx] += required;
+            columns[col_idx].push(section.clone());
+            continue;
         }
-        acc += count;
+        if col_idx + 1 < columns.len() {
+            col_idx += 1;
+            let required = if heights[col_idx] == 0 {
+                section_height
+            } else {
+                section_height + block_gap
+            };
+            if heights[col_idx] + required <= max_height {
+                heights[col_idx] += required;
+                columns[col_idx].push(section.clone());
+            } else {
+                overflow = true;
+            }
+        } else {
+            overflow = true;
+        }
+        if overflow {
+            break;
+        }
     }
-    splits
+
+    (columns, overflow)
 }
 
 fn render_help_blocks_column(
@@ -1346,12 +1432,9 @@ fn render_help_blocks_column(
             break;
         }
         let remaining = max_y.saturating_sub(y);
-        if remaining < 3 {
-            break;
-        }
-        let mut block_height = help_section_height(section) as u16;
+        let block_height = help_section_height(section) as u16;
         if block_height > remaining {
-            block_height = remaining;
+            break;
         }
         let rect = Rect {
             x: area.x,
