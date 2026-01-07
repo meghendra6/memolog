@@ -993,12 +993,12 @@ impl Config {
         let removed_focus_timeline =
             remove_keybinding(&mut self.keybindings.global.focus_timeline, "h");
         let removed_focus_tasks = remove_keybinding(&mut self.keybindings.global.focus_tasks, "l");
-        let removed_quit = remove_keybinding(&mut self.keybindings.global.quit, "ctrl+q");
+        let replaced_quit = replace_keybinding(&mut self.keybindings.global.quit, "ctrl+q", "q");
         if removed_composer
             || removed_search
             || removed_focus_timeline
             || removed_focus_tasks
-            || removed_quit
+            || replaced_quit
         {
             changed = true;
         }
@@ -1049,6 +1049,30 @@ fn migrate_single_binding(list: &mut Vec<String>, old: &str, new: &str) -> bool 
         return true;
     }
     false
+}
+
+fn replace_keybinding(list: &mut Vec<String>, old: &str, new: &str) -> bool {
+    let mut has_new = list.iter().any(|k| k.eq_ignore_ascii_case(new));
+    let mut changed = false;
+    let mut updated = Vec::with_capacity(list.len());
+
+    for key in list.iter() {
+        if key.eq_ignore_ascii_case(old) {
+            changed = true;
+            if !has_new {
+                updated.push(new.to_string());
+                has_new = true;
+            }
+        } else {
+            updated.push(key.clone());
+        }
+    }
+
+    if changed {
+        *list = updated;
+    }
+
+    changed
 }
 
 #[cfg(test)]
