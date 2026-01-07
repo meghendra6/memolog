@@ -314,7 +314,7 @@ pub struct EditorConfig {
 
 impl Default for EditorConfig {
     fn default() -> Self {
-        Self { column_width: 88 }
+        Self { column_width: 120 }
     }
 }
 
