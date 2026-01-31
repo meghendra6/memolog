@@ -160,6 +160,53 @@ pub fn get_earliest_log_date(log_path: &Path) -> io::Result<Option<NaiveDate>> {
     Ok(dates.first().copied())
 }
 
+/// Calculate the current streak (consecutive days with log entries ending today).
+/// Returns (streak_days, includes_today).
+pub fn calculate_streak(log_path: &Path) -> io::Result<(usize, bool)> {
+    let dates = get_available_log_dates(log_path)?;
+    if dates.is_empty() {
+        return Ok((0, false));
+    }
+
+    let today = Local::now().naive_local().date();
+    let yesterday = today - Duration::days(1);
+
+    // Check if we have an entry for today
+    let has_today = dates.contains(&today);
+
+    // Start counting from yesterday (or today if it exists)
+    let start_date = if has_today { today } else { yesterday };
+
+    // Find the starting position
+    let start_pos = match dates.binary_search(&start_date) {
+        Ok(pos) => pos,
+        Err(_) => return Ok((0, has_today)),
+    };
+
+    // Count consecutive days going backwards
+    let mut streak = 0;
+    let mut expected_date = start_date;
+
+    for i in (0..=start_pos).rev() {
+        if dates[i] == expected_date {
+            streak += 1;
+            expected_date = expected_date - Duration::days(1);
+        } else if dates[i] < expected_date {
+            break;
+        }
+    }
+
+    Ok((streak, has_today))
+}
+
+/// Get today's task statistics: (completed_count, total_count)
+pub fn get_today_task_stats(log_path: &Path) -> io::Result<(usize, usize)> {
+    let tasks = read_today_tasks(log_path)?;
+    let completed = tasks.iter().filter(|t| t.is_done).count();
+    let total = tasks.len();
+    Ok((completed, total))
+}
+
 pub fn read_today_tasks(log_path: &Path) -> io::Result<Vec<TaskItem>> {
     ensure_log_dir(log_path)?;
     let path = get_today_file_path(log_path);
@@ -1765,5 +1812,43 @@ mod tests {
         let tasks = collect_carryover_tasks(&dir, "2024-12-25").expect("collect");
 
         assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn calculate_streak_empty_dir() {
+        let dir = temp_log_dir();
+        let (streak, includes_today) = calculate_streak(&dir).expect("streak");
+        assert_eq!(streak, 0);
+        assert!(!includes_today);
+    }
+
+    #[test]
+    fn calculate_streak_consecutive_days() {
+        let dir = temp_log_dir();
+        let today = Local::now().naive_local().date();
+        let yesterday = today - Duration::days(1);
+        let day_before = today - Duration::days(2);
+
+        write_log(&dir, &today.format("%Y-%m-%d").to_string(), "# Today\n");
+        write_log(&dir, &yesterday.format("%Y-%m-%d").to_string(), "# Yesterday\n");
+        write_log(&dir, &day_before.format("%Y-%m-%d").to_string(), "# Day before\n");
+
+        let (streak, includes_today) = calculate_streak(&dir).expect("streak");
+        assert_eq!(streak, 3);
+        assert!(includes_today);
+    }
+
+    #[test]
+    fn calculate_streak_with_gap() {
+        let dir = temp_log_dir();
+        let today = Local::now().naive_local().date();
+        let three_days_ago = today - Duration::days(3);
+
+        write_log(&dir, &today.format("%Y-%m-%d").to_string(), "# Today\n");
+        write_log(&dir, &three_days_ago.format("%Y-%m-%d").to_string(), "# Old\n");
+
+        let (streak, includes_today) = calculate_streak(&dir).expect("streak");
+        assert_eq!(streak, 1);
+        assert!(includes_today);
     }
 }

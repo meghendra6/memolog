@@ -85,8 +85,15 @@ pub fn render_siren_popup(f: &mut Frame, app: &App) {
 }
 
 pub fn render_activity_popup(f: &mut Frame, app: &App) {
+    let (streak_days, includes_today) = app.streak;
+    let streak_text = if streak_days > 0 {
+        format!("🔥 {} day streak{}", streak_days, if includes_today { "" } else { " (log today to continue!)" })
+    } else {
+        "Start your streak by logging today!".to_string()
+    };
+
     let block = Block::default()
-        .title(" 🌱 Activity Graph (Last 2 Weeks) ")
+        .title(format!(" 🌱 Activity Graph (Last 2 Weeks) - {} ", streak_text))
         .borders(Borders::ALL);
     let area = centered_rect(popup_size::ACTIVITY.0, popup_size::ACTIVITY.1, f.area());
     f.render_widget(Clear, area);
