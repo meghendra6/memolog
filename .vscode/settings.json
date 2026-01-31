@@ -28,7 +28,7 @@
 
   // === Agent Settings (Maximize capabilities) ===
   "chat.agent.enabled": true,
-  "chat.agent.maxRequests": 50,
+  "chat.agent.maxRequests": 100000000,
   "github.copilot.chat.agent.autoFix": true,
   "chat.customAgentInSubagent.enabled": true,
   "github.copilot.chat.virtualTools.threshold": 64,

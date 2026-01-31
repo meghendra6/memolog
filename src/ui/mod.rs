@@ -2373,6 +2373,21 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         ""
     };
 
+    // Streak indicator
+    let (streak_days, _) = app.streak;
+    let streak_label = if streak_days > 0 {
+        format!(" 🔥{}", streak_days)
+    } else {
+        String::new()
+    };
+
+    // Today's done tasks
+    let done_label = if app.today_done_tasks > 0 {
+        format!(" ✓{}", app.today_done_tasks)
+    } else {
+        String::new()
+    };
+
     let left_spans = vec![
         Span::styled(
             format!(" {mode_label} "),
@@ -2387,6 +2402,14 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
                 .fg(tokens.ui_fg)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(
+            streak_label,
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::styled(
+            done_label,
+            Style::default().fg(Color::Green),
+        ),
     ];
 
     let mut right_plain = String::new();
@@ -2398,6 +2421,17 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         right_plain.push_str(&cursor_text);
         right_spans.push(Span::styled(
             cursor_text,
+            Style::default().fg(tokens.ui_muted),
+        ));
+
+        // Word count
+        let text = app.textarea.lines().join("\n");
+        let char_count = text.chars().count();
+        let word_count = text.split_whitespace().count();
+        let wc_text = format!("  {}w {}c", word_count, char_count);
+        right_plain.push_str(&wc_text);
+        right_spans.push(Span::styled(
+            wc_text,
             Style::default().fg(tokens.ui_muted),
         ));
     }

@@ -130,6 +130,7 @@ pub struct App<'a> {
     pub pomodoro_target: Option<PomodoroTarget>,
     pub show_activity_popup: bool,
     pub activity_data: HashMap<String, (usize, usize)>, // "YYYY-MM-DD" -> (line_count, tomato_count)
+    pub streak: (usize, bool),                          // (streak_days, includes_today)
     pub show_path_popup: bool,
     pub show_theme_popup: bool,
     pub theme_list_state: ListState,
@@ -248,6 +249,9 @@ impl<'a> App<'a> {
         // Calculate today's stats from today's logs only
         let (today_done_tasks, today_tomatoes) = compute_today_task_stats(&today_logs);
 
+        // Calculate streak
+        let streak = storage::calculate_streak(&config.data.log_path).unwrap_or((0, false));
+
         let mut app = App {
             input_mode,
             navigate_focus: NavigateFocus::Timeline,
@@ -319,6 +323,7 @@ impl<'a> App<'a> {
             pomodoro_target: None,
             show_activity_popup: false,
             activity_data: HashMap::new(),
+            streak,
             show_path_popup: false,
             show_theme_popup: false,
             theme_list_state: ListState::default(),
@@ -467,6 +472,9 @@ impl<'a> App<'a> {
         let (done, tomatoes) = compute_today_task_stats(&today_logs);
         self.today_done_tasks = done;
         self.today_tomatoes = tomatoes;
+
+        // Update streak
+        self.streak = storage::calculate_streak(&self.config.data.log_path).unwrap_or((0, false));
     }
 
     /// Loads more historical entries when scrolling to the top.
