@@ -1150,6 +1150,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             fmt_keys(&kb.tasks.filter_open),
             fmt_keys(&kb.tasks.filter_done),
             fmt_keys(&kb.tasks.filter_all),
+            fmt_keys(&kb.tasks.filter_priority),
         ],
         " / ",
     );
