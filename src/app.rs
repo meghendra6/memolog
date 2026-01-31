@@ -723,12 +723,11 @@ impl<'a> App<'a> {
             FoldOverride::Folded
         };
         self.fold_overrides.insert(key, override_state);
-        if let Err(err) = storage::update_fold_marker(
+        if let Err(_err) = storage::update_fold_marker(
             &entry.file_path,
             entry.line_number,
             override_state,
         ) {
-            eprintln!("Failed to save fold state: {}", err);
             self.toast("Failed to save fold state.");
         }
         self.entry_scroll_offset = 0;
@@ -883,13 +882,12 @@ impl<'a> App<'a> {
             return;
         }
 
-        if let Err(err) = storage::replace_entry_lines(
+        if let Err(_err) = storage::replace_entry_lines(
             &entry.file_path,
             entry.line_number,
             entry.end_line,
             &lines,
         ) {
-            eprintln!("Failed to update context tag: {}", err);
             self.toast("Failed to update context tag.");
             return;
         }
