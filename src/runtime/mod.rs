@@ -3,8 +3,7 @@ use crate::{
     app::App,
     config::google_token_path,
     integrations::{gemini, google},
-    models,
-    storage,
+    models, storage,
 };
 use chrono::{Duration, Local};
 use std::sync::mpsc::TryRecvError;

@@ -1,5 +1,7 @@
 use crate::models::Priority;
-use crate::task_metadata::{TaskMetadataKey, remove_task_metadata_token, upsert_task_metadata_token};
+use crate::task_metadata::{
+    TaskMetadataKey, remove_task_metadata_token, upsert_task_metadata_token,
+};
 use tui_textarea::{CursorMove, TextArea};
 
 pub(crate) fn insert_newline_with_auto_indent(textarea: &mut TextArea) {
@@ -46,11 +48,7 @@ pub(crate) fn indent_or_outdent_list_line(textarea: &mut TextArea, indent: bool)
 
 pub(crate) fn toggle_task_checkbox(textarea: &mut TextArea) -> bool {
     let (row, col) = textarea.cursor();
-    let current_line = textarea
-        .lines()
-        .get(row)
-        .cloned()
-        .unwrap_or_default();
+    let current_line = textarea.lines().get(row).cloned().unwrap_or_default();
     let (indent, rest) = split_indent(&current_line);
 
     let new_line = if let Some((_marker, content)) = checkbox_marker(rest) {
@@ -74,15 +72,10 @@ pub(crate) fn toggle_task_checkbox(textarea: &mut TextArea) -> bool {
 
 pub(crate) fn cycle_task_priority(textarea: &mut TextArea) -> bool {
     let (row, col) = textarea.cursor();
-    let current_line = textarea
-        .lines()
-        .get(row)
-        .cloned()
-        .unwrap_or_default();
+    let current_line = textarea.lines().get(row).cloned().unwrap_or_default();
     let (indent, rest) = split_indent(&current_line);
 
-    let (old_prefix_len, prefix, content) = if let Some((marker, content)) = checkbox_marker(rest)
-    {
+    let (old_prefix_len, prefix, content) = if let Some((marker, content)) = checkbox_marker(rest) {
         (marker.chars().count(), marker, content)
     } else if let Some((marker, content)) = bullet_marker(rest) {
         (marker.chars().count(), "- [ ] ", content)
@@ -124,11 +117,7 @@ pub(crate) fn upsert_task_metadata(
     value: &str,
 ) -> bool {
     let (row, col) = textarea.cursor();
-    let current_line = textarea
-        .lines()
-        .get(row)
-        .cloned()
-        .unwrap_or_default();
+    let current_line = textarea.lines().get(row).cloned().unwrap_or_default();
     let updated = upsert_task_metadata_token(&current_line, key, value);
     if updated == current_line {
         return false;
@@ -142,11 +131,7 @@ pub(crate) fn upsert_task_metadata(
 
 pub(crate) fn remove_task_metadata(textarea: &mut TextArea, key: TaskMetadataKey) -> bool {
     let (row, col) = textarea.cursor();
-    let current_line = textarea
-        .lines()
-        .get(row)
-        .cloned()
-        .unwrap_or_default();
+    let current_line = textarea.lines().get(row).cloned().unwrap_or_default();
     let updated = remove_task_metadata_token(&current_line, key);
     if updated == current_line {
         return false;

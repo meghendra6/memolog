@@ -1,7 +1,7 @@
 use crate::{
     actions,
     app::App,
-    config::{self, key_code_for_shortcuts, key_match, config_path, EditorStyle, ThemePreset},
+    config::{self, EditorStyle, ThemePreset, config_path, key_code_for_shortcuts, key_match},
     date_input::{parse_duration_input, parse_relative_date_input, parse_time_input},
     editor::markdown,
     input::editing,
@@ -264,7 +264,9 @@ fn handle_date_picker_relative_input(app: &mut App, key: KeyEvent) {
                 parse_relative_date_input(&input, base).map(DatePickerValue::Date)
             }
             DatePickerField::Time => parse_time_input(&input).map(DatePickerValue::Time),
-            DatePickerField::Duration => parse_duration_input(&input).map(DatePickerValue::Duration),
+            DatePickerField::Duration => {
+                parse_duration_input(&input).map(DatePickerValue::Duration)
+            }
         };
 
         if let Some(value) = parsed {
@@ -286,7 +288,10 @@ fn handle_date_picker_relative_input(app: &mut App, key: KeyEvent) {
             app.date_picker_input.pop();
         }
         KeyCode::Char(c) => {
-            if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+            if !key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)
+            {
                 app.date_picker_input.push(c);
             }
         }
@@ -302,10 +307,12 @@ fn apply_date_picker_field(app: &mut App) {
             .then(|| app.date_picker_effective_date(DatePickerField::Scheduled))
     });
     let due_value = schedule.due.or_else(|| {
-        (field == DatePickerField::Due).then(|| app.date_picker_effective_date(DatePickerField::Due))
+        (field == DatePickerField::Due)
+            .then(|| app.date_picker_effective_date(DatePickerField::Due))
     });
     let start_value = schedule.start.or_else(|| {
-        (field == DatePickerField::Start).then(|| app.date_picker_effective_date(DatePickerField::Start))
+        (field == DatePickerField::Start)
+            .then(|| app.date_picker_effective_date(DatePickerField::Start))
     });
     let time_value = schedule
         .time
@@ -387,12 +394,23 @@ fn adjust_date_picker_value(app: &mut App, delta_days: i64, delta_minutes: i32) 
         }
         DatePickerField::Time => {
             let time = app.date_picker_effective_time();
-            let next = add_minutes_wrapping(time, if delta_minutes == 0 { delta_days * 15 } else { delta_minutes as i64 });
+            let next = add_minutes_wrapping(
+                time,
+                if delta_minutes == 0 {
+                    delta_days * 15
+                } else {
+                    delta_minutes as i64
+                },
+            );
             app.set_date_picker_time(next);
         }
         DatePickerField::Duration => {
             let current = app.date_picker_effective_duration() as i64;
-            let delta = if delta_minutes == 0 { delta_days * 15 } else { delta_minutes as i64 };
+            let delta = if delta_minutes == 0 {
+                delta_days * 15
+            } else {
+                delta_minutes as i64
+            };
             let next = (current + delta).clamp(15, 24 * 60);
             app.set_date_picker_duration(next as u32);
         }
@@ -421,10 +439,7 @@ fn cycle_date_picker_field(field: DatePickerField, delta: i32) -> DatePickerFiel
         DatePickerField::Time,
         DatePickerField::Duration,
     ];
-    let index = fields
-        .iter()
-        .position(|f| *f == field)
-        .unwrap_or(0) as i32;
+    let index = fields.iter().position(|f| *f == field).unwrap_or(0) as i32;
     let len = fields.len() as i32;
     let next = (index + delta).rem_euclid(len) as usize;
     fields[next]

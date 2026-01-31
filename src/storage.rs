@@ -1,7 +1,7 @@
 use crate::models::{
-    AgendaItem, AgendaItemKind, FoldOverride, Priority, LogEntry, TaskItem, TaskSchedule,
-    count_trailing_tomatoes,
-    is_heading_timestamp_line, is_timestamped_line, strip_timestamp_prefix, strip_trailing_tomatoes,
+    AgendaItem, AgendaItemKind, FoldOverride, LogEntry, Priority, TaskItem, TaskSchedule,
+    count_trailing_tomatoes, is_heading_timestamp_line, is_timestamped_line,
+    strip_timestamp_prefix, strip_trailing_tomatoes,
 };
 use crate::task_metadata::{
     TaskMetadataKey, parse_task_metadata, strip_task_metadata_tokens, upsert_task_metadata_token,
@@ -38,11 +38,7 @@ pub fn append_entry(log_path: &Path, content: &str) -> io::Result<()> {
     append_entry_to_date(log_path, today, content)
 }
 
-pub fn append_entry_to_date(
-    log_path: &Path,
-    date: NaiveDate,
-    content: &str,
-) -> io::Result<()> {
+pub fn append_entry_to_date(log_path: &Path, date: NaiveDate, content: &str) -> io::Result<()> {
     ensure_log_dir(log_path)?;
     let date_str = date.format("%Y-%m-%d").to_string();
     let path = get_file_path_for_date(log_path, &date_str);
@@ -197,14 +193,6 @@ pub fn calculate_streak(log_path: &Path) -> io::Result<(usize, bool)> {
     }
 
     Ok((streak, has_today))
-}
-
-/// Get today's task statistics: (completed_count, total_count)
-pub fn get_today_task_stats(log_path: &Path) -> io::Result<(usize, usize)> {
-    let tasks = read_today_tasks(log_path)?;
-    let completed = tasks.iter().filter(|t| t.is_done).count();
-    let total = tasks.len();
-    Ok((completed, total))
 }
 
 pub fn read_today_tasks(log_path: &Path) -> io::Result<Vec<TaskItem>> {
@@ -1830,8 +1818,16 @@ mod tests {
         let day_before = today - Duration::days(2);
 
         write_log(&dir, &today.format("%Y-%m-%d").to_string(), "# Today\n");
-        write_log(&dir, &yesterday.format("%Y-%m-%d").to_string(), "# Yesterday\n");
-        write_log(&dir, &day_before.format("%Y-%m-%d").to_string(), "# Day before\n");
+        write_log(
+            &dir,
+            &yesterday.format("%Y-%m-%d").to_string(),
+            "# Yesterday\n",
+        );
+        write_log(
+            &dir,
+            &day_before.format("%Y-%m-%d").to_string(),
+            "# Day before\n",
+        );
 
         let (streak, includes_today) = calculate_streak(&dir).expect("streak");
         assert_eq!(streak, 3);
@@ -1845,7 +1841,11 @@ mod tests {
         let three_days_ago = today - Duration::days(3);
 
         write_log(&dir, &today.format("%Y-%m-%d").to_string(), "# Today\n");
-        write_log(&dir, &three_days_ago.format("%Y-%m-%d").to_string(), "# Old\n");
+        write_log(
+            &dir,
+            &three_days_ago.format("%Y-%m-%d").to_string(),
+            "# Old\n",
+        );
 
         let (streak, includes_today) = calculate_streak(&dir).expect("streak");
         assert_eq!(streak, 1);

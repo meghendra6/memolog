@@ -36,11 +36,7 @@ pub fn spawn_ai_search(
     receiver
 }
 
-fn run_ai_search(
-    config: &GeminiConfig,
-    log_path: &PathBuf,
-    question: &str,
-) -> AiSearchOutcome {
+fn run_ai_search(config: &GeminiConfig, log_path: &PathBuf, question: &str) -> AiSearchOutcome {
     if !config.enabled {
         return AiSearchOutcome::Error("Gemini is disabled in config.".to_string());
     }
@@ -68,13 +64,12 @@ fn run_ai_search(
         Err(err) => return AiSearchOutcome::Error(err),
     };
 
-    let mut entries =
-        match storage::search_entries_by_keywords(log_path, &keywords) {
-            Ok(results) => results,
-            Err(err) => {
-                return AiSearchOutcome::Error(format!("Search failed: {err}"));
-            }
-        };
+    let mut entries = match storage::search_entries_by_keywords(log_path, &keywords) {
+        Ok(results) => results,
+        Err(err) => {
+            return AiSearchOutcome::Error(format!("Search failed: {err}"));
+        }
+    };
 
     if config.max_results > 0 && entries.len() > config.max_results {
         entries.truncate(config.max_results);
@@ -127,8 +122,7 @@ fn extract_keywords(
             .get(attempt)
             .unwrap_or_else(|| prompts.first().expect("prompt"));
         let temperature = extraction_temperature_for_attempt(config, attempt);
-        let response =
-            match generate_text(client, api_key, &model, prompt, 128, temperature) {
+        let response = match generate_text(client, api_key, &model, prompt, 128, temperature) {
             Ok(text) => text,
             Err(err) => {
                 last_error = Some(err);
@@ -166,14 +160,7 @@ fn extract_keywords(
 
     let mut keywords: Vec<String> = ranked.iter().map(|(keyword, _)| keyword.clone()).collect();
     if keywords.len() > max_keywords {
-            let refined = refine_keywords(
-                client,
-                api_key,
-                question,
-                &ranked,
-                max_keywords,
-                &model,
-            );
+        let refined = refine_keywords(client, api_key, question, &ranked, max_keywords, &model);
         if let Ok(refined) = refined {
             keywords = refined;
         } else {

@@ -198,10 +198,7 @@ mod tests {
     fn parses_explicit_date() {
         let base = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
         let date = NaiveDate::from_ymd_opt(2025, 2, 2).unwrap();
-        assert_eq!(
-            parse_relative_date_input("2025-02-02", base),
-            Some(date)
-        );
+        assert_eq!(parse_relative_date_input("2025-02-02", base), Some(date));
     }
 
     #[test]
