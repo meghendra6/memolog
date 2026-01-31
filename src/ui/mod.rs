@@ -126,20 +126,37 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 .iter()
                 .take(3) // Max 3 pinned entries shown
                 .flat_map(|entry| {
-                    // Extract first line as title (usually the header)
-                    let first_line = entry.content.lines().next().unwrap_or("(empty)");
+                    // Entry format: "## [HH:MM:SS]\ncontent line\n..."
+                    // First line is timestamp, content starts on second line
+                    let mut lines_iter = entry.content.lines();
+                    let first_line = lines_iter.next().unwrap_or("");
                     
-                    // Clean up the title
-                    let title = first_line
+                    // If first line is just a timestamp, get content from second line
+                    let content_line = if split_timestamp_line(first_line).map(|(_, rest)| rest.trim().is_empty()).unwrap_or(false) {
+                        // First line is timestamp-only, use second line
+                        lines_iter.next().unwrap_or("")
+                    } else {
+                        // First line has content after timestamp
+                        split_timestamp_line(first_line)
+                            .map(|(_, rest)| rest)
+                            .unwrap_or(first_line)
+                    };
+                    
+                    // Clean up the title: remove leading # and #pinned tag
+                    let title = content_line
                         .trim_start_matches('#')
                         .trim()
                         .replace("#pinned", "")
                         .trim()
                         .to_string();
                     
-                    // Use cleaned title or fallback to first line
+                    // Use cleaned title or fallback
                     let display_title = if title.is_empty() {
-                        first_line.to_string()
+                        if content_line.is_empty() {
+                            "(untitled)".to_string()
+                        } else {
+                            content_line.to_string()
+                        }
                     } else if title.len() > pinned_width.saturating_sub(4) && pinned_width > 7 {
                         format!("{}...", &title[..pinned_width.saturating_sub(7)])
                     } else {
@@ -2754,5 +2771,47 @@ mod tests {
         assert_eq!(find_cursor_in_wrapped_lines(&wrapped, 5), (0, 10));
         // Cursor at char position 6 (at second line "요")
         assert_eq!(find_cursor_in_wrapped_lines(&wrapped, 6), (1, 2));
+    }
+
+    #[test]
+    fn pinned_title_extraction_strips_timestamp() {
+        use crate::models::split_timestamp_line;
+
+        // Test the multi-line entry format: "## [09:00:00]\n#Important Task #pinned"
+        // First line is timestamp header, second line has content
+        let entry_content = "## [09:00:00]\n#Important Task #pinned\nMore content";
+        let mut lines = entry_content.lines();
+        let first_line = lines.next().unwrap();
+        
+        // First line should be timestamp-only
+        let first_rest = split_timestamp_line(first_line).map(|(_, rest)| rest).unwrap_or("");
+        assert!(first_rest.trim().is_empty(), "First line should be timestamp-only");
+        
+        // Content should come from second line
+        let content_line = lines.next().unwrap();
+        assert_eq!(content_line, "#Important Task #pinned");
+        
+        let title = content_line
+            .trim_start_matches('#')
+            .trim()
+            .replace("#pinned", "")
+            .trim()
+            .to_string();
+        assert_eq!(title, "Important Task");
+
+        // Test single-line format (content on same line as timestamp)
+        let single_line = "[10:00:00] Meeting #pinned";
+        let single_content = split_timestamp_line(single_line)
+            .map(|(_, rest)| rest)
+            .unwrap_or(single_line);
+        assert_eq!(single_content, "Meeting #pinned");
+        
+        let single_title = single_content
+            .trim_start_matches('#')
+            .trim()
+            .replace("#pinned", "")
+            .trim()
+            .to_string();
+        assert_eq!(single_title, "Meeting");
     }
 }
