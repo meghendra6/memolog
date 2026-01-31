@@ -1412,6 +1412,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                     " | ",
                 ),
             ),
+            (
+                "Jump to pinned".to_string(),
+                "Shift+P".to_string(),
+            ),
         ]
     } else {
         vec![

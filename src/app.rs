@@ -826,27 +826,6 @@ impl<'a> App<'a> {
             .cloned()
             .collect();
 
-        // Pin today's #pinned entries to the top of the timeline
-        let today = Local::now().format("%Y-%m-%d").to_string();
-        let today_file_name = format!("{}.md", today);
-        
-        self.logs.sort_by_key(|entry| {
-            let is_today = entry.file_path.ends_with(&today_file_name);
-            let is_pinned = entry.content.contains("#pinned");
-            
-            // Sort order: today's pinned entries first (0), everything else (1)
-            if is_today && is_pinned {
-                0
-            } else {
-                1
-            }
-        });
-
-        // Check if there are pinned entries at the top
-        let has_pinned_at_top = self.logs.first().map_or(false, |entry| {
-            entry.file_path.ends_with(&today_file_name) && entry.content.contains("#pinned")
-        });
-
         if self.logs.is_empty() {
             self.logs_state.select(None);
         } else if let Some(identity) = selected_identity {
@@ -860,18 +839,61 @@ impl<'a> App<'a> {
                 self.logs_state.select(Some(self.logs.len() - 1));
             }
         } else if reset_selection || self.logs_state.selected().is_none() {
-            // If there are pinned entries, select the first one; otherwise select the newest
-            if has_pinned_at_top {
-                self.logs_state.select(Some(0));
-            } else {
-                self.logs_state.select(Some(self.logs.len() - 1));
-            }
+            self.logs_state.select(Some(self.logs.len() - 1));
         } else if let Some(i) = self.logs_state.selected() {
             self.logs_state.select(Some(i.min(self.logs.len() - 1)));
         }
 
         if reset_selection {
             *self.timeline_ui_state.offset_mut() = 0;
+        }
+    }
+
+    /// Returns today's pinned entries for display in the fixed pinned section
+    pub fn get_today_pinned_entries(&self) -> Vec<&LogEntry> {
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let today_file_name = format!("{}.md", today);
+        
+        self.logs
+            .iter()
+            .filter(|entry| {
+                entry.file_path.ends_with(&today_file_name) && entry.content.contains("#pinned")
+            })
+            .collect()
+    }
+
+    /// Jump to the next pinned entry in the timeline
+    pub fn jump_to_next_pinned(&mut self) {
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let today_file_name = format!("{}.md", today);
+        
+        let current_idx = self.logs_state.selected().unwrap_or(0);
+        
+        // Find next pinned entry after current position
+        let next_pinned = self.logs.iter().enumerate()
+            .skip(current_idx + 1)
+            .find(|(_, entry)| {
+                entry.file_path.ends_with(&today_file_name) && entry.content.contains("#pinned")
+            })
+            .map(|(idx, _)| idx);
+        
+        // If not found, wrap around from the beginning
+        let pinned_idx = next_pinned.or_else(|| {
+            self.logs.iter().enumerate()
+                .take(current_idx + 1)
+                .find(|(_, entry)| {
+                    entry.file_path.ends_with(&today_file_name) && entry.content.contains("#pinned")
+                })
+                .map(|(idx, _)| idx)
+        });
+        
+        if let Some(idx) = pinned_idx {
+            self.logs_state.select(Some(idx));
+            // Reset scroll offset to show the selected entry
+            self.entry_scroll_offset = 0;
+            self.entry_scroll_to_bottom = false;
+        } else {
+            self.toast("No pinned entries found".to_string());
         }
     }
 

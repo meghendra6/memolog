@@ -81,7 +81,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
             .split(main_area);
 
-        let timeline_area = top_chunks[0];
+        let timeline_area_raw = top_chunks[0];
         let right_panel = top_chunks[1];
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -89,6 +89,73 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             .split(right_panel);
         let agenda_area = right_chunks[0];
         let tasks_area = right_chunks[1];
+
+        // Check for today's pinned entries and split timeline area if needed
+        let pinned_entries = app.get_today_pinned_entries();
+        let has_pinned = !pinned_entries.is_empty();
+        
+        let (pinned_area, timeline_area) = if has_pinned {
+            // Allocate 2 lines per pinned entry + 2 for borders, max 8 lines total
+            let pinned_height = (pinned_entries.len() * 2 + 2).min(8) as u16;
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(pinned_height),
+                    Constraint::Min(5),
+                ])
+                .split(timeline_area_raw);
+            (Some(chunks[0]), chunks[1])
+        } else {
+            (None, timeline_area_raw)
+        };
+
+        // Render pinned section if it exists
+        if let Some(pinned_rect) = pinned_area {
+            let pinned_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(tokens.ui_muted))
+                .title(Line::from(Span::styled(
+                    " 📌 Pinned ",
+                    Style::default().fg(tokens.ui_accent).add_modifier(Modifier::BOLD),
+                )));
+            
+            let pinned_inner = pinned_block.inner(pinned_rect);
+            let pinned_width = pinned_inner.width.saturating_sub(1).max(1) as usize;
+            
+            let pinned_lines: Vec<Line> = pinned_entries
+                .iter()
+                .take(3) // Max 3 pinned entries shown
+                .flat_map(|entry| {
+                    // Extract first line as title (usually the header)
+                    let first_line = entry.content.lines().next().unwrap_or("");
+                    let title = first_line
+                        .trim_start_matches('#')
+                        .trim()
+                        .replace("#pinned", "")
+                        .trim()
+                        .to_string();
+                    
+                    // Truncate if too long
+                    let display_title = if title.len() > pinned_width.saturating_sub(4) {
+                        format!("{}...", &title[..pinned_width.saturating_sub(7).min(title.len())])
+                    } else {
+                        title
+                    };
+                    
+                    vec![Line::from(Span::styled(
+                        format!("  {}", display_title),
+                        Style::default().fg(tokens.ui_accent),
+                    ))]
+                })
+                .collect();
+            
+            let pinned_text = Paragraph::new(pinned_lines)
+                .block(pinned_block)
+                .wrap(ratatui::widgets::Wrap { trim: true });
+            
+            f.render_widget(pinned_text, pinned_rect);
+        }
+
         let timeline_inner = Block::default().borders(Borders::ALL).inner(timeline_area);
 
         // Timeline log view

@@ -247,6 +247,12 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         && key_match(&key, &app.config.keybindings.timeline.toggle_todo)
     {
         actions::toggle_todo_in_timeline(app);
+    } else if app.navigate_focus == models::NavigateFocus::Timeline
+        && matches!(key_code, KeyCode::Char('P'))
+        && key.modifiers.contains(KeyModifiers::SHIFT)
+    {
+        // Shift+P: Jump to next pinned entry
+        app.jump_to_next_pinned();
     } else if app.navigate_focus == models::NavigateFocus::Agenda
         && key_match(&key, &app.config.keybindings.agenda.up)
     {
