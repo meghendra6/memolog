@@ -1851,4 +1851,22 @@ mod tests {
         assert_eq!(streak, 1);
         assert!(includes_today);
     }
+
+    #[test]
+    fn parse_log_content_with_pinned_tag() {
+        // Correct format: ## [HH:MM:SS] as header, content on next line
+        let content = "## [09:00:00]\n#Important Task #pinned\nThis is content\n\n## [10:00:00]\nRegular";
+        let entries = parse_log_content(content, "2026-02-01.md");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].content, "## [09:00:00]\n#Important Task #pinned\nThis is content");
+        assert!(entries[0].content.contains("#pinned"));
+        
+        // Verify first line is timestamp header
+        let first_line = entries[0].content.lines().next().unwrap();
+        assert_eq!(first_line, "## [09:00:00]");
+        
+        // Verify second line is the pinned content
+        let second_line = entries[0].content.lines().nth(1).unwrap();
+        assert_eq!(second_line, "#Important Task #pinned");
+    }
 }
