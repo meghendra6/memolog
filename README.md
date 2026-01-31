@@ -308,7 +308,7 @@ Global
 - `i` compose
 - `/` search
 - `t` tags
-- `g` activity
+- `Ctrl+A` activity
 - `T` theme presets
 - `p` pomodoro
 - `o` log dir
@@ -317,6 +317,8 @@ Global
 
 Timeline
 - `j/k` move
+- `gg` go to top
+- `G` go to bottom
 - `Tab` fold entry
 - `Shift+Tab` cycle fold mode
 - `e` edit entry

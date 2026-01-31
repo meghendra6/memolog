@@ -9,6 +9,38 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     let key_code = key_code_for_shortcuts(&key);
+
+    // Handle gg/G vim-style navigation for Timeline
+    if app.navigate_focus == models::NavigateFocus::Timeline {
+        // Check for 'G' (shift+g) - go to bottom
+        if matches!(key_code, KeyCode::Char('G'))
+            && key.modifiers.contains(KeyModifiers::SHIFT)
+        {
+            app.pending_nav_key = None;
+            app.scroll_to_bottom();
+            return;
+        }
+
+        // Handle 'g' key sequence (gg = go to top)
+        if let Some(pending) = app.pending_nav_key {
+            app.pending_nav_key = None;
+            if pending == 'g' && matches!(key_code, KeyCode::Char('g')) && key.modifiers.is_empty() {
+                app.scroll_to_top();
+                return;
+            }
+            // If not 'gg', fall through to normal handling
+        }
+
+        // Start 'g' sequence
+        if matches!(key_code, KeyCode::Char('g')) && key.modifiers.is_empty() {
+            app.pending_nav_key = Some('g');
+            return;
+        }
+    } else {
+        // Clear pending key when not in Timeline focus
+        app.pending_nav_key = None;
+    }
+
     if app.navigate_focus == models::NavigateFocus::Timeline
         && key_match(&key, &app.config.keybindings.timeline.fold_toggle)
     {

@@ -394,7 +394,7 @@ impl Default for GlobalBindings {
             focus_prev: vec!["backtab".to_string()],
             search: vec!["/".to_string()],
             tags: vec!["t".to_string()],
-            activity: vec!["g".to_string()],
+            activity: vec!["ctrl+a".to_string()],
             agenda: vec!["a".to_string(), "shift+a".to_string()],
             log_dir: vec!["o".to_string()],
             edit_config: vec![",".to_string()],
