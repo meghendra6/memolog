@@ -127,7 +127,9 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 .take(3) // Max 3 pinned entries shown
                 .flat_map(|entry| {
                     // Extract first line as title (usually the header)
-                    let first_line = entry.content.lines().next().unwrap_or("");
+                    let first_line = entry.content.lines().next().unwrap_or("(empty)");
+                    
+                    // Clean up the title
                     let title = first_line
                         .trim_start_matches('#')
                         .trim()
@@ -135,16 +137,18 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                         .trim()
                         .to_string();
                     
-                    // Truncate if too long
-                    let display_title = if title.len() > pinned_width.saturating_sub(4) {
-                        format!("{}...", &title[..pinned_width.saturating_sub(7).min(title.len())])
+                    // Use cleaned title or fallback to first line
+                    let display_title = if title.is_empty() {
+                        first_line.to_string()
+                    } else if title.len() > pinned_width.saturating_sub(4) && pinned_width > 7 {
+                        format!("{}...", &title[..pinned_width.saturating_sub(7)])
                     } else {
                         title
                     };
                     
                     vec![Line::from(Span::styled(
-                        format!("  {}", display_title),
-                        Style::default().fg(tokens.ui_accent),
+                        format!(" • {}", display_title),
+                        Style::default().fg(tokens.ui_fg),
                     ))]
                 })
                 .collect();
