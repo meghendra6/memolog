@@ -822,6 +822,22 @@ impl<'a> App<'a> {
             .cloned()
             .collect();
 
+        // Pin today's #pinned entries to the top of the timeline
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let today_file_name = format!("{}.md", today);
+        
+        self.logs.sort_by_key(|entry| {
+            let is_today = entry.file_path.ends_with(&today_file_name);
+            let is_pinned = entry.content.contains("#pinned");
+            
+            // Sort order: today's pinned entries first (0), everything else (1)
+            if is_today && is_pinned {
+                0
+            } else {
+                1
+            }
+        });
+
         if self.logs.is_empty() {
             self.logs_state.select(None);
         } else if let Some(identity) = selected_identity {
