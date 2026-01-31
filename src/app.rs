@@ -161,6 +161,9 @@ pub struct App<'a> {
     pub show_quick_capture_popup: bool,
     pub quick_capture_input: String,
 
+    // Navigation key sequence (for gg, etc.)
+    pub pending_nav_key: Option<char>,
+
     // Pomodoro completion alert (blocks input until expiry)
     pub pomodoro_alert_expiry: Option<DateTime<Local>>,
     pub pomodoro_alert_message: Option<String>,
@@ -352,6 +355,7 @@ impl<'a> App<'a> {
             ai_loading_question: None,
             show_quick_capture_popup: false,
             quick_capture_input: String::new(),
+            pending_nav_key: None,
             pomodoro_alert_expiry: None,
             pomodoro_alert_message: None,
             toast_message: None,
@@ -838,6 +842,11 @@ impl<'a> App<'a> {
             }
         });
 
+        // Check if there are pinned entries at the top
+        let has_pinned_at_top = self.logs.first().map_or(false, |entry| {
+            entry.file_path.ends_with(&today_file_name) && entry.content.contains("#pinned")
+        });
+
         if self.logs.is_empty() {
             self.logs_state.select(None);
         } else if let Some(identity) = selected_identity {
@@ -851,7 +860,12 @@ impl<'a> App<'a> {
                 self.logs_state.select(Some(self.logs.len() - 1));
             }
         } else if reset_selection || self.logs_state.selected().is_none() {
-            self.logs_state.select(Some(self.logs.len() - 1));
+            // If there are pinned entries, select the first one; otherwise select the newest
+            if has_pinned_at_top {
+                self.logs_state.select(Some(0));
+            } else {
+                self.logs_state.select(Some(self.logs.len() - 1));
+            }
         } else if let Some(i) = self.logs_state.selected() {
             self.logs_state.select(Some(i.min(self.logs.len() - 1)));
         }

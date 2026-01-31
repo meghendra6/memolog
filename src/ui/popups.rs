@@ -1372,8 +1372,8 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                     &[
                         fmt_keys(&kb.timeline.page_up),
                         fmt_keys(&kb.timeline.page_down),
-                        fmt_keys(&kb.timeline.top),
-                        fmt_keys(&kb.timeline.bottom),
+                        "gg".to_string(),
+                        "G".to_string(),
                     ],
                     " | ",
                 ),
