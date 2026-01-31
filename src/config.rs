@@ -379,6 +379,7 @@ pub struct GlobalBindings {
     pub sync_google: Vec<String>,
     pub theme_switcher: Vec<String>,
     pub editor_style_switcher: Vec<String>,
+    pub quick_capture: Vec<String>,
 }
 
 impl Default for GlobalBindings {
@@ -401,6 +402,7 @@ impl Default for GlobalBindings {
             sync_google: vec!["ctrl+g".to_string()],
             theme_switcher: vec!["shift+t".to_string()],
             editor_style_switcher: vec!["shift+v".to_string()],
+            quick_capture: vec!["ctrl+n".to_string()],
         }
     }
 }
@@ -436,8 +438,8 @@ impl Default for TimelineBindings {
             down: vec!["j".to_string(), "down".to_string()],
             page_up: vec!["ctrl+u".to_string(), "pageup".to_string()],
             page_down: vec!["ctrl+d".to_string(), "pagedown".to_string()],
-            top: vec!["home".to_string()],
-            bottom: vec!["end".to_string()],
+            top: vec!["home".to_string(), "gg".to_string()],
+            bottom: vec!["end".to_string(), "shift+g".to_string()],
             filter_toggle: vec!["f".to_string()],
             filter_work: vec!["1".to_string()],
             filter_personal: vec!["2".to_string()],

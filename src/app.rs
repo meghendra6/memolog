@@ -157,6 +157,10 @@ pub struct App<'a> {
     pub show_ai_loading_popup: bool,
     pub ai_loading_question: Option<String>,
 
+    // Quick capture popup
+    pub show_quick_capture_popup: bool,
+    pub quick_capture_input: String,
+
     // Pomodoro completion alert (blocks input until expiry)
     pub pomodoro_alert_expiry: Option<DateTime<Local>>,
     pub pomodoro_alert_message: Option<String>,
@@ -346,6 +350,8 @@ impl<'a> App<'a> {
             ai_search_receiver: None,
             show_ai_loading_popup: false,
             ai_loading_question: None,
+            show_quick_capture_popup: false,
+            quick_capture_input: String::new(),
             pomodoro_alert_expiry: None,
             pomodoro_alert_message: None,
             toast_message: None,
@@ -818,6 +824,13 @@ impl<'a> App<'a> {
             .cloned()
             .collect();
 
+        // Sort pinned entries (#pinned tag) to the top while preserving order within groups
+        self.logs.sort_by(|a, b| {
+            let a_pinned = a.content.contains("#pinned");
+            let b_pinned = b.content.contains("#pinned");
+            b_pinned.cmp(&a_pinned)
+        });
+
         if self.logs.is_empty() {
             self.logs_state.select(None);
         } else if let Some(identity) = selected_identity {
@@ -1171,6 +1184,21 @@ impl<'a> App<'a> {
             }
         }
         (open, done)
+    }
+
+    /// Returns (completed_minutes, total_planned_minutes) for tasks with @dur metadata.
+    pub fn time_summary(&self) -> (u32, u32) {
+        let mut completed_mins = 0u32;
+        let mut total_mins = 0u32;
+        for task in &self.all_tasks {
+            if let Some(dur) = task.schedule.duration_minutes {
+                total_mins += dur;
+                if task.is_done {
+                    completed_mins += dur;
+                }
+            }
+        }
+        (completed_mins, total_mins)
     }
 
     pub fn task_filter_label(&self) -> &'static str {

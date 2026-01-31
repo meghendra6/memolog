@@ -82,6 +82,10 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
         handle_path_popup(app, key);
         return true;
     }
+    if app.show_quick_capture_popup {
+        handle_quick_capture_popup(app, key);
+        return true;
+    }
     false
 }
 
@@ -794,5 +798,34 @@ fn handle_google_auth_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
         app.show_google_auth_popup = false;
         return;
+    }
+}
+
+fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.show_quick_capture_popup = false;
+            app.quick_capture_input.clear();
+        }
+        KeyCode::Enter => {
+            if !app.quick_capture_input.trim().is_empty() {
+                let content = app.quick_capture_input.trim().to_string();
+                if let Err(e) = crate::storage::append_entry(&app.config.data.log_path, &content) {
+                    app.toast(format!("Failed to save: {}", e));
+                } else {
+                    app.toast("⚡ Quick note saved!");
+                    app.update_logs();
+                }
+            }
+            app.show_quick_capture_popup = false;
+            app.quick_capture_input.clear();
+        }
+        KeyCode::Backspace => {
+            app.quick_capture_input.pop();
+        }
+        KeyCode::Char(c) => {
+            app.quick_capture_input.push(c);
+        }
+        _ => {}
     }
 }
