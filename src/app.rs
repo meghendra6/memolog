@@ -130,6 +130,7 @@ pub struct App<'a> {
     pub pomodoro_target: Option<PomodoroTarget>,
     pub show_activity_popup: bool,
     pub activity_data: HashMap<String, (usize, usize)>, // "YYYY-MM-DD" -> (line_count, tomato_count)
+    pub streak: (usize, bool),                          // (streak_days, includes_today)
     pub show_path_popup: bool,
     pub show_theme_popup: bool,
     pub theme_list_state: ListState,
@@ -155,6 +156,13 @@ pub struct App<'a> {
     pub ai_search_receiver: Option<Receiver<AiSearchOutcome>>,
     pub show_ai_loading_popup: bool,
     pub ai_loading_question: Option<String>,
+
+    // Quick capture popup
+    pub show_quick_capture_popup: bool,
+    pub quick_capture_input: String,
+
+    // Navigation key sequence (for gg, etc.)
+    pub pending_nav_key: Option<char>,
 
     // Pomodoro completion alert (blocks input until expiry)
     pub pomodoro_alert_expiry: Option<DateTime<Local>>,
@@ -248,6 +256,9 @@ impl<'a> App<'a> {
         // Calculate today's stats from today's logs only
         let (today_done_tasks, today_tomatoes) = compute_today_task_stats(&today_logs);
 
+        // Calculate streak
+        let streak = storage::calculate_streak(&config.data.log_path).unwrap_or((0, false));
+
         let mut app = App {
             input_mode,
             navigate_focus: NavigateFocus::Timeline,
@@ -319,6 +330,7 @@ impl<'a> App<'a> {
             pomodoro_target: None,
             show_activity_popup: false,
             activity_data: HashMap::new(),
+            streak,
             show_path_popup: false,
             show_theme_popup: false,
             theme_list_state: ListState::default(),
@@ -341,6 +353,9 @@ impl<'a> App<'a> {
             ai_search_receiver: None,
             show_ai_loading_popup: false,
             ai_loading_question: None,
+            show_quick_capture_popup: false,
+            quick_capture_input: String::new(),
+            pending_nav_key: None,
             pomodoro_alert_expiry: None,
             pomodoro_alert_message: None,
             toast_message: None,
@@ -467,6 +482,9 @@ impl<'a> App<'a> {
         let (done, tomatoes) = compute_today_task_stats(&today_logs);
         self.today_done_tasks = done;
         self.today_tomatoes = tomatoes;
+
+        // Update streak
+        self.streak = storage::calculate_streak(&self.config.data.log_path).unwrap_or((0, false));
     }
 
     /// Loads more historical entries when scrolling to the top.
@@ -833,6 +851,54 @@ impl<'a> App<'a> {
         }
     }
 
+    /// Returns today's pinned entries for display in the fixed pinned section
+    pub fn get_today_pinned_entries(&self) -> Vec<&LogEntry> {
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let today_file_name = format!("{}.md", today);
+        
+        self.logs
+            .iter()
+            .filter(|entry| {
+                entry.file_path.ends_with(&today_file_name) && entry.content.contains("#pinned")
+            })
+            .collect()
+    }
+
+    /// Jump to the next pinned entry in the timeline
+    pub fn jump_to_next_pinned(&mut self) {
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let today_file_name = format!("{}.md", today);
+        
+        let current_idx = self.logs_state.selected().unwrap_or(0);
+        
+        // Find next pinned entry after current position
+        let next_pinned = self.logs.iter().enumerate()
+            .skip(current_idx + 1)
+            .find(|(_, entry)| {
+                entry.file_path.ends_with(&today_file_name) && entry.content.contains("#pinned")
+            })
+            .map(|(idx, _)| idx);
+        
+        // If not found, wrap around from the beginning
+        let pinned_idx = next_pinned.or_else(|| {
+            self.logs.iter().enumerate()
+                .take(current_idx + 1)
+                .find(|(_, entry)| {
+                    entry.file_path.ends_with(&today_file_name) && entry.content.contains("#pinned")
+                })
+                .map(|(idx, _)| idx)
+        });
+        
+        if let Some(idx) = pinned_idx {
+            self.logs_state.select(Some(idx));
+            // Reset scroll offset to show the selected entry
+            self.entry_scroll_offset = 0;
+            self.entry_scroll_to_bottom = false;
+        } else {
+            self.toast("No pinned entries found".to_string());
+        }
+    }
+
     pub fn set_timeline_filter(&mut self, filter: TimelineFilter) {
         if self.timeline_filter == filter {
             return;
@@ -947,7 +1013,8 @@ impl<'a> App<'a> {
                 .collect(),
         };
 
-        self.tasks.sort_by_key(|task| (task_priority_rank(task.priority), task.line_number));
+        self.tasks
+            .sort_by_key(|task| (task_priority_rank(task.priority), task.line_number));
 
         if self.tasks.is_empty() {
             self.tasks_state.select(None);
@@ -1008,7 +1075,8 @@ impl<'a> App<'a> {
         if reset_selection || self.agenda_state.selected().is_none() {
             self.agenda_state.select(Some(0));
         } else if let Some(i) = self.agenda_state.selected() {
-            self.agenda_state.select(Some(i.min(self.agenda_items.len() - 1)));
+            self.agenda_state
+                .select(Some(i.min(self.agenda_items.len() - 1)));
         }
     }
 
@@ -1059,9 +1127,8 @@ impl<'a> App<'a> {
         let today = Local::now().date_naive();
         let start = today - Duration::days(3650);
         let end = today + Duration::days(3650);
-        let items =
-            storage::read_agenda_entries(&self.config.data.log_path, start, end)
-                .unwrap_or_default();
+        let items = storage::read_agenda_entries(&self.config.data.log_path, start, end)
+            .unwrap_or_default();
         self.agenda_all_items = items;
         self.apply_agenda_filter(true);
         self.set_agenda_selected_day(self.agenda_selected_day);
@@ -1085,12 +1152,7 @@ impl<'a> App<'a> {
 
     pub fn open_date_picker(&mut self) {
         let (row, _) = self.textarea.cursor();
-        let line = self
-            .textarea
-            .lines()
-            .get(row)
-            .cloned()
-            .unwrap_or_default();
+        let line = self.textarea.lines().get(row).cloned().unwrap_or_default();
         let (schedule, _) = crate::task_metadata::parse_task_metadata(&line);
         let now = Local::now();
 
@@ -1163,6 +1225,21 @@ impl<'a> App<'a> {
             }
         }
         (open, done)
+    }
+
+    /// Returns (completed_minutes, total_planned_minutes) for tasks with @dur metadata.
+    pub fn time_summary(&self) -> (u32, u32) {
+        let mut completed_mins = 0u32;
+        let mut total_mins = 0u32;
+        for task in &self.all_tasks {
+            if let Some(dur) = task.schedule.duration_minutes {
+                total_mins += dur;
+                if task.is_done {
+                    completed_mins += dur;
+                }
+            }
+        }
+        (completed_mins, total_mins)
     }
 
     pub fn task_filter_label(&self) -> &'static str {
@@ -1333,17 +1410,17 @@ impl<'a> App<'a> {
         self.textarea.set_yank_text(self.yank_buffer.clone());
     }
 
-pub fn show_visual_hint(&mut self, message: impl Into<String>) {
-    self.visual_hint_message = Some(message.into());
-    self.visual_hint_expiry = Some(Local::now() + Duration::seconds(2));
-    self.visual_hint_active = true;
-}
+    pub fn show_visual_hint(&mut self, message: impl Into<String>) {
+        self.visual_hint_message = Some(message.into());
+        self.visual_hint_expiry = Some(Local::now() + Duration::seconds(2));
+        self.visual_hint_active = true;
+    }
 
-pub fn clear_visual_hint(&mut self) {
-    self.visual_hint_message = None;
-    self.visual_hint_expiry = None;
-    self.visual_hint_active = false;
-}
+    pub fn clear_visual_hint(&mut self) {
+        self.visual_hint_message = None;
+        self.visual_hint_expiry = None;
+        self.visual_hint_active = false;
+    }
 }
 
 fn copy_to_clipboard(text: &str) {
@@ -1556,10 +1633,7 @@ fn apply_context_tag_to_lines(lines: &mut Vec<String>, context: TimelineFilter) 
     };
 
     let mut start_idx = 0;
-    if lines
-        .first()
-        .is_some_and(|line| is_timestamped_line(line))
-    {
+    if lines.first().is_some_and(|line| is_timestamped_line(line)) {
         start_idx = 1;
     }
 

@@ -379,6 +379,7 @@ pub struct GlobalBindings {
     pub sync_google: Vec<String>,
     pub theme_switcher: Vec<String>,
     pub editor_style_switcher: Vec<String>,
+    pub quick_capture: Vec<String>,
 }
 
 impl Default for GlobalBindings {
@@ -393,7 +394,7 @@ impl Default for GlobalBindings {
             focus_prev: vec!["backtab".to_string()],
             search: vec!["/".to_string()],
             tags: vec!["t".to_string()],
-            activity: vec!["g".to_string()],
+            activity: vec!["ctrl+a".to_string()],
             agenda: vec!["a".to_string(), "shift+a".to_string()],
             log_dir: vec!["o".to_string()],
             edit_config: vec![",".to_string()],
@@ -401,6 +402,7 @@ impl Default for GlobalBindings {
             sync_google: vec!["ctrl+g".to_string()],
             theme_switcher: vec!["shift+t".to_string()],
             editor_style_switcher: vec!["shift+v".to_string()],
+            quick_capture: vec!["ctrl+n".to_string()],
         }
     }
 }

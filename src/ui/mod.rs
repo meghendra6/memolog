@@ -10,8 +10,8 @@ use ratatui::{
 use crate::app::{App, PLACEHOLDER_COMPOSE};
 use crate::config::{Theme, ThemePreset, ThemeToastOverrides, ThemeUiOverrides};
 use crate::models::{
-    AgendaItemKind, EditorMode, InputMode, NavigateFocus, VisualKind,
-    is_heading_timestamp_line, is_timestamped_line, split_timestamp_line,
+    AgendaItemKind, EditorMode, InputMode, NavigateFocus, VisualKind, is_heading_timestamp_line,
+    is_timestamped_line, split_timestamp_line,
 };
 use ratatui::style::Stylize;
 use regex::Regex;
@@ -27,13 +27,15 @@ pub mod components;
 pub mod popups;
 pub mod theme;
 
-use components::{centered_column, markdown_prefix_width, parse_markdown_spans, wrap_markdown_line};
+use components::{
+    centered_column, markdown_prefix_width, parse_markdown_spans, wrap_markdown_line,
+};
 use popups::{
-    render_ai_loading_popup, render_ai_response_popup, render_activity_popup,
+    render_activity_popup, render_ai_loading_popup, render_ai_response_popup,
     render_date_picker_popup, render_delete_entry_popup, render_editor_style_popup,
     render_exit_popup, render_google_auth_popup, render_help_popup, render_memo_preview_popup,
-    render_mood_popup, render_path_popup, render_pomodoro_popup, render_siren_popup,
-    render_tag_popup, render_theme_switcher_popup, render_todo_popup,
+    render_mood_popup, render_path_popup, render_pomodoro_popup, render_quick_capture_popup,
+    render_siren_popup, render_tag_popup, render_theme_switcher_popup, render_todo_popup,
 };
 
 pub fn ui(f: &mut Frame, app: &mut App) {
@@ -79,7 +81,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
             .split(main_area);
 
-        let timeline_area = top_chunks[0];
+        let timeline_area_raw = top_chunks[0];
         let right_panel = top_chunks[1];
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -87,6 +89,94 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             .split(right_panel);
         let agenda_area = right_chunks[0];
         let tasks_area = right_chunks[1];
+
+        // Check for today's pinned entries and split timeline area if needed
+        let pinned_entries = app.get_today_pinned_entries();
+        let has_pinned = !pinned_entries.is_empty();
+        
+        let (pinned_area, timeline_area) = if has_pinned {
+            // Allocate 2 lines per pinned entry + 2 for borders, max 8 lines total
+            let pinned_height = (pinned_entries.len() * 2 + 2).min(8) as u16;
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(pinned_height),
+                    Constraint::Min(5),
+                ])
+                .split(timeline_area_raw);
+            (Some(chunks[0]), chunks[1])
+        } else {
+            (None, timeline_area_raw)
+        };
+
+        // Render pinned section if it exists
+        if let Some(pinned_rect) = pinned_area {
+            let pinned_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(tokens.ui_muted))
+                .title(Line::from(Span::styled(
+                    " 📌 Pinned ",
+                    Style::default().fg(tokens.ui_accent).add_modifier(Modifier::BOLD),
+                )));
+            
+            let pinned_inner = pinned_block.inner(pinned_rect);
+            let pinned_width = pinned_inner.width.saturating_sub(1).max(1) as usize;
+            
+            let pinned_lines: Vec<Line> = pinned_entries
+                .iter()
+                .take(3) // Max 3 pinned entries shown
+                .flat_map(|entry| {
+                    // Entry format: "## [HH:MM:SS]\ncontent line\n..."
+                    // First line is timestamp, content starts on second line
+                    let mut lines_iter = entry.content.lines();
+                    let first_line = lines_iter.next().unwrap_or("");
+                    
+                    // If first line is just a timestamp, get content from second line
+                    let content_line = if split_timestamp_line(first_line).map(|(_, rest)| rest.trim().is_empty()).unwrap_or(false) {
+                        // First line is timestamp-only, use second line
+                        lines_iter.next().unwrap_or("")
+                    } else {
+                        // First line has content after timestamp
+                        split_timestamp_line(first_line)
+                            .map(|(_, rest)| rest)
+                            .unwrap_or(first_line)
+                    };
+                    
+                    // Clean up the title: remove leading # and #pinned tag
+                    let title = content_line
+                        .trim_start_matches('#')
+                        .trim()
+                        .replace("#pinned", "")
+                        .trim()
+                        .to_string();
+                    
+                    // Use cleaned title or fallback
+                    let display_title = if title.is_empty() {
+                        if content_line.is_empty() {
+                            "(untitled)".to_string()
+                        } else {
+                            content_line.to_string()
+                        }
+                    } else if title.len() > pinned_width.saturating_sub(4) && pinned_width > 7 {
+                        format!("{}...", &title[..pinned_width.saturating_sub(7)])
+                    } else {
+                        title
+                    };
+                    
+                    vec![Line::from(Span::styled(
+                        format!(" • {}", display_title),
+                        Style::default().fg(tokens.ui_fg),
+                    ))]
+                })
+                .collect();
+            
+            let pinned_text = Paragraph::new(pinned_lines)
+                .block(pinned_block)
+                .wrap(ratatui::widgets::Wrap { trim: true });
+            
+            f.render_widget(pinned_text, pinned_rect);
+        }
+
         let timeline_inner = Block::default().borders(Borders::ALL).inner(timeline_area);
 
         // Timeline log view
@@ -209,11 +299,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             let is_folded = total_display_lines > visible_raw_limit;
             let show_fold_marker = total_display_lines > 1;
             let fold_marker = if show_fold_marker {
-                if is_folded {
-                    "▶"
-                } else {
-                    "▼"
-                }
+                if is_folded { "▶" } else { "▼" }
             } else {
                 " "
             };
@@ -225,9 +311,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 crate::models::TimelineFilter::Personal => {
                     ("P", Style::default().fg(tokens.ui_muted))
                 }
-                crate::models::TimelineFilter::All => {
-                    ("P", Style::default().fg(tokens.ui_muted))
-                }
+                crate::models::TimelineFilter::All => ("P", Style::default().fg(tokens.ui_muted)),
             };
             let marker_width = 4;
             let mut displayed_raw = 0usize;
@@ -547,7 +631,10 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             let time = Local::now().format("%Y-%m-%d %H:%M");
             let base = format!(
                 "{} · Entries {} · {} · {}",
-                time, app.logs.len(), context_summary, stats_summary
+                time,
+                app.logs.len(),
+                context_summary,
+                stats_summary
             );
             format!("{base}{pomodoro}")
         };
@@ -831,8 +918,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                     true,
                 ));
             } else {
-                let (code_block_info, cursor_block_id) =
-                    collect_code_block_info(lines, cursor_row);
+                let (code_block_info, cursor_block_id) = collect_code_block_info(lines, cursor_row);
                 let mut active_block_id: Option<usize> = None;
                 let mut highlighter: Option<HighlightLines> = None;
 
@@ -1114,6 +1200,10 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     if app.show_ai_response_popup {
         render_ai_response_popup(f, app);
     }
+
+    if app.show_quick_capture_popup {
+        render_quick_capture_popup(f, app);
+    }
 }
 
 fn truncate(text: &str, max_chars: usize) -> String {
@@ -1334,7 +1424,9 @@ fn syntax_theme_candidates_for_preset(preset: ThemePreset) -> &'static [&'static
     match preset {
         ThemePreset::DraculaDark => &["Dracula", "base16-ocean.dark", "Solarized (dark)"],
         ThemePreset::SolarizedDark => &["Solarized (dark)", "base16-ocean.dark", "Dracula"],
-        ThemePreset::SolarizedLight => &["Solarized (light)", "InspiredGitHub", "base16-ocean.light"],
+        ThemePreset::SolarizedLight => {
+            &["Solarized (light)", "InspiredGitHub", "base16-ocean.light"]
+        }
         ThemePreset::NordCalm => &["Nord", "base16-ocean.dark", "Solarized (dark)"],
         ThemePreset::MonoContrast => &["base16-ocean.dark", "Monokai Extended", "Dracula"],
     }
@@ -1387,10 +1479,7 @@ fn ui_overrides_equal(a: Option<&ThemeUiOverrides>, b: Option<&ThemeUiOverrides>
     }
 }
 
-fn toast_overrides_equal(
-    a: Option<&ThemeToastOverrides>,
-    b: Option<&ThemeToastOverrides>,
-) -> bool {
+fn toast_overrides_equal(a: Option<&ThemeToastOverrides>, b: Option<&ThemeToastOverrides>) -> bool {
     match (a, b) {
         (None, None) => true,
         (Some(a), Some(b)) => a.info == b.info && a.success == b.success && a.error == b.error,
@@ -1516,11 +1605,7 @@ fn code_fallback_style(code_bg: Option<Color>) -> Style {
     style
 }
 
-fn slice_segments(
-    segments: &[StyledSegment],
-    start: usize,
-    end: usize,
-) -> Vec<StyledSegment> {
+fn slice_segments(segments: &[StyledSegment], start: usize, end: usize) -> Vec<StyledSegment> {
     let mut out = Vec::new();
     let mut pos = 0usize;
     let end = end.max(start);
@@ -1680,8 +1765,7 @@ fn compose_wrapped_line(
     let mut rendered = Line::from(spans);
     let segment_len = line.chars().count();
     let selection_covers_segment = selection.map_or(false, |range| {
-        range.start <= wrap_start_col
-            && range.end >= wrap_start_col.saturating_add(segment_len)
+        range.start <= wrap_start_col && range.end >= wrap_start_col.saturating_add(segment_len)
     });
     if selection_covers_segment {
         rendered.style = Style::default().bg(tokens.ui_selection_bg);
@@ -2062,8 +2146,7 @@ fn render_agenda_panel(
         let slot_minutes: i32 = 30;
         let window_start_min: i32 = 6 * 60;
         let window_end_min: i32 = 22 * 60;
-        let row_count =
-            ((window_end_min - window_start_min) / slot_minutes).max(0) as usize + 1;
+        let row_count = ((window_end_min - window_start_min) / slot_minutes).max(0) as usize + 1;
 
         let mut blocks = build_agenda_blocks(&timed, app, app.agenda_selected_day);
         blocks.sort_by_key(|block| (block.start_min, block.end_min, block.idx));
@@ -2087,18 +2170,18 @@ fn render_agenda_panel(
         }
 
         let now_min = now_time.hour() as i32 * 60 + now_time.minute() as i32;
-        let now_row = if is_today
-            && now_min >= window_start_min
-            && now_min < window_end_min + slot_minutes
-        {
-            Some(((now_min - window_start_min) / slot_minutes) as usize)
-        } else {
-            None
-        };
+        let now_row =
+            if is_today && now_min >= window_start_min && now_min < window_end_min + slot_minutes {
+                Some(((now_min - window_start_min) / slot_minutes) as usize)
+            } else {
+                None
+            };
 
         let time_width = 5usize;
         let separator = " | ";
-        let content_width = list_width.saturating_sub(time_width + separator.len()).max(1);
+        let content_width = list_width
+            .saturating_sub(time_width + separator.len())
+            .max(1);
         for row in 0..row_count {
             let time_min = window_start_min + row as i32 * slot_minutes;
             let time_label = format!("{:02}:{:02}", time_min / 60, time_min % 60);
@@ -2108,9 +2191,7 @@ fn render_agenda_panel(
             {
                 let starting_blocks: Vec<usize> = block_indices
                     .iter()
-                    .filter(|block_idx| {
-                        block_start_row.get(&blocks[**block_idx].idx) == Some(&row)
-                    })
+                    .filter(|block_idx| block_start_row.get(&blocks[**block_idx].idx) == Some(&row))
                     .copied()
                     .collect();
                 let selected_block = selected.and_then(|selected_idx| {
@@ -2189,11 +2270,7 @@ struct AgendaBlock {
     prefix: &'static str,
 }
 
-fn build_agenda_blocks(
-    timed: &[usize],
-    app: &App,
-    day: chrono::NaiveDate,
-) -> Vec<AgendaBlock> {
+fn build_agenda_blocks(timed: &[usize], app: &App, day: chrono::NaiveDate) -> Vec<AgendaBlock> {
     let mut blocks = Vec::new();
     for idx in timed {
         let item = &app.agenda_items[*idx];
@@ -2373,6 +2450,31 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         ""
     };
 
+    // Streak indicator
+    let (streak_days, _) = app.streak;
+    let streak_label = if streak_days > 0 {
+        format!(" 🔥{}", streak_days)
+    } else {
+        String::new()
+    };
+
+    // Today's task progress bar
+    let (open_count, done_count) = app.task_counts();
+    let total_count = open_count + done_count;
+    let progress_label = if total_count > 0 {
+        let filled = (done_count * 6) / total_count;
+        let empty = 6 - filled;
+        format!(
+            " [{}{}] {}/{}",
+            "█".repeat(filled),
+            "░".repeat(empty),
+            done_count,
+            total_count
+        )
+    } else {
+        String::new()
+    };
+
     let left_spans = vec![
         Span::styled(
             format!(" {mode_label} "),
@@ -2387,6 +2489,8 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
                 .fg(tokens.ui_fg)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(streak_label, Style::default().fg(Color::Yellow)),
+        Span::styled(progress_label, Style::default().fg(Color::Cyan)),
     ];
 
     let mut right_plain = String::new();
@@ -2400,6 +2504,14 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
             cursor_text,
             Style::default().fg(tokens.ui_muted),
         ));
+
+        // Word count
+        let text = app.textarea.lines().join("\n");
+        let char_count = text.chars().count();
+        let word_count = text.split_whitespace().count();
+        let wc_text = format!("  {}w {}c", word_count, char_count);
+        right_plain.push_str(&wc_text);
+        right_spans.push(Span::styled(wc_text, Style::default().fg(tokens.ui_muted)));
     }
 
     let status_message = if let Some(hint) = app.visual_hint_message.as_deref() {
@@ -2516,9 +2628,9 @@ fn file_date(file_path: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::collect_code_block_info;
     use super::compose_prefix_width;
     use super::compose_wrapped_line;
-    use super::collect_code_block_info;
     use super::hide_fence_marker;
     use crate::config::Theme;
     use crate::ui::theme::ThemeTokens;
@@ -2557,8 +2669,7 @@ mod tests {
     #[test]
     fn renders_line_numbers_in_gutter() {
         let tokens = ThemeTokens::from_theme(&Theme::default());
-        let line =
-            compose_wrapped_line("plain text", &tokens, false, 9, true, true, None, 0, None);
+        let line = compose_wrapped_line("plain text", &tokens, false, 9, true, true, None, 0, None);
         assert_eq!(line_to_string(&line), " 10 | plain text");
     }
 
@@ -2660,5 +2771,47 @@ mod tests {
         assert_eq!(find_cursor_in_wrapped_lines(&wrapped, 5), (0, 10));
         // Cursor at char position 6 (at second line "요")
         assert_eq!(find_cursor_in_wrapped_lines(&wrapped, 6), (1, 2));
+    }
+
+    #[test]
+    fn pinned_title_extraction_strips_timestamp() {
+        use crate::models::split_timestamp_line;
+
+        // Test the multi-line entry format: "## [09:00:00]\n#Important Task #pinned"
+        // First line is timestamp header, second line has content
+        let entry_content = "## [09:00:00]\n#Important Task #pinned\nMore content";
+        let mut lines = entry_content.lines();
+        let first_line = lines.next().unwrap();
+        
+        // First line should be timestamp-only
+        let first_rest = split_timestamp_line(first_line).map(|(_, rest)| rest).unwrap_or("");
+        assert!(first_rest.trim().is_empty(), "First line should be timestamp-only");
+        
+        // Content should come from second line
+        let content_line = lines.next().unwrap();
+        assert_eq!(content_line, "#Important Task #pinned");
+        
+        let title = content_line
+            .trim_start_matches('#')
+            .trim()
+            .replace("#pinned", "")
+            .trim()
+            .to_string();
+        assert_eq!(title, "Important Task");
+
+        // Test single-line format (content on same line as timestamp)
+        let single_line = "[10:00:00] Meeting #pinned";
+        let single_content = split_timestamp_line(single_line)
+            .map(|(_, rest)| rest)
+            .unwrap_or(single_line);
+        assert_eq!(single_content, "Meeting #pinned");
+        
+        let single_title = single_content
+            .trim_start_matches('#')
+            .trim()
+            .replace("#pinned", "")
+            .trim()
+            .to_string();
+        assert_eq!(single_title, "Meeting");
     }
 }

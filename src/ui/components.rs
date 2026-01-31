@@ -157,7 +157,8 @@ pub fn parse_markdown_spans(
         (content, false)
     };
 
-    let (content, priority_marker) = if let Some((priority, rest)) = split_priority_marker(content) {
+    let (content, priority_marker) = if let Some((priority, rest)) = split_priority_marker(content)
+    {
         (rest, Some(priority))
     } else {
         (content, None)

@@ -152,6 +152,7 @@ When it completes, MemoLog appends a tomato (🍅) to the task line.
 
 - `/` opens search
 - `t` shows tag list (tags are any `#word` in your logs)
+- **Special tag: `#pinned`** - Entries with `#pinned` in today's log appear in a fixed section at the top of the timeline (always visible while scrolling). Use `Shift+P` to jump to pinned entries in the timeline.
 - AI search: prefix your query with `?`, `ai:`, or `ask:` to run a Gemini-assisted search
 
 ## Gemini AI search (experimental)
@@ -307,7 +308,7 @@ Global
 - `i` compose
 - `/` search
 - `t` tags
-- `g` activity
+- `Ctrl+A` activity
 - `T` theme presets
 - `p` pomodoro
 - `o` log dir
@@ -316,6 +317,9 @@ Global
 
 Timeline
 - `j/k` move
+- `gg` go to top
+- `G` go to bottom
+- `Shift+P` jump to pinned
 - `Tab` fold entry
 - `Shift+Tab` cycle fold mode
 - `e` edit entry

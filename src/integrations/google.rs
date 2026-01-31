@@ -2,8 +2,8 @@ use crate::config::{Config, GoogleConfig, google_sync_state_path, google_token_p
 use crate::models::{AgendaItem, AgendaItemKind, TaskSchedule};
 use crate::storage::{self, NoteLineUpdate, TaskLineUpdate};
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
-use reqwest::blocking::Client;
 use reqwest::Url;
+use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -341,13 +341,8 @@ pub fn spawn_auth_flow_poll(
 
             match session.listener.accept() {
                 Ok((mut stream, _addr)) => {
-                    match handle_auth_request(
-                        &client,
-                        &config,
-                        &session,
-                        &mut stream,
-                        &token_path,
-                    ) {
+                    match handle_auth_request(&client, &config, &session, &mut stream, &token_path)
+                    {
                         Ok(AuthRequestOutcome::Continue) => {}
                         Ok(AuthRequestOutcome::Success) => {
                             let _ = tx.send(AuthPollResult::Success);
@@ -409,10 +404,7 @@ fn ensure_access_token(config: &Config) -> Result<String, SyncError> {
     }
 }
 
-fn refresh_access_token(
-    config: &Config,
-    refresh_token: &str,
-) -> Result<StoredToken, SyncError> {
+fn refresh_access_token(config: &Config, refresh_token: &str) -> Result<StoredToken, SyncError> {
     let client = Client::new();
     let resp = client
         .post(OAUTH_TOKEN_URL)
@@ -432,20 +424,20 @@ fn refresh_access_token(
         )));
     }
 
-    let token: TokenResponse = resp
-        .json()
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let token: TokenResponse = resp.json().map_err(|e| SyncError::Request(e.to_string()))?;
     Ok(StoredToken {
         access_token: token.access_token,
-        refresh_token: token.refresh_token.unwrap_or_else(|| refresh_token.to_string()),
+        refresh_token: token
+            .refresh_token
+            .unwrap_or_else(|| refresh_token.to_string()),
         expires_at: (Utc::now() + Duration::seconds(token.expires_in as i64)).timestamp(),
     })
 }
 
 fn load_token(path: &Path) -> Result<StoredToken, SyncError> {
     let content = fs::read_to_string(path)?;
-    let token: StoredToken = serde_json::from_str(&content)
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let token: StoredToken =
+        serde_json::from_str(&content).map_err(|e| SyncError::Request(e.to_string()))?;
     Ok(token)
 }
 
@@ -461,17 +453,11 @@ fn handle_auth_request(
     stream: &mut std::net::TcpStream,
     token_path: &Path,
 ) -> Result<AuthRequestOutcome, String> {
-    stream
-        .set_nonblocking(false)
-        .map_err(|e| e.to_string())?;
+    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
     stream
         .set_read_timeout(Some(StdDuration::from_secs(10)))
         .map_err(|e| e.to_string())?;
-    let mut reader = BufReader::new(
-        stream
-            .try_clone()
-            .map_err(|e| e.to_string())?,
-    );
+    let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
     let mut request_line = String::new();
     let bytes_read = match reader.read_line(&mut request_line) {
         Ok(bytes_read) => bytes_read,
@@ -489,10 +475,7 @@ fn handle_auth_request(
         let _ = respond_with_message(stream, "Invalid request.");
         return Ok(AuthRequestOutcome::Continue);
     }
-    let path = request_line
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or("/");
+    let path = request_line.split_whitespace().nth(1).unwrap_or("/");
     let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
     let params = parse_query(query);
 
@@ -510,9 +493,7 @@ fn handle_auth_request(
             .get("error_description")
             .map(|s| format!(" ({})", s))
             .unwrap_or_default();
-        let _ = respond_with_message(stream, &format!(
-            "Authorization failed: {error}{desc}"
-        ));
+        let _ = respond_with_message(stream, &format!("Authorization failed: {error}{desc}"));
         return Err(format!("Google auth failed: {error}{desc}"));
     }
 
@@ -566,9 +547,7 @@ fn handle_auth_request(
 }
 
 fn respond_with_redirect(stream: &mut std::net::TcpStream, url: &str) -> io::Result<()> {
-    let response = format!(
-        "HTTP/1.1 302 Found\r\nLocation: {url}\r\nContent-Length: 0\r\n\r\n"
-    );
+    let response = format!("HTTP/1.1 302 Found\r\nLocation: {url}\r\nContent-Length: 0\r\n\r\n");
     stream.write_all(response.as_bytes())
 }
 
@@ -629,7 +608,7 @@ fn decode_component(input: &str) -> String {
 }
 
 fn generate_state() -> String {
-    use rand::{distributions::Alphanumeric, Rng};
+    use rand::{Rng, distributions::Alphanumeric};
     rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(32)
@@ -686,8 +665,8 @@ fn save_token(path: &Path, token: &StoredToken) -> Result<(), SyncError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let content = serde_json::to_string_pretty(token)
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let content =
+        serde_json::to_string_pretty(token).map_err(|e| SyncError::Request(e.to_string()))?;
     fs::write(path, content)?;
     Ok(())
 }
@@ -697,8 +676,8 @@ fn load_sync_state(path: &Path) -> Result<SyncState, SyncError> {
         return Ok(SyncState::default());
     }
     let content = fs::read_to_string(path)?;
-    let state: SyncState = serde_json::from_str(&content)
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let state: SyncState =
+        serde_json::from_str(&content).map_err(|e| SyncError::Request(e.to_string()))?;
     Ok(state)
 }
 
@@ -706,8 +685,8 @@ fn save_sync_state(path: &Path, state: &SyncState) -> Result<(), SyncError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let content = serde_json::to_string_pretty(state)
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let content =
+        serde_json::to_string_pretty(state).map_err(|e| SyncError::Request(e.to_string()))?;
     fs::write(path, content)?;
     Ok(())
 }
@@ -746,8 +725,11 @@ fn sync_tasks(
     for item in remote_items {
         remote_by_id.insert(item.id.clone(), item.clone());
     }
-    let claimed_remote: HashSet<String> =
-        state.tasks.values().map(|entry| entry.google_id.clone()).collect();
+    let claimed_remote: HashSet<String> = state
+        .tasks
+        .values()
+        .map(|entry| entry.google_id.clone())
+        .collect();
     let mut remote_match: HashMap<String, Vec<RemoteTask>> = HashMap::new();
     for item in remote_items {
         if claimed_remote.contains(&item.id) {
@@ -931,12 +913,8 @@ fn sync_tasks(
                 }
             }
             (Some(_entry), None) => {
-                let created = create_remote_task(
-                    client,
-                    access_token,
-                    &config.google.tasks_list_id,
-                    item,
-                )?;
+                let created =
+                    create_remote_task(client, access_token, &config.google.tasks_list_id, item)?;
                 report.tasks_created += 1;
                 state.tasks.insert(
                     key,
@@ -948,12 +926,8 @@ fn sync_tasks(
                 );
             }
             (None, _) => {
-                let created = create_remote_task(
-                    client,
-                    access_token,
-                    &config.google.tasks_list_id,
-                    item,
-                )?;
+                let created =
+                    create_remote_task(client, access_token, &config.google.tasks_list_id, item)?;
                 report.tasks_created += 1;
                 state.tasks.insert(
                     key,
@@ -974,14 +948,17 @@ fn sync_tasks(
             .any(|entry| entry.google_id == remote.id);
         if !exists {
             let update = TaskLineUpdate {
-                text: remote.title.clone().unwrap_or_else(|| "Untitled task".to_string()),
+                text: remote
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| "Untitled task".to_string()),
                 is_done: remote.status.as_deref() == Some("completed"),
                 priority: None,
                 schedule: schedule_from_remote_task(remote),
             };
             let line = storage::compose_task_line(&update);
-            let date = schedule_anchor_date(&update.schedule)
-                .unwrap_or_else(|| Local::now().date_naive());
+            let date =
+                schedule_anchor_date(&update.schedule).unwrap_or_else(|| Local::now().date_naive());
             let log_file = log_path_for_date(&config.data.log_path, date);
             if let Some(line_number) = find_last_line_number(&log_file, &line) {
                 let key = local_task_key_for_path(&log_file, line_number);
@@ -1030,8 +1007,11 @@ fn sync_events(
     for item in remote_items {
         remote_by_id.insert(item.id.clone(), item.clone());
     }
-    let claimed_remote: HashSet<String> =
-        state.events.values().map(|entry| entry.google_id.clone()).collect();
+    let claimed_remote: HashSet<String> = state
+        .events
+        .values()
+        .map(|entry| entry.google_id.clone())
+        .collect();
     let mut remote_match: HashMap<String, Vec<RemoteEvent>> = HashMap::new();
     let mut remote_text_match: HashMap<String, Vec<RemoteEvent>> = HashMap::new();
     for item in remote_items {
@@ -1039,8 +1019,8 @@ fn sync_events(
             continue;
         }
         let schedule = schedule_from_remote_event(item);
-        let anchor_date = schedule_anchor_date(&schedule)
-            .unwrap_or_else(|| Local::now().date_naive());
+        let anchor_date =
+            schedule_anchor_date(&schedule).unwrap_or_else(|| Local::now().date_naive());
         let key = event_match_key(
             item.summary.as_deref().unwrap_or("Untitled event"),
             &schedule,
@@ -1050,7 +1030,10 @@ fn sync_events(
         let text_key = normalize_match_text(&normalize_event_text(
             item.summary.as_deref().unwrap_or("Untitled event"),
         ));
-        remote_text_match.entry(text_key).or_default().push(item.clone());
+        remote_text_match
+            .entry(text_key)
+            .or_default()
+            .push(item.clone());
     }
 
     for item in local_items {
@@ -1083,14 +1066,15 @@ fn sync_events(
                 remote = remote_by_id.get(&matched_remote.id);
             } else if !out_of_range {
                 let text_key = normalize_match_text(&normalize_event_text(&item.text));
-                if let Some(matched_remote) =
-                    take_unique_match(&mut remote_text_match, &text_key)
-                {
+                if let Some(matched_remote) = take_unique_match(&mut remote_text_match, &text_key) {
                     let schedule = schedule_from_remote_event(&matched_remote);
                     let anchor_date = schedule_anchor_date(&schedule)
                         .unwrap_or_else(|| Local::now().date_naive());
                     let strict_key = event_match_key(
-                        matched_remote.summary.as_deref().unwrap_or("Untitled event"),
+                        matched_remote
+                            .summary
+                            .as_deref()
+                            .unwrap_or("Untitled event"),
                         &schedule,
                         anchor_date,
                     );
@@ -1248,12 +1232,8 @@ fn sync_events(
                 }
             }
             (None, _) => {
-                let created = create_remote_event(
-                    client,
-                    access_token,
-                    &config.google.calendar_id,
-                    item,
-                )?;
+                let created =
+                    create_remote_event(client, access_token, &config.google.calendar_id, item)?;
                 report.events_created += 1;
                 state.events.insert(
                     key,
@@ -1281,8 +1261,8 @@ fn sync_events(
                 schedule: schedule_from_remote_event(remote),
             };
             let line = storage::compose_note_line(&update);
-            let date = schedule_anchor_date(&update.schedule)
-                .unwrap_or_else(|| Local::now().date_naive());
+            let date =
+                schedule_anchor_date(&update.schedule).unwrap_or_else(|| Local::now().date_naive());
             let log_file = log_path_for_date(&config.data.log_path, date);
             if let Some(line_number) = find_last_line_number(&log_file, &line) {
                 let key = local_event_key_for_path(&log_file, line_number);
@@ -1339,9 +1319,7 @@ fn list_google_tasks(
         )));
     }
 
-    let body: TasksListResponse = resp
-        .json()
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let body: TasksListResponse = resp.json().map_err(|e| SyncError::Request(e.to_string()))?;
     Ok(body.items.unwrap_or_default())
 }
 
@@ -1375,9 +1353,7 @@ fn list_google_events(
         )));
     }
 
-    let body: EventsListResponse = resp
-        .json()
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let body: EventsListResponse = resp.json().map_err(|e| SyncError::Request(e.to_string()))?;
     let mut items = body.items.unwrap_or_default();
     items.retain(|item| item.status.as_deref() != Some("cancelled"));
     Ok(items)
@@ -1413,9 +1389,7 @@ fn update_remote_task(
             resp.status()
         )));
     }
-    let updated: RemoteTask = resp
-        .json()
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let updated: RemoteTask = resp.json().map_err(|e| SyncError::Request(e.to_string()))?;
     Ok(updated)
 }
 
@@ -1448,9 +1422,7 @@ fn create_remote_task(
             resp.status()
         )));
     }
-    let created: RemoteTask = resp
-        .json()
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let created: RemoteTask = resp.json().map_err(|e| SyncError::Request(e.to_string()))?;
     Ok(created)
 }
 
@@ -1460,20 +1432,14 @@ fn apply_remote_task_update(
 ) -> Result<TaskLineUpdate, SyncError> {
     let schedule = schedule_from_remote_task(remote);
     let update = TaskLineUpdate {
-        text: remote
-            .title
-            .clone()
-            .unwrap_or_else(|| local.text.clone()),
+        text: remote.title.clone().unwrap_or_else(|| local.text.clone()),
         is_done: remote.status.as_deref() == Some("completed"),
         priority: local.priority,
         schedule: schedule.clone(),
     };
     storage::update_task_line(&local.file_path, local.line_number, update)?;
     Ok(TaskLineUpdate {
-        text: remote
-            .title
-            .clone()
-            .unwrap_or_else(|| local.text.clone()),
+        text: remote.title.clone().unwrap_or_else(|| local.text.clone()),
         is_done: remote.status.as_deref() == Some("completed"),
         priority: local.priority,
         schedule,
@@ -1501,9 +1467,7 @@ fn update_remote_event(
         .send()
         .map_err(|e| SyncError::Request(e.to_string()))?;
     let status = resp.status();
-    let body = resp
-        .text()
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let body = resp.text().map_err(|e| SyncError::Request(e.to_string()))?;
     if !status.is_success() {
         return Err(SyncError::Request(format!(
             "Event update failed ({} | {} | {}): HTTP {}: {}",
@@ -1539,9 +1503,7 @@ fn create_remote_event(
         .send()
         .map_err(|e| SyncError::Request(e.to_string()))?;
     let status = resp.status();
-    let body = resp
-        .text()
-        .map_err(|e| SyncError::Request(e.to_string()))?;
+    let body = resp.text().map_err(|e| SyncError::Request(e.to_string()))?;
     if !status.is_success() {
         return Err(SyncError::Request(format!(
             "Event create failed: HTTP {}: {}",
@@ -1630,11 +1592,7 @@ fn take_unique_match<T>(matches: &mut HashMap<String, Vec<T>>, key: &str) -> Opt
     item
 }
 
-fn remove_event_match(
-    matches: &mut HashMap<String, Vec<RemoteEvent>>,
-    key: &str,
-    id: &str,
-) {
+fn remove_event_match(matches: &mut HashMap<String, Vec<RemoteEvent>>, key: &str, id: &str) {
     if let Some(values) = matches.get_mut(key) {
         values.retain(|item| item.id != id);
         if values.is_empty() {
@@ -1741,10 +1699,7 @@ fn event_match_key(text: &str, schedule: &TaskSchedule, fallback_date: NaiveDate
             .map(|m| m.to_string())
             .unwrap_or_default()
     };
-    format!(
-        "{normalized}|{}|{time}|{duration}",
-        date.format("%Y-%m-%d")
-    )
+    format!("{normalized}|{}|{time}|{duration}", date.format("%Y-%m-%d"))
 }
 
 fn task_hash(item: &AgendaItem) -> String {
@@ -1828,11 +1783,10 @@ fn schedule_signature(schedule: &TaskSchedule) -> String {
 }
 
 fn schedule_to_task_due(schedule: &TaskSchedule) -> Option<String> {
-    let date = schedule
-        .due
-        .or(schedule.scheduled)
-        .or(schedule.start)?;
-    let time = schedule.time.unwrap_or_else(|| NaiveTime::from_hms_opt(23, 59, 0).unwrap());
+    let date = schedule.due.or(schedule.scheduled).or(schedule.start)?;
+    let time = schedule
+        .time
+        .unwrap_or_else(|| NaiveTime::from_hms_opt(23, 59, 0).unwrap());
     Some(to_rfc3339(date, time))
 }
 

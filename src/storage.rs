@@ -1,7 +1,7 @@
 use crate::models::{
-    AgendaItem, AgendaItemKind, FoldOverride, Priority, LogEntry, TaskItem, TaskSchedule,
-    count_trailing_tomatoes,
-    is_heading_timestamp_line, is_timestamped_line, strip_timestamp_prefix, strip_trailing_tomatoes,
+    AgendaItem, AgendaItemKind, FoldOverride, LogEntry, Priority, TaskItem, TaskSchedule,
+    count_trailing_tomatoes, is_heading_timestamp_line, is_timestamped_line,
+    strip_timestamp_prefix, strip_trailing_tomatoes,
 };
 use crate::task_metadata::{
     TaskMetadataKey, parse_task_metadata, strip_task_metadata_tokens, upsert_task_metadata_token,
@@ -38,11 +38,7 @@ pub fn append_entry(log_path: &Path, content: &str) -> io::Result<()> {
     append_entry_to_date(log_path, today, content)
 }
 
-pub fn append_entry_to_date(
-    log_path: &Path,
-    date: NaiveDate,
-    content: &str,
-) -> io::Result<()> {
+pub fn append_entry_to_date(log_path: &Path, date: NaiveDate, content: &str) -> io::Result<()> {
     ensure_log_dir(log_path)?;
     let date_str = date.format("%Y-%m-%d").to_string();
     let path = get_file_path_for_date(log_path, &date_str);
@@ -158,6 +154,45 @@ pub fn get_available_log_dates(log_path: &Path) -> io::Result<Vec<NaiveDate>> {
 pub fn get_earliest_log_date(log_path: &Path) -> io::Result<Option<NaiveDate>> {
     let dates = get_available_log_dates(log_path)?;
     Ok(dates.first().copied())
+}
+
+/// Calculate the current streak (consecutive days with log entries ending today).
+/// Returns (streak_days, includes_today).
+pub fn calculate_streak(log_path: &Path) -> io::Result<(usize, bool)> {
+    let dates = get_available_log_dates(log_path)?;
+    if dates.is_empty() {
+        return Ok((0, false));
+    }
+
+    let today = Local::now().naive_local().date();
+    let yesterday = today - Duration::days(1);
+
+    // Check if we have an entry for today
+    let has_today = dates.contains(&today);
+
+    // Start counting from yesterday (or today if it exists)
+    let start_date = if has_today { today } else { yesterday };
+
+    // Find the starting position
+    let start_pos = match dates.binary_search(&start_date) {
+        Ok(pos) => pos,
+        Err(_) => return Ok((0, has_today)),
+    };
+
+    // Count consecutive days going backwards
+    let mut streak = 0;
+    let mut expected_date = start_date;
+
+    for i in (0..=start_pos).rev() {
+        if dates[i] == expected_date {
+            streak += 1;
+            expected_date = expected_date - Duration::days(1);
+        } else if dates[i] < expected_date {
+            break;
+        }
+    }
+
+    Ok((streak, has_today))
 }
 
 pub fn read_today_tasks(log_path: &Path) -> io::Result<Vec<TaskItem>> {
@@ -1765,5 +1800,73 @@ mod tests {
         let tasks = collect_carryover_tasks(&dir, "2024-12-25").expect("collect");
 
         assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn calculate_streak_empty_dir() {
+        let dir = temp_log_dir();
+        let (streak, includes_today) = calculate_streak(&dir).expect("streak");
+        assert_eq!(streak, 0);
+        assert!(!includes_today);
+    }
+
+    #[test]
+    fn calculate_streak_consecutive_days() {
+        let dir = temp_log_dir();
+        let today = Local::now().naive_local().date();
+        let yesterday = today - Duration::days(1);
+        let day_before = today - Duration::days(2);
+
+        write_log(&dir, &today.format("%Y-%m-%d").to_string(), "# Today\n");
+        write_log(
+            &dir,
+            &yesterday.format("%Y-%m-%d").to_string(),
+            "# Yesterday\n",
+        );
+        write_log(
+            &dir,
+            &day_before.format("%Y-%m-%d").to_string(),
+            "# Day before\n",
+        );
+
+        let (streak, includes_today) = calculate_streak(&dir).expect("streak");
+        assert_eq!(streak, 3);
+        assert!(includes_today);
+    }
+
+    #[test]
+    fn calculate_streak_with_gap() {
+        let dir = temp_log_dir();
+        let today = Local::now().naive_local().date();
+        let three_days_ago = today - Duration::days(3);
+
+        write_log(&dir, &today.format("%Y-%m-%d").to_string(), "# Today\n");
+        write_log(
+            &dir,
+            &three_days_ago.format("%Y-%m-%d").to_string(),
+            "# Old\n",
+        );
+
+        let (streak, includes_today) = calculate_streak(&dir).expect("streak");
+        assert_eq!(streak, 1);
+        assert!(includes_today);
+    }
+
+    #[test]
+    fn parse_log_content_with_pinned_tag() {
+        // Correct format: ## [HH:MM:SS] as header, content on next line
+        let content = "## [09:00:00]\n#Important Task #pinned\nThis is content\n\n## [10:00:00]\nRegular";
+        let entries = parse_log_content(content, "2026-02-01.md");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].content, "## [09:00:00]\n#Important Task #pinned\nThis is content");
+        assert!(entries[0].content.contains("#pinned"));
+        
+        // Verify first line is timestamp header
+        let first_line = entries[0].content.lines().next().unwrap();
+        assert_eq!(first_line, "## [09:00:00]");
+        
+        // Verify second line is the pinned content
+        let second_line = entries[0].content.lines().nth(1).unwrap();
+        assert_eq!(second_line, "#Important Task #pinned");
     }
 }

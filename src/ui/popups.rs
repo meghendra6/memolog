@@ -85,8 +85,26 @@ pub fn render_siren_popup(f: &mut Frame, app: &App) {
 }
 
 pub fn render_activity_popup(f: &mut Frame, app: &App) {
+    let (streak_days, includes_today) = app.streak;
+    let streak_text = if streak_days > 0 {
+        format!(
+            "🔥 {} day streak{}",
+            streak_days,
+            if includes_today {
+                ""
+            } else {
+                " (log today to continue!)"
+            }
+        )
+    } else {
+        "Start your streak by logging today!".to_string()
+    };
+
     let block = Block::default()
-        .title(" 🌱 Activity Graph (Last 2 Weeks) ")
+        .title(format!(
+            " 🌱 Activity Graph (Last 2 Weeks) - {} ",
+            streak_text
+        ))
         .borders(Borders::ALL);
     let area = centered_rect(popup_size::ACTIVITY.0, popup_size::ACTIVITY.1, f.area());
     f.render_widget(Clear, area);
@@ -102,6 +120,24 @@ pub fn render_activity_popup(f: &mut Frame, app: &App) {
             .fg(Color::DarkGray)
             .add_modifier(Modifier::BOLD),
     )])));
+
+    // Time summary row
+    let (completed_mins, total_mins) = app.time_summary();
+    if total_mins > 0 {
+        let completed_h = completed_mins / 60;
+        let completed_m = completed_mins % 60;
+        let total_h = total_mins / 60;
+        let total_m = total_mins % 60;
+        let time_str = format!(
+            "⏱️ Today's Time: {}h{}m / {}h{}m planned",
+            completed_h, completed_m, total_h, total_m
+        );
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            time_str,
+            Style::default().fg(Color::Cyan),
+        )])));
+    }
+
     items.push(ListItem::new(Line::from("")));
 
     for i in 0..14 {
@@ -448,7 +484,11 @@ pub fn render_ai_loading_popup(f: &mut Frame, app: &App) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(inner);
 
     let spinner = loading_spinner();
@@ -471,8 +511,7 @@ pub fn render_ai_loading_popup(f: &mut Frame, app: &App) {
         .wrap(Wrap { trim: true });
     f.render_widget(content, chunks[1]);
 
-    let footer = Paragraph::new("Esc hide")
-        .style(Style::default().fg(tokens.ui_muted));
+    let footer = Paragraph::new("Esc hide").style(Style::default().fg(tokens.ui_muted));
     f.render_widget(footer, chunks[2]);
 }
 
@@ -869,8 +908,8 @@ pub fn render_todo_popup(f: &mut Frame, app: &mut App) {
     f.render_stateful_widget(list, popup_layout[0], &mut app.todo_list_state);
 
     // Add helpful footer with keyboard shortcuts
-    let footer = Paragraph::new("Enter carry over · Esc skip")
-        .style(Style::default().fg(Color::DarkGray));
+    let footer =
+        Paragraph::new("Enter carry over · Esc skip").style(Style::default().fg(Color::DarkGray));
     f.render_widget(footer, popup_layout[1]);
 }
 
@@ -1291,6 +1330,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             ("Help".to_string(), fmt_keys(&kb.global.help)),
             ("Focus move".to_string(), "Ctrl+H/J/K/L".to_string()),
             ("Compose".to_string(), fmt_keys(&kb.global.focus_composer)),
+            (
+                "Quick capture".to_string(),
+                fmt_keys(&kb.global.quick_capture),
+            ),
             ("Search".to_string(), fmt_keys(&kb.global.search)),
             ("Tags".to_string(), fmt_keys(&kb.global.tags)),
             ("Pomodoro".to_string(), fmt_keys(&kb.global.pomodoro)),
@@ -1329,8 +1372,8 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                     &[
                         fmt_keys(&kb.timeline.page_up),
                         fmt_keys(&kb.timeline.page_down),
-                        fmt_keys(&kb.timeline.top),
-                        fmt_keys(&kb.timeline.bottom),
+                        "gg".to_string(),
+                        "G".to_string(),
                     ],
                     " | ",
                 ),
@@ -1368,6 +1411,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                     ],
                     " | ",
                 ),
+            ),
+            (
+                "Jump to pinned".to_string(),
+                "Shift+P".to_string(),
             ),
         ]
     } else {
@@ -2017,6 +2064,44 @@ pub fn render_editor_style_popup(f: &mut Frame, app: &mut App) {
     let help = Paragraph::new("(Up/Down) Move  (Enter) Apply  (Esc) Cancel")
         .style(Style::default().fg(tokens.ui_muted));
     f.render_widget(help, popup_layout[1]);
+}
+
+pub fn render_quick_capture_popup(f: &mut Frame, app: &App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let block = Block::default()
+        .title(" ⚡ Quick Capture ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_accent));
+
+    let area = centered_rect(60, 15, f.area());
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Length(1)])
+        .margin(1)
+        .split(area);
+
+    // Input field
+    let input_style = Style::default().fg(tokens.ui_fg);
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_border_default));
+    let input = Paragraph::new(app.quick_capture_input.as_str())
+        .style(input_style)
+        .block(input_block);
+    f.render_widget(input, inner[0]);
+
+    // Help text
+    let help = Paragraph::new("Enter: Save  |  Esc: Cancel  |  Type your note...")
+        .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(help, inner[1]);
+
+    // Show cursor
+    let cursor_x = inner[0].x + 1 + app.quick_capture_input.len() as u16;
+    let cursor_y = inner[0].y + 1;
+    f.set_cursor_position((cursor_x.min(inner[0].right() - 2), cursor_y));
 }
 
 fn fmt_keys(keys: &[String]) -> String {
