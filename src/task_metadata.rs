@@ -447,9 +447,6 @@ mod tests {
         // Test combined
         assert_eq!(parse_duration_minutes("1d2h"), Some(24 * 60 + 2 * 60));
         assert_eq!(parse_duration_minutes("1w1d"), Some(7 * 24 * 60 + 24 * 60));
-        assert_eq!(
-            parse_duration_minutes("1w2d3h30m"),
-            Some(7 * 24 * 60 + 2 * 24 * 60 + 3 * 60 + 30)
-        );
+        assert_eq!(parse_duration_minutes("1w2d3h30m"), Some(7 * 24 * 60 + 2 * 24 * 60 + 3 * 60 + 30));
     }
 }
