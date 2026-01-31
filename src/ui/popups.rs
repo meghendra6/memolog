@@ -16,6 +16,27 @@ use ratatui::{
 };
 use syntect::easy::HighlightLines;
 
+// Popup size constants (width%, height%)
+#[allow(dead_code)]
+mod popup_size {
+    /// Large popups: memo preview, AI response, help
+    pub const LARGE: (u16, u16) = (90, 80);
+    /// Medium popups: siren, date picker, theme switcher
+    pub const MEDIUM: (u16, u16) = (80, 60);
+    /// Standard popups: activity, todo, google auth, pomodoro
+    pub const STANDARD: (u16, u16) = (70, 40);
+    /// Small popups: mood, exit confirmation, editor style
+    pub const SMALL: (u16, u16) = (60, 30);
+    /// Compact popups: path, delete confirmation
+    pub const COMPACT: (u16, u16) = (50, 20);
+    /// Loading spinner popup
+    pub const LOADING: (u16, u16) = (70, 30);
+    /// Tag selector popup
+    pub const TAG: (u16, u16) = (50, 60);
+    /// Activity graph popup
+    pub const ACTIVITY: (u16, u16) = (70, 50);
+}
+
 pub fn render_siren_popup(f: &mut Frame, app: &App) {
     let block = Block::default().borders(Borders::ALL).style(
         Style::default()
@@ -67,7 +88,7 @@ pub fn render_activity_popup(f: &mut Frame, app: &App) {
     let block = Block::default()
         .title(" 🌱 Activity Graph (Last 2 Weeks) ")
         .borders(Borders::ALL);
-    let area = centered_rect(70, 50, f.area());
+    let area = centered_rect(popup_size::ACTIVITY.0, popup_size::ACTIVITY.1, f.area());
     f.render_widget(Clear, area);
     f.render_widget(block, area);
 
@@ -420,7 +441,7 @@ pub fn render_ai_loading_popup(f: &mut Frame, app: &App) {
         .title(" AI Search ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(tokens.ui_border_default));
-    let area = centered_rect(70, 30, f.area());
+    let area = centered_rect(popup_size::LOADING.0, popup_size::LOADING.1, f.area());
     let inner = block.inner(area);
     f.render_widget(Clear, area);
     f.render_widget(block, area);
@@ -504,7 +525,7 @@ pub fn render_date_picker_popup(f: &mut Frame, app: &App) {
     render_date_picker_fields(f, app, body_cols[0], &tokens);
     render_date_picker_detail(f, app, body_cols[1], &tokens);
 
-    let footer_text = "Enter apply | Esc cancel | +/- day | [/] week | T today | R relative";
+    let footer_text = "Enter apply | Esc cancel | h/l or +/- day | H/L or [/] week | j/k field | T today | R relative";
     let footer_style = Style::default().fg(tokens.ui_muted);
     f.render_widget(Paragraph::new(footer_text).style(footer_style), footer);
 
@@ -854,14 +875,18 @@ pub fn render_todo_popup(f: &mut Frame, app: &mut App) {
 }
 
 pub fn render_tag_popup(f: &mut Frame, app: &mut App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
     let selection = app
         .tag_list_state
         .selected()
         .map(|i| format!("{}/{}", i + 1, app.tags.len()))
         .unwrap_or_else(|| "0/0".to_string());
-    let title = format!(" Tags {selection} · Enter: filter · Esc: close ");
-    let block = Block::default().title(title).borders(Borders::ALL);
-    let area = centered_rect(50, 60, f.area());
+    let title = format!(" Tags {selection} ");
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_border_default));
+    let area = centered_rect(popup_size::TAG.0, popup_size::TAG.1, f.area());
     f.render_widget(Clear, area);
     f.render_widget(block, area);
 
@@ -882,18 +907,23 @@ pub fn render_tag_popup(f: &mut Frame, app: &mut App) {
 
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(100)])
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
         .margin(1)
         .split(area);
 
     let highlight_bg = parse_color(&app.config.theme.text_highlight);
-    let list = List::new(items).highlight_symbol("").highlight_style(
+    let list = List::new(items).highlight_symbol("→ ").highlight_style(
         Style::default()
             .bg(highlight_bg)
             .add_modifier(Modifier::BOLD),
     );
 
     f.render_stateful_widget(list, popup_layout[0], &mut app.tag_list_state);
+
+    // Add helpful footer with keyboard shortcuts
+    let footer = Paragraph::new("↑/↓/j/k select · Enter filter · Esc close")
+        .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(footer, popup_layout[1]);
 }
 
 pub fn render_path_popup(f: &mut Frame, app: &App) {
@@ -1120,6 +1150,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             fmt_keys(&kb.tasks.filter_open),
             fmt_keys(&kb.tasks.filter_done),
             fmt_keys(&kb.tasks.filter_all),
+            fmt_keys(&kb.tasks.filter_priority),
         ],
         " / ",
     );

@@ -350,6 +350,16 @@ pub(crate) fn parse_duration_minutes(value: &str) -> Option<u32> {
         let qty: u32 = digits.parse().ok()?;
         digits.clear();
         match ch {
+            'w' | 'W' => {
+                // 1 week = 7 days * 24 hours * 60 minutes
+                total = total.saturating_add(qty.saturating_mul(7 * 24 * 60));
+                used_unit = true;
+            }
+            'd' | 'D' => {
+                // 1 day = 24 hours * 60 minutes
+                total = total.saturating_add(qty.saturating_mul(24 * 60));
+                used_unit = true;
+            }
             'h' | 'H' => {
                 total = total.saturating_add(qty.saturating_mul(60));
                 used_unit = true;
@@ -412,5 +422,19 @@ mod tests {
         let input = "Task @due(2025-01-01) notes";
         let updated = upsert_task_metadata_token(input, TaskMetadataKey::Due, "2025-01-02");
         assert_eq!(updated, "Task notes @due(2025-01-02)");
+    }
+
+    #[test]
+    fn parses_duration_with_days_and_weeks() {
+        // Test days
+        assert_eq!(parse_duration_minutes("1d"), Some(24 * 60));
+        assert_eq!(parse_duration_minutes("2d"), Some(2 * 24 * 60));
+        // Test weeks
+        assert_eq!(parse_duration_minutes("1w"), Some(7 * 24 * 60));
+        assert_eq!(parse_duration_minutes("2w"), Some(2 * 7 * 24 * 60));
+        // Test combined
+        assert_eq!(parse_duration_minutes("1d2h"), Some(24 * 60 + 2 * 60));
+        assert_eq!(parse_duration_minutes("1w1d"), Some(7 * 24 * 60 + 24 * 60));
+        assert_eq!(parse_duration_minutes("1w2d3h30m"), Some(7 * 24 * 60 + 2 * 24 * 60 + 3 * 60 + 30));
     }
 }

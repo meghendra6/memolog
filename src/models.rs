@@ -43,6 +43,8 @@ pub enum TaskFilter {
     Open,
     Done,
     All,
+    /// Filter to show only high priority tasks
+    HighPriority,
 }
 
 #[derive(Clone, Copy, PartialEq, Default)]
