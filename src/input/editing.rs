@@ -233,7 +233,7 @@ pub(crate) fn submit_composer(app: &mut App) {
         if editing.is_raw {
             let lines = app.textarea.lines().to_vec();
             if let Err(e) = storage::write_file_lines(&editing.file_path, &lines) {
-                eprintln!("Error saving file: {}", e);
+                app.toast(format!("Error saving file: {}", e));
             } else {
                 app.toast("Config saved. Restart to apply changes.");
             }
@@ -265,7 +265,7 @@ pub(crate) fn submit_composer(app: &mut App) {
             editing.end_line,
             &new_lines,
         ) {
-            eprintln!("Error updating entry: {}", e);
+            app.toast(format!("Error updating entry: {}", e));
         }
         if let Some(state) = app
             .fold_overrides
@@ -302,7 +302,7 @@ pub(crate) fn submit_composer(app: &mut App) {
         let input = lines.join("\n");
         if !input.trim().is_empty() {
             if let Err(e) = storage::append_entry(&app.config.data.log_path, &input) {
-                eprintln!("Error saving: {}", e);
+                app.toast(format!("Error saving: {}", e));
             }
             app.update_logs();
         }

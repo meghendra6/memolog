@@ -16,6 +16,27 @@ use ratatui::{
 };
 use syntect::easy::HighlightLines;
 
+// Popup size constants (width%, height%)
+#[allow(dead_code)]
+mod popup_size {
+    /// Large popups: memo preview, AI response, help
+    pub const LARGE: (u16, u16) = (90, 80);
+    /// Medium popups: siren, date picker, theme switcher
+    pub const MEDIUM: (u16, u16) = (80, 60);
+    /// Standard popups: activity, todo, google auth, pomodoro
+    pub const STANDARD: (u16, u16) = (70, 40);
+    /// Small popups: mood, exit confirmation, editor style
+    pub const SMALL: (u16, u16) = (60, 30);
+    /// Compact popups: path, delete confirmation
+    pub const COMPACT: (u16, u16) = (50, 20);
+    /// Loading spinner popup
+    pub const LOADING: (u16, u16) = (70, 30);
+    /// Tag selector popup
+    pub const TAG: (u16, u16) = (50, 60);
+    /// Activity graph popup
+    pub const ACTIVITY: (u16, u16) = (70, 50);
+}
+
 pub fn render_siren_popup(f: &mut Frame, app: &App) {
     let block = Block::default().borders(Borders::ALL).style(
         Style::default()
@@ -67,7 +88,7 @@ pub fn render_activity_popup(f: &mut Frame, app: &App) {
     let block = Block::default()
         .title(" 🌱 Activity Graph (Last 2 Weeks) ")
         .borders(Borders::ALL);
-    let area = centered_rect(70, 50, f.area());
+    let area = centered_rect(popup_size::ACTIVITY.0, popup_size::ACTIVITY.1, f.area());
     f.render_widget(Clear, area);
     f.render_widget(block, area);
 
@@ -420,7 +441,7 @@ pub fn render_ai_loading_popup(f: &mut Frame, app: &App) {
         .title(" AI Search ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(tokens.ui_border_default));
-    let area = centered_rect(70, 30, f.area());
+    let area = centered_rect(popup_size::LOADING.0, popup_size::LOADING.1, f.area());
     let inner = block.inner(area);
     f.render_widget(Clear, area);
     f.render_widget(block, area);
@@ -865,7 +886,7 @@ pub fn render_tag_popup(f: &mut Frame, app: &mut App) {
         .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(tokens.ui_border_default));
-    let area = centered_rect(50, 60, f.area());
+    let area = centered_rect(popup_size::TAG.0, popup_size::TAG.1, f.area());
     f.render_widget(Clear, area);
     f.render_widget(block, area);
 
