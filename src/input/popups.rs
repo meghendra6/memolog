@@ -190,11 +190,18 @@ fn handle_date_picker_popup(app: &mut App, key: KeyEvent) {
     }
 
     match key_code {
-        KeyCode::Left => {
+        // Vim-style navigation: h/l for date value adjustment, j/k for field navigation
+        KeyCode::Char('h') | KeyCode::Left => {
             adjust_date_picker_value(app, -1, 0);
         }
-        KeyCode::Right => {
+        KeyCode::Char('l') | KeyCode::Right => {
             adjust_date_picker_value(app, 1, 0);
+        }
+        KeyCode::Char('j') => {
+            app.date_picker_field = cycle_date_picker_field(app.date_picker_field, 1);
+        }
+        KeyCode::Char('k') => {
+            app.date_picker_field = cycle_date_picker_field(app.date_picker_field, -1);
         }
         KeyCode::Char('+') | KeyCode::Char('=') => {
             adjust_date_picker_value(app, 1, 0);
@@ -202,10 +209,10 @@ fn handle_date_picker_popup(app: &mut App, key: KeyEvent) {
         KeyCode::Char('-') => {
             adjust_date_picker_value(app, -1, 0);
         }
-        KeyCode::Char('[') => {
+        KeyCode::Char('[') | KeyCode::Char('H') => {
             adjust_date_picker_value(app, -7, -60);
         }
-        KeyCode::Char(']') => {
+        KeyCode::Char(']') | KeyCode::Char('L') => {
             adjust_date_picker_value(app, 7, 60);
         }
         KeyCode::Char('t') | KeyCode::Char('T') => {
