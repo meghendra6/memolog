@@ -741,9 +741,11 @@ impl<'a> App<'a> {
             FoldOverride::Folded
         };
         self.fold_overrides.insert(key, override_state);
-        if let Err(_err) =
-            storage::update_fold_marker(&entry.file_path, entry.line_number, override_state)
-        {
+        if let Err(_err) = storage::update_fold_marker(
+            &entry.file_path,
+            entry.line_number,
+            override_state,
+        ) {
             self.toast("Failed to save fold state.");
         }
         self.entry_scroll_offset = 0;
@@ -1055,9 +1057,7 @@ impl<'a> App<'a> {
                     TaskFilter::Open => !item.is_done,
                     TaskFilter::Done => item.is_done,
                     TaskFilter::All => true,
-                    TaskFilter::HighPriority => {
-                        !item.is_done && item.priority == Some(Priority::High)
-                    }
+                    TaskFilter::HighPriority => !item.is_done && item.priority == Some(Priority::High),
                 },
             })
             .cloned()
