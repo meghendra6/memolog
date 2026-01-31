@@ -1,0 +1,93 @@
+{
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VSCode Copilot Settings - Optimized Template
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Copy this file to your project's .vscode/settings.json
+  // Reference: https://code.visualstudio.com/docs/copilot/reference/copilot-settings
+
+  // === Core Copilot Settings ===
+  "github.copilot.chat.codeGeneration.useInstructionFiles": true,
+  "github.copilot.enable": { "*": true },
+
+  // === Agent Skills (Experimental) ===
+  "chat.useAgentSkills": true,
+
+  // === Prompt Files ===
+  "chat.promptFilesLocations": {
+    ".github/prompts": true
+  },
+
+  // === Custom Instructions ===
+  "chat.instructionsFilesLocations": {
+    ".github/instructions": true
+  },
+
+  // === AGENTS.md Files ===
+  "chat.useAgentsMdFile": true,
+  "chat.useNestedAgentsMdFiles": true,
+
+  // === Agent Settings (Maximize capabilities) ===
+  "chat.agent.enabled": true,
+  "chat.agent.maxRequests": 50,
+  "github.copilot.chat.agent.autoFix": true,
+  "chat.customAgentInSubagent.enabled": true,
+  "github.copilot.chat.virtualTools.threshold": 64,
+  "github.copilot.chat.summarizeAgentConversationHistory.enabled": true,
+
+  // === Thinking Tool (Enhanced reasoning) ===
+  "github.copilot.chat.agent.thinkingTool": true,
+  "chat.agent.thinkingStyle": "fixedScrolling",
+
+  // === Code Search (Preview) ===
+  "github.copilot.chat.codesearch.enabled": true,
+
+  // === Semantic Search (Auto = use when no text results found) ===
+  "search.searchView.semanticSearchBehavior": "auto",
+  "search.searchView.keywordSuggestions": true,
+
+  // === Context Enhancement ===
+  "github.copilot.chat.editor.temporalContext.enabled": true,
+  "github.copilot.chat.edits.suggestRelatedFilesFromGitHistory": true,
+  "chat.checkpoints.enabled": true,
+  "chat.checkpoints.showFileChanges": true,
+
+  // === Terminal Auto-Approval (for safe workflow commands) ===
+  "chat.tools.terminal.enableAutoApprove": true,
+  "chat.tools.terminal.autoApprove": {
+    "ls": true,
+    "pwd": true,
+    "cat": true,
+    "head": true,
+    "tail": true,
+    "grep": true,
+    "find": true,
+    "wc": true,
+    "which": true,
+    "echo": true,
+    "git status": true,
+    "git log": true,
+    "git diff": true,
+    "git branch": true,
+    "git show": true,
+    "npm run lint": true,
+    "npm run typecheck": true,
+    "npm test": true,
+    "pnpm lint": true,
+    "pnpm typecheck": true,
+    "pnpm test": true
+  },
+
+  // === Large Result Handling ===
+  "github.copilot.chat.agent.largeToolResultsToDisk.enabled": true,
+
+  // === Memory & Context Persistence ===
+  "github.copilot.chat.copilotMemory.enabled": true,
+
+  // === Subagent Settings ===
+  "github.copilot.chat.searchSubagent.enabled": true,
+  "github.copilot.chat.switchAgent.enabled": true,
+
+  // === UI Preferences ===
+  "chat.viewSessions.enabled": true,
+  "chat.editRequests": "inline"
+}

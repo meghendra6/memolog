@@ -332,6 +332,8 @@ pub struct UiConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor_style: Option<String>,
     pub line_numbers: bool,
+    /// Input poll interval in milliseconds (default: 250)
+    pub poll_interval_ms: u64,
 }
 
 impl Default for UiConfig {
@@ -340,6 +342,7 @@ impl Default for UiConfig {
             theme_preset: None,
             editor_style: None,
             line_numbers: true,
+            poll_interval_ms: 250,
         }
     }
 }
@@ -500,6 +503,7 @@ pub struct TasksBindings {
     pub filter_open: Vec<String>,
     pub filter_done: Vec<String>,
     pub filter_all: Vec<String>,
+    pub filter_priority: Vec<String>,
 }
 
 impl Default for TasksBindings {
@@ -516,6 +520,7 @@ impl Default for TasksBindings {
             filter_open: vec!["1".to_string()],
             filter_done: vec!["2".to_string()],
             filter_all: vec!["3".to_string()],
+            filter_priority: vec!["4".to_string()],
         }
     }
 }

@@ -68,6 +68,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
+    let poll_interval = std::time::Duration::from_millis(app.config.ui.poll_interval_ms);
+    
     loop {
         runtime::tick(app);
 
@@ -88,7 +90,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
             continue;
         }
 
-        if event::poll(std::time::Duration::from_millis(250))? {
+        if event::poll(poll_interval)? {
             let event = event::read()?;
             input::handle_event(app, event);
         }

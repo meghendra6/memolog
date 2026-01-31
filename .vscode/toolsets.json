@@ -1,0 +1,65 @@
+{
+  "reader": {
+    "tools": [
+      "changes",
+      "codebase",
+      "problems",
+      "usages",
+      "readFile",
+      "fileSearch",
+      "textSearch",
+      "fetch",
+      "githubRepo"
+    ],
+    "description": "Read-only context gathering (includes web fetch)",
+    "icon": "book"
+  },
+  "builder": {
+    "tools": [
+      "changes",
+      "codebase",
+      "problems",
+      "usages",
+      "readFile",
+      "fileSearch",
+      "textSearch",
+      "editFiles"
+    ],
+    "description": "Code editing (no terminal)",
+    "icon": "tools"
+  },
+  "tester": {
+    "tools": [
+      "runTests",
+      "testFailure",
+      "runInTerminal",
+      "getTerminalOutput",
+      "terminalLastCommand"
+    ],
+    "description": "Run tests and inspect failures",
+    "icon": "beaker"
+  },
+  "sisyphus": {
+    "tools": [
+      "changes",
+      "codebase",
+      "problems",
+      "usages",
+      "readFile",
+      "fileSearch",
+      "textSearch",
+      "editFiles",
+      "runInTerminal",
+      "getTerminalOutput",
+      "terminalLastCommand",
+      "runTests",
+      "testFailure",
+      "todos",
+      "runSubagent",
+      "fetch",
+      "githubRepo"
+    ],
+    "description": "End-to-end ultrawork toolset (all tools)",
+    "icon": "rocket"
+  }
+}

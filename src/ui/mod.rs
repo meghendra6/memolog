@@ -647,6 +647,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         let tasks_inner = Block::default().borders(Borders::ALL).inner(tasks_area);
         let todo_area_width = tasks_inner.width.saturating_sub(1).max(1) as usize;
 
+        let today = Local::now().date_naive();
         let todos: Vec<ListItem> = app
             .tasks
             .iter()
@@ -659,6 +660,15 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                     line.push_str("- [ ] ");
                 }
                 line.push_str(&task.text);
+
+                // Show overdue indicator for tasks with past due dates
+                if !task.is_done {
+                    if let Some(due_date) = task.schedule.due {
+                        if due_date < today {
+                            line.push_str(" ⚠️OVERDUE");
+                        }
+                    }
+                }
 
                 let is_active_pomodoro = if let (
                     Some(end_time),
