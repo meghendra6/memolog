@@ -737,11 +737,9 @@ impl<'a> App<'a> {
             FoldOverride::Folded
         };
         self.fold_overrides.insert(key, override_state);
-        if let Err(_err) = storage::update_fold_marker(
-            &entry.file_path,
-            entry.line_number,
-            override_state,
-        ) {
+        if let Err(_err) =
+            storage::update_fold_marker(&entry.file_path, entry.line_number, override_state)
+        {
             self.toast("Failed to save fold state.");
         }
         self.entry_scroll_offset = 0;
@@ -823,13 +821,6 @@ impl<'a> App<'a> {
             .filter(|entry| entry_matches_timeline_filter(entry, self.timeline_filter))
             .cloned()
             .collect();
-
-        // Sort pinned entries (#pinned tag) to the top while preserving order within groups
-        self.logs.sort_by(|a, b| {
-            let a_pinned = a.content.contains("#pinned");
-            let b_pinned = b.content.contains("#pinned");
-            b_pinned.cmp(&a_pinned)
-        });
 
         if self.logs.is_empty() {
             self.logs_state.select(None);
@@ -968,7 +959,8 @@ impl<'a> App<'a> {
                 .collect(),
         };
 
-        self.tasks.sort_by_key(|task| (task_priority_rank(task.priority), task.line_number));
+        self.tasks
+            .sort_by_key(|task| (task_priority_rank(task.priority), task.line_number));
 
         if self.tasks.is_empty() {
             self.tasks_state.select(None);
@@ -1011,7 +1003,9 @@ impl<'a> App<'a> {
                     TaskFilter::Open => !item.is_done,
                     TaskFilter::Done => item.is_done,
                     TaskFilter::All => true,
-                    TaskFilter::HighPriority => !item.is_done && item.priority == Some(Priority::High),
+                    TaskFilter::HighPriority => {
+                        !item.is_done && item.priority == Some(Priority::High)
+                    }
                 },
             })
             .cloned()
@@ -1029,7 +1023,8 @@ impl<'a> App<'a> {
         if reset_selection || self.agenda_state.selected().is_none() {
             self.agenda_state.select(Some(0));
         } else if let Some(i) = self.agenda_state.selected() {
-            self.agenda_state.select(Some(i.min(self.agenda_items.len() - 1)));
+            self.agenda_state
+                .select(Some(i.min(self.agenda_items.len() - 1)));
         }
     }
 
@@ -1080,9 +1075,8 @@ impl<'a> App<'a> {
         let today = Local::now().date_naive();
         let start = today - Duration::days(3650);
         let end = today + Duration::days(3650);
-        let items =
-            storage::read_agenda_entries(&self.config.data.log_path, start, end)
-                .unwrap_or_default();
+        let items = storage::read_agenda_entries(&self.config.data.log_path, start, end)
+            .unwrap_or_default();
         self.agenda_all_items = items;
         self.apply_agenda_filter(true);
         self.set_agenda_selected_day(self.agenda_selected_day);
@@ -1106,12 +1100,7 @@ impl<'a> App<'a> {
 
     pub fn open_date_picker(&mut self) {
         let (row, _) = self.textarea.cursor();
-        let line = self
-            .textarea
-            .lines()
-            .get(row)
-            .cloned()
-            .unwrap_or_default();
+        let line = self.textarea.lines().get(row).cloned().unwrap_or_default();
         let (schedule, _) = crate::task_metadata::parse_task_metadata(&line);
         let now = Local::now();
 
@@ -1369,17 +1358,17 @@ impl<'a> App<'a> {
         self.textarea.set_yank_text(self.yank_buffer.clone());
     }
 
-pub fn show_visual_hint(&mut self, message: impl Into<String>) {
-    self.visual_hint_message = Some(message.into());
-    self.visual_hint_expiry = Some(Local::now() + Duration::seconds(2));
-    self.visual_hint_active = true;
-}
+    pub fn show_visual_hint(&mut self, message: impl Into<String>) {
+        self.visual_hint_message = Some(message.into());
+        self.visual_hint_expiry = Some(Local::now() + Duration::seconds(2));
+        self.visual_hint_active = true;
+    }
 
-pub fn clear_visual_hint(&mut self) {
-    self.visual_hint_message = None;
-    self.visual_hint_expiry = None;
-    self.visual_hint_active = false;
-}
+    pub fn clear_visual_hint(&mut self) {
+        self.visual_hint_message = None;
+        self.visual_hint_expiry = None;
+        self.visual_hint_active = false;
+    }
 }
 
 fn copy_to_clipboard(text: &str) {
@@ -1592,10 +1581,7 @@ fn apply_context_tag_to_lines(lines: &mut Vec<String>, context: TimelineFilter) 
     };
 
     let mut start_idx = 0;
-    if lines
-        .first()
-        .is_some_and(|line| is_timestamped_line(line))
-    {
+    if lines.first().is_some_and(|line| is_timestamped_line(line)) {
         start_idx = 1;
     }
 

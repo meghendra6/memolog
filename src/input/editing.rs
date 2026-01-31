@@ -16,8 +16,8 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
     }
 
     let in_vim_normal = app.is_vim_mode() && matches!(app.editor_mode, EditorMode::Normal);
-    let allow_composer_shortcuts = !app.is_vim_mode()
-        || matches!(app.editor_mode, EditorMode::Insert | EditorMode::Normal);
+    let allow_composer_shortcuts =
+        !app.is_vim_mode() || matches!(app.editor_mode, EditorMode::Insert | EditorMode::Normal);
 
     if allow_composer_shortcuts && key_match(&key, &app.config.keybindings.composer.task_toggle) {
         let changed = if in_vim_normal {
@@ -40,8 +40,7 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    if allow_composer_shortcuts
-        && key_match(&key, &app.config.keybindings.composer.priority_cycle)
+    if allow_composer_shortcuts && key_match(&key, &app.config.keybindings.composer.priority_cycle)
     {
         let changed = if in_vim_normal {
             let snapshot = app.editor_snapshot();
@@ -238,65 +237,61 @@ pub(crate) fn submit_composer(app: &mut App) {
                 app.toast("Config saved. Restart to apply changes.");
             }
         } else {
-        let selection_hint = (editing.file_path.clone(), editing.start_line);
-        let mut new_lines: Vec<String> = Vec::new();
-        if !is_empty {
-            let heading_time = if editing.timestamp_prefix.is_empty() {
-                Local::now().format("%H:%M:%S").to_string()
-            } else if let Some((prefix, _)) =
-                crate::models::split_timestamp_line(&editing.timestamp_prefix)
-            {
-                prefix
-                    .trim()
-                    .trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .to_string()
-            } else {
-                Local::now().format("%H:%M:%S").to_string()
-            };
+            let selection_hint = (editing.file_path.clone(), editing.start_line);
+            let mut new_lines: Vec<String> = Vec::new();
+            if !is_empty {
+                let heading_time = if editing.timestamp_prefix.is_empty() {
+                    Local::now().format("%H:%M:%S").to_string()
+                } else if let Some((prefix, _)) =
+                    crate::models::split_timestamp_line(&editing.timestamp_prefix)
+                {
+                    prefix
+                        .trim()
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .to_string()
+                } else {
+                    Local::now().format("%H:%M:%S").to_string()
+                };
 
-            new_lines.push(format!("## [{heading_time}]"));
-            new_lines.extend(lines);
-        }
+                new_lines.push(format!("## [{heading_time}]"));
+                new_lines.extend(lines);
+            }
 
-        if let Err(e) = storage::replace_entry_lines(
-            &editing.file_path,
-            editing.start_line,
-            editing.end_line,
-            &new_lines,
-        ) {
-            app.toast(format!("Error updating entry: {}", e));
-        }
-        if let Some(state) = app
-            .fold_overrides
-            .get(&EntryIdentity {
-                file_path: editing.file_path.clone(),
-                line_number: editing.start_line,
-            })
-            .copied()
-        {
-            let _ = storage::update_fold_marker(
+            if let Err(e) = storage::replace_entry_lines(
                 &editing.file_path,
                 editing.start_line,
-                state,
-            );
-        }
-        if editing.from_search {
-            if let Some(query) = editing.search_query.as_deref() {
-                app.last_search_query = Some(query.to_string());
-                refresh_search_results(app, query);
-                if let Some(i) = app.logs.iter().position(|e| {
-                    e.file_path == selection_hint.0 && e.line_number == selection_hint.1
-                }) {
-                    app.logs_state.select(Some(i));
+                editing.end_line,
+                &new_lines,
+            ) {
+                app.toast(format!("Error updating entry: {}", e));
+            }
+            if let Some(state) = app
+                .fold_overrides
+                .get(&EntryIdentity {
+                    file_path: editing.file_path.clone(),
+                    line_number: editing.start_line,
+                })
+                .copied()
+            {
+                let _ = storage::update_fold_marker(&editing.file_path, editing.start_line, state);
+            }
+            if editing.from_search {
+                if let Some(query) = editing.search_query.as_deref() {
+                    app.last_search_query = Some(query.to_string());
+                    refresh_search_results(app, query);
+                    if let Some(i) = app.logs.iter().position(|e| {
+                        e.file_path == selection_hint.0 && e.line_number == selection_hint.1
+                    }) {
+                        app.logs_state.select(Some(i));
+                    }
+                } else {
+                    app.last_search_query = None;
+                    app.update_logs();
                 }
             } else {
-                app.last_search_query = None;
                 app.update_logs();
             }
-        } else {
-            app.update_logs();
-        }
         }
     } else {
         let input = lines.join("\n");

@@ -560,23 +560,21 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
                 return true;
             }
         }
-        PendingEditCommand::ZCommand => {
-            match key_code {
-                KeyCode::Char('Z') => {
-                    app.pending_command = None;
-                    app.pending_count = 0;
-                    editing::submit_composer(app);
-                    return true;
-                }
-                KeyCode::Char('Q') => {
-                    app.pending_command = None;
-                    app.pending_count = 0;
-                    editing::discard_composer(app);
-                    return true;
-                }
-                _ => {}
+        PendingEditCommand::ZCommand => match key_code {
+            KeyCode::Char('Z') => {
+                app.pending_command = None;
+                app.pending_count = 0;
+                editing::submit_composer(app);
+                return true;
             }
-        }
+            KeyCode::Char('Q') => {
+                app.pending_command = None;
+                app.pending_count = 0;
+                editing::discard_composer(app);
+                return true;
+            }
+            _ => {}
+        },
     }
 
     app.pending_command = None;

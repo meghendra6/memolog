@@ -19,8 +19,8 @@ mod app;
 mod config;
 mod date_input;
 mod editor;
-mod integrations;
 mod input;
+mod integrations;
 mod models;
 mod runtime;
 mod storage;
@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
     let poll_interval = std::time::Duration::from_millis(app.config.ui.poll_interval_ms);
-    
+
     loop {
         runtime::tick(app);
 

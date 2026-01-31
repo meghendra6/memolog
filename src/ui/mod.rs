@@ -10,8 +10,8 @@ use ratatui::{
 use crate::app::{App, PLACEHOLDER_COMPOSE};
 use crate::config::{Theme, ThemePreset, ThemeToastOverrides, ThemeUiOverrides};
 use crate::models::{
-    AgendaItemKind, EditorMode, InputMode, NavigateFocus, VisualKind,
-    is_heading_timestamp_line, is_timestamped_line, split_timestamp_line,
+    AgendaItemKind, EditorMode, InputMode, NavigateFocus, VisualKind, is_heading_timestamp_line,
+    is_timestamped_line, split_timestamp_line,
 };
 use ratatui::style::Stylize;
 use regex::Regex;
@@ -27,9 +27,11 @@ pub mod components;
 pub mod popups;
 pub mod theme;
 
-use components::{centered_column, markdown_prefix_width, parse_markdown_spans, wrap_markdown_line};
+use components::{
+    centered_column, markdown_prefix_width, parse_markdown_spans, wrap_markdown_line,
+};
 use popups::{
-    render_ai_loading_popup, render_ai_response_popup, render_activity_popup,
+    render_activity_popup, render_ai_loading_popup, render_ai_response_popup,
     render_date_picker_popup, render_delete_entry_popup, render_editor_style_popup,
     render_exit_popup, render_google_auth_popup, render_help_popup, render_memo_preview_popup,
     render_mood_popup, render_path_popup, render_pomodoro_popup, render_quick_capture_popup,
@@ -209,11 +211,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             let is_folded = total_display_lines > visible_raw_limit;
             let show_fold_marker = total_display_lines > 1;
             let fold_marker = if show_fold_marker {
-                if is_folded {
-                    "▶"
-                } else {
-                    "▼"
-                }
+                if is_folded { "▶" } else { "▼" }
             } else {
                 " "
             };
@@ -225,9 +223,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 crate::models::TimelineFilter::Personal => {
                     ("P", Style::default().fg(tokens.ui_muted))
                 }
-                crate::models::TimelineFilter::All => {
-                    ("P", Style::default().fg(tokens.ui_muted))
-                }
+                crate::models::TimelineFilter::All => ("P", Style::default().fg(tokens.ui_muted)),
             };
             let marker_width = 4;
             let mut displayed_raw = 0usize;
@@ -547,7 +543,10 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             let time = Local::now().format("%Y-%m-%d %H:%M");
             let base = format!(
                 "{} · Entries {} · {} · {}",
-                time, app.logs.len(), context_summary, stats_summary
+                time,
+                app.logs.len(),
+                context_summary,
+                stats_summary
             );
             format!("{base}{pomodoro}")
         };
@@ -831,8 +830,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                     true,
                 ));
             } else {
-                let (code_block_info, cursor_block_id) =
-                    collect_code_block_info(lines, cursor_row);
+                let (code_block_info, cursor_block_id) = collect_code_block_info(lines, cursor_row);
                 let mut active_block_id: Option<usize> = None;
                 let mut highlighter: Option<HighlightLines> = None;
 
@@ -1338,7 +1336,9 @@ fn syntax_theme_candidates_for_preset(preset: ThemePreset) -> &'static [&'static
     match preset {
         ThemePreset::DraculaDark => &["Dracula", "base16-ocean.dark", "Solarized (dark)"],
         ThemePreset::SolarizedDark => &["Solarized (dark)", "base16-ocean.dark", "Dracula"],
-        ThemePreset::SolarizedLight => &["Solarized (light)", "InspiredGitHub", "base16-ocean.light"],
+        ThemePreset::SolarizedLight => {
+            &["Solarized (light)", "InspiredGitHub", "base16-ocean.light"]
+        }
         ThemePreset::NordCalm => &["Nord", "base16-ocean.dark", "Solarized (dark)"],
         ThemePreset::MonoContrast => &["base16-ocean.dark", "Monokai Extended", "Dracula"],
     }
@@ -1391,10 +1391,7 @@ fn ui_overrides_equal(a: Option<&ThemeUiOverrides>, b: Option<&ThemeUiOverrides>
     }
 }
 
-fn toast_overrides_equal(
-    a: Option<&ThemeToastOverrides>,
-    b: Option<&ThemeToastOverrides>,
-) -> bool {
+fn toast_overrides_equal(a: Option<&ThemeToastOverrides>, b: Option<&ThemeToastOverrides>) -> bool {
     match (a, b) {
         (None, None) => true,
         (Some(a), Some(b)) => a.info == b.info && a.success == b.success && a.error == b.error,
@@ -1520,11 +1517,7 @@ fn code_fallback_style(code_bg: Option<Color>) -> Style {
     style
 }
 
-fn slice_segments(
-    segments: &[StyledSegment],
-    start: usize,
-    end: usize,
-) -> Vec<StyledSegment> {
+fn slice_segments(segments: &[StyledSegment], start: usize, end: usize) -> Vec<StyledSegment> {
     let mut out = Vec::new();
     let mut pos = 0usize;
     let end = end.max(start);
@@ -1684,8 +1677,7 @@ fn compose_wrapped_line(
     let mut rendered = Line::from(spans);
     let segment_len = line.chars().count();
     let selection_covers_segment = selection.map_or(false, |range| {
-        range.start <= wrap_start_col
-            && range.end >= wrap_start_col.saturating_add(segment_len)
+        range.start <= wrap_start_col && range.end >= wrap_start_col.saturating_add(segment_len)
     });
     if selection_covers_segment {
         rendered.style = Style::default().bg(tokens.ui_selection_bg);
@@ -2066,8 +2058,7 @@ fn render_agenda_panel(
         let slot_minutes: i32 = 30;
         let window_start_min: i32 = 6 * 60;
         let window_end_min: i32 = 22 * 60;
-        let row_count =
-            ((window_end_min - window_start_min) / slot_minutes).max(0) as usize + 1;
+        let row_count = ((window_end_min - window_start_min) / slot_minutes).max(0) as usize + 1;
 
         let mut blocks = build_agenda_blocks(&timed, app, app.agenda_selected_day);
         blocks.sort_by_key(|block| (block.start_min, block.end_min, block.idx));
@@ -2091,18 +2082,18 @@ fn render_agenda_panel(
         }
 
         let now_min = now_time.hour() as i32 * 60 + now_time.minute() as i32;
-        let now_row = if is_today
-            && now_min >= window_start_min
-            && now_min < window_end_min + slot_minutes
-        {
-            Some(((now_min - window_start_min) / slot_minutes) as usize)
-        } else {
-            None
-        };
+        let now_row =
+            if is_today && now_min >= window_start_min && now_min < window_end_min + slot_minutes {
+                Some(((now_min - window_start_min) / slot_minutes) as usize)
+            } else {
+                None
+            };
 
         let time_width = 5usize;
         let separator = " | ";
-        let content_width = list_width.saturating_sub(time_width + separator.len()).max(1);
+        let content_width = list_width
+            .saturating_sub(time_width + separator.len())
+            .max(1);
         for row in 0..row_count {
             let time_min = window_start_min + row as i32 * slot_minutes;
             let time_label = format!("{:02}:{:02}", time_min / 60, time_min % 60);
@@ -2112,9 +2103,7 @@ fn render_agenda_panel(
             {
                 let starting_blocks: Vec<usize> = block_indices
                     .iter()
-                    .filter(|block_idx| {
-                        block_start_row.get(&blocks[**block_idx].idx) == Some(&row)
-                    })
+                    .filter(|block_idx| block_start_row.get(&blocks[**block_idx].idx) == Some(&row))
                     .copied()
                     .collect();
                 let selected_block = selected.and_then(|selected_idx| {
@@ -2193,11 +2182,7 @@ struct AgendaBlock {
     prefix: &'static str,
 }
 
-fn build_agenda_blocks(
-    timed: &[usize],
-    app: &App,
-    day: chrono::NaiveDate,
-) -> Vec<AgendaBlock> {
+fn build_agenda_blocks(timed: &[usize], app: &App, day: chrono::NaiveDate) -> Vec<AgendaBlock> {
     let mut blocks = Vec::new();
     for idx in timed {
         let item = &app.agenda_items[*idx];
@@ -2391,7 +2376,13 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
     let progress_label = if total_count > 0 {
         let filled = (done_count * 6) / total_count;
         let empty = 6 - filled;
-        format!(" [{}{}] {}/{}", "█".repeat(filled), "░".repeat(empty), done_count, total_count)
+        format!(
+            " [{}{}] {}/{}",
+            "█".repeat(filled),
+            "░".repeat(empty),
+            done_count,
+            total_count
+        )
     } else {
         String::new()
     };
@@ -2410,14 +2401,8 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
                 .fg(tokens.ui_fg)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            streak_label,
-            Style::default().fg(Color::Yellow),
-        ),
-        Span::styled(
-            progress_label,
-            Style::default().fg(Color::Cyan),
-        ),
+        Span::styled(streak_label, Style::default().fg(Color::Yellow)),
+        Span::styled(progress_label, Style::default().fg(Color::Cyan)),
     ];
 
     let mut right_plain = String::new();
@@ -2438,10 +2423,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         let word_count = text.split_whitespace().count();
         let wc_text = format!("  {}w {}c", word_count, char_count);
         right_plain.push_str(&wc_text);
-        right_spans.push(Span::styled(
-            wc_text,
-            Style::default().fg(tokens.ui_muted),
-        ));
+        right_spans.push(Span::styled(wc_text, Style::default().fg(tokens.ui_muted)));
     }
 
     let status_message = if let Some(hint) = app.visual_hint_message.as_deref() {
@@ -2558,9 +2540,9 @@ fn file_date(file_path: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::collect_code_block_info;
     use super::compose_prefix_width;
     use super::compose_wrapped_line;
-    use super::collect_code_block_info;
     use super::hide_fence_marker;
     use crate::config::Theme;
     use crate::ui::theme::ThemeTokens;
@@ -2599,8 +2581,7 @@ mod tests {
     #[test]
     fn renders_line_numbers_in_gutter() {
         let tokens = ThemeTokens::from_theme(&Theme::default());
-        let line =
-            compose_wrapped_line("plain text", &tokens, false, 9, true, true, None, 0, None);
+        let line = compose_wrapped_line("plain text", &tokens, false, 9, true, true, None, 0, None);
         assert_eq!(line_to_string(&line), " 10 | plain text");
     }
 

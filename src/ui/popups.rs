@@ -87,13 +87,24 @@ pub fn render_siren_popup(f: &mut Frame, app: &App) {
 pub fn render_activity_popup(f: &mut Frame, app: &App) {
     let (streak_days, includes_today) = app.streak;
     let streak_text = if streak_days > 0 {
-        format!("🔥 {} day streak{}", streak_days, if includes_today { "" } else { " (log today to continue!)" })
+        format!(
+            "🔥 {} day streak{}",
+            streak_days,
+            if includes_today {
+                ""
+            } else {
+                " (log today to continue!)"
+            }
+        )
     } else {
         "Start your streak by logging today!".to_string()
     };
 
     let block = Block::default()
-        .title(format!(" 🌱 Activity Graph (Last 2 Weeks) - {} ", streak_text))
+        .title(format!(
+            " 🌱 Activity Graph (Last 2 Weeks) - {} ",
+            streak_text
+        ))
         .borders(Borders::ALL);
     let area = centered_rect(popup_size::ACTIVITY.0, popup_size::ACTIVITY.1, f.area());
     f.render_widget(Clear, area);
@@ -473,7 +484,11 @@ pub fn render_ai_loading_popup(f: &mut Frame, app: &App) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(inner);
 
     let spinner = loading_spinner();
@@ -496,8 +511,7 @@ pub fn render_ai_loading_popup(f: &mut Frame, app: &App) {
         .wrap(Wrap { trim: true });
     f.render_widget(content, chunks[1]);
 
-    let footer = Paragraph::new("Esc hide")
-        .style(Style::default().fg(tokens.ui_muted));
+    let footer = Paragraph::new("Esc hide").style(Style::default().fg(tokens.ui_muted));
     f.render_widget(footer, chunks[2]);
 }
 
@@ -894,8 +908,8 @@ pub fn render_todo_popup(f: &mut Frame, app: &mut App) {
     f.render_stateful_widget(list, popup_layout[0], &mut app.todo_list_state);
 
     // Add helpful footer with keyboard shortcuts
-    let footer = Paragraph::new("Enter carry over · Esc skip")
-        .style(Style::default().fg(Color::DarkGray));
+    let footer =
+        Paragraph::new("Enter carry over · Esc skip").style(Style::default().fg(Color::DarkGray));
     f.render_widget(footer, popup_layout[1]);
 }
 
@@ -1316,7 +1330,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             ("Help".to_string(), fmt_keys(&kb.global.help)),
             ("Focus move".to_string(), "Ctrl+H/J/K/L".to_string()),
             ("Compose".to_string(), fmt_keys(&kb.global.focus_composer)),
-            ("Quick capture".to_string(), fmt_keys(&kb.global.quick_capture)),
+            (
+                "Quick capture".to_string(),
+                fmt_keys(&kb.global.quick_capture),
+            ),
             ("Search".to_string(), fmt_keys(&kb.global.search)),
             ("Tags".to_string(), fmt_keys(&kb.global.tags)),
             ("Pomodoro".to_string(), fmt_keys(&kb.global.pomodoro)),

@@ -75,14 +75,17 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
                 true
             }
             KeyCode::Char('l') if app.navigate_focus == models::NavigateFocus::Timeline => {
-                let next_focus = if app.last_navigate_focus
-                    == Some(models::NavigateFocus::Tasks)
-                {
+                let next_focus = if app.last_navigate_focus == Some(models::NavigateFocus::Tasks) {
                     models::NavigateFocus::Tasks
                 } else {
                     models::NavigateFocus::Agenda
                 };
                 app.set_navigate_focus(next_focus);
+                true
+            }
+            KeyCode::Char('n') => {
+                app.show_quick_capture_popup = true;
+                app.quick_capture_input.clear();
                 true
             }
             _ => false,
@@ -278,8 +281,5 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         actions::open_theme_switcher(app);
     } else if key_match(&key, &app.config.keybindings.global.editor_style_switcher) {
         actions::open_editor_style_switcher(app);
-    } else if key_match(&key, &app.config.keybindings.global.quick_capture) {
-        app.show_quick_capture_popup = true;
-        app.quick_capture_input.clear();
     }
 }

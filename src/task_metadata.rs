@@ -395,8 +395,14 @@ mod tests {
         let input = "Do stuff @sched(2025-01-15) @time(09:30) @dur(90m)";
         let (schedule, text) = parse_task_metadata(input);
         assert_eq!(text, "Do stuff");
-        assert_eq!(schedule.scheduled, Some(NaiveDate::from_ymd_opt(2025, 1, 15).unwrap()));
-        assert_eq!(schedule.time, Some(NaiveTime::from_hms_opt(9, 30, 0).unwrap()));
+        assert_eq!(
+            schedule.scheduled,
+            Some(NaiveDate::from_ymd_opt(2025, 1, 15).unwrap())
+        );
+        assert_eq!(
+            schedule.time,
+            Some(NaiveTime::from_hms_opt(9, 30, 0).unwrap())
+        );
         assert_eq!(schedule.duration_minutes, Some(90));
     }
 
@@ -405,8 +411,14 @@ mod tests {
         let input = "Task due:: 2025-02-01 time:: 18:00";
         let (schedule, text) = parse_task_metadata(input);
         assert_eq!(text, "Task");
-        assert_eq!(schedule.due, Some(NaiveDate::from_ymd_opt(2025, 2, 1).unwrap()));
-        assert_eq!(schedule.time, Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap()));
+        assert_eq!(
+            schedule.due,
+            Some(NaiveDate::from_ymd_opt(2025, 2, 1).unwrap())
+        );
+        assert_eq!(
+            schedule.time,
+            Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap())
+        );
     }
 
     #[test]
@@ -435,6 +447,9 @@ mod tests {
         // Test combined
         assert_eq!(parse_duration_minutes("1d2h"), Some(24 * 60 + 2 * 60));
         assert_eq!(parse_duration_minutes("1w1d"), Some(7 * 24 * 60 + 24 * 60));
-        assert_eq!(parse_duration_minutes("1w2d3h30m"), Some(7 * 24 * 60 + 2 * 24 * 60 + 3 * 60 + 30));
+        assert_eq!(
+            parse_duration_minutes("1w2d3h30m"),
+            Some(7 * 24 * 60 + 2 * 24 * 60 + 3 * 60 + 30)
+        );
     }
 }
