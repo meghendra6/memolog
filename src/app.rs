@@ -939,6 +939,12 @@ impl<'a> App<'a> {
                 .cloned()
                 .collect(),
             TaskFilter::All => self.all_tasks.clone(),
+            TaskFilter::HighPriority => self
+                .all_tasks
+                .iter()
+                .filter(|task| !task.is_done && task.priority == Some(Priority::High))
+                .cloned()
+                .collect(),
         };
 
         self.tasks.sort_by_key(|task| (task_priority_rank(task.priority), task.line_number));
@@ -967,7 +973,8 @@ impl<'a> App<'a> {
         self.task_filter = match self.task_filter {
             TaskFilter::Open => TaskFilter::Done,
             TaskFilter::Done => TaskFilter::All,
-            TaskFilter::All => TaskFilter::Open,
+            TaskFilter::All => TaskFilter::HighPriority,
+            TaskFilter::HighPriority => TaskFilter::Open,
         };
         self.apply_task_filter(true);
     }
@@ -983,6 +990,7 @@ impl<'a> App<'a> {
                     TaskFilter::Open => !item.is_done,
                     TaskFilter::Done => item.is_done,
                     TaskFilter::All => true,
+                    TaskFilter::HighPriority => !item.is_done && item.priority == Some(Priority::High),
                 },
             })
             .cloned()
@@ -1008,7 +1016,8 @@ impl<'a> App<'a> {
         self.agenda_filter = match self.agenda_filter {
             TaskFilter::Open => TaskFilter::Done,
             TaskFilter::Done => TaskFilter::All,
-            TaskFilter::All => TaskFilter::Open,
+            TaskFilter::All => TaskFilter::HighPriority,
+            TaskFilter::HighPriority => TaskFilter::Open,
         };
         self.apply_agenda_filter(true);
     }
@@ -1042,6 +1051,7 @@ impl<'a> App<'a> {
             TaskFilter::Open => "Open",
             TaskFilter::Done => "Done",
             TaskFilter::All => "All",
+            TaskFilter::HighPriority => "Priority A",
         }
     }
 
@@ -1160,6 +1170,7 @@ impl<'a> App<'a> {
             TaskFilter::Open => "Open",
             TaskFilter::Done => "Done",
             TaskFilter::All => "All",
+            TaskFilter::HighPriority => "Priority A",
         }
     }
 
