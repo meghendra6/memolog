@@ -332,6 +332,8 @@ pub struct UiConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor_style: Option<String>,
     pub line_numbers: bool,
+    /// Input poll interval in milliseconds (default: 250)
+    pub poll_interval_ms: u64,
 }
 
 impl Default for UiConfig {
@@ -340,6 +342,7 @@ impl Default for UiConfig {
             theme_preset: None,
             editor_style: None,
             line_numbers: true,
+            poll_interval_ms: 250,
         }
     }
 }
