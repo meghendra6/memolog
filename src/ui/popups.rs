@@ -504,7 +504,7 @@ pub fn render_date_picker_popup(f: &mut Frame, app: &App) {
     render_date_picker_fields(f, app, body_cols[0], &tokens);
     render_date_picker_detail(f, app, body_cols[1], &tokens);
 
-    let footer_text = "Enter apply | Esc cancel | +/- day | [/] week | T today | R relative";
+    let footer_text = "Enter apply | Esc cancel | h/l or +/- day | H/L or [/] week | j/k field | T today | R relative";
     let footer_style = Style::default().fg(tokens.ui_muted);
     f.render_widget(Paragraph::new(footer_text).style(footer_style), footer);
 
@@ -854,13 +854,17 @@ pub fn render_todo_popup(f: &mut Frame, app: &mut App) {
 }
 
 pub fn render_tag_popup(f: &mut Frame, app: &mut App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
     let selection = app
         .tag_list_state
         .selected()
         .map(|i| format!("{}/{}", i + 1, app.tags.len()))
         .unwrap_or_else(|| "0/0".to_string());
-    let title = format!(" Tags {selection} · Enter: filter · Esc: close ");
-    let block = Block::default().title(title).borders(Borders::ALL);
+    let title = format!(" Tags {selection} ");
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_border_default));
     let area = centered_rect(50, 60, f.area());
     f.render_widget(Clear, area);
     f.render_widget(block, area);
@@ -882,18 +886,23 @@ pub fn render_tag_popup(f: &mut Frame, app: &mut App) {
 
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(100)])
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
         .margin(1)
         .split(area);
 
     let highlight_bg = parse_color(&app.config.theme.text_highlight);
-    let list = List::new(items).highlight_symbol("").highlight_style(
+    let list = List::new(items).highlight_symbol("→ ").highlight_style(
         Style::default()
             .bg(highlight_bg)
             .add_modifier(Modifier::BOLD),
     );
 
     f.render_stateful_widget(list, popup_layout[0], &mut app.tag_list_state);
+
+    // Add helpful footer with keyboard shortcuts
+    let footer = Paragraph::new("↑/↓/j/k select · Enter filter · Esc close")
+        .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(footer, popup_layout[1]);
 }
 
 pub fn render_path_popup(f: &mut Frame, app: &App) {
