@@ -152,6 +152,7 @@ When it completes, MemoLog appends a tomato (🍅) to the task line.
 
 - `/` opens search
 - `t` shows tag list (tags are any `#word` in your logs)
+- **Special tag: `#pinned`** - Entries with `#pinned` in today's log appear at the top of the timeline
 - AI search: prefix your query with `?`, `ai:`, or `ask:` to run a Gemini-assisted search
 
 ## Gemini AI search (experimental)
