@@ -370,6 +370,7 @@ pub struct GlobalBindings {
     pub focus_next: Vec<String>,
     pub focus_prev: Vec<String>,
     pub search: Vec<String>,
+    pub goto_date: Vec<String>,
     pub tags: Vec<String>,
     pub activity: Vec<String>,
     pub agenda: Vec<String>,
@@ -393,6 +394,7 @@ impl Default for GlobalBindings {
             focus_next: vec!["tab".to_string()],
             focus_prev: vec!["backtab".to_string()],
             search: vec!["/".to_string()],
+            goto_date: vec!["ctrl+f".to_string()],
             tags: vec!["t".to_string()],
             activity: vec!["ctrl+a".to_string()],
             agenda: vec!["a".to_string(), "shift+a".to_string()],
@@ -1025,6 +1027,10 @@ impl Config {
             self.keybindings.global.quit = vec!["q".to_string()];
             changed = true;
         }
+        if self.keybindings.global.goto_date.is_empty() {
+            self.keybindings.global.goto_date = vec!["ctrl+f".to_string()];
+            changed = true;
+        }
         if removed_composer
             || removed_search
             || removed_focus_timeline
@@ -1064,6 +1070,58 @@ impl Config {
             changed = true;
         }
 
+        let goto_bindings = self.keybindings.global.goto_date.clone();
+        let removed_context_conflicts =
+            remove_bindings_in_set(&mut self.keybindings.timeline.context_work, &goto_bindings)
+                | remove_bindings_in_set(
+                    &mut self.keybindings.timeline.context_personal,
+                    &goto_bindings,
+                )
+                | remove_bindings_in_set(
+                    &mut self.keybindings.timeline.context_clear,
+                    &goto_bindings,
+                )
+                | remove_bindings_in_set(
+                    &mut self.keybindings.composer.context_work,
+                    &goto_bindings,
+                )
+                | remove_bindings_in_set(
+                    &mut self.keybindings.composer.context_personal,
+                    &goto_bindings,
+                )
+                | remove_bindings_in_set(
+                    &mut self.keybindings.composer.context_clear,
+                    &goto_bindings,
+                );
+        if removed_context_conflicts {
+            changed = true;
+        }
+
+        if self.keybindings.timeline.context_work.is_empty() {
+            self.keybindings.timeline.context_work = vec!["ctrl+w".to_string()];
+            changed = true;
+        }
+        if self.keybindings.timeline.context_personal.is_empty() {
+            self.keybindings.timeline.context_personal = vec!["ctrl+e".to_string()];
+            changed = true;
+        }
+        if self.keybindings.timeline.context_clear.is_empty() {
+            self.keybindings.timeline.context_clear = vec!["ctrl+r".to_string()];
+            changed = true;
+        }
+        if self.keybindings.composer.context_work.is_empty() {
+            self.keybindings.composer.context_work = vec!["ctrl+w".to_string()];
+            changed = true;
+        }
+        if self.keybindings.composer.context_personal.is_empty() {
+            self.keybindings.composer.context_personal = vec!["ctrl+e".to_string()];
+            changed = true;
+        }
+        if self.keybindings.composer.context_clear.is_empty() {
+            self.keybindings.composer.context_clear = vec!["ctrl+r".to_string()];
+            changed = true;
+        }
+
         changed
     }
 }
@@ -1071,6 +1129,16 @@ impl Config {
 fn remove_keybinding(list: &mut Vec<String>, key: &str) -> bool {
     let before = list.len();
     list.retain(|k| !k.eq_ignore_ascii_case(key));
+    before != list.len()
+}
+
+fn remove_bindings_in_set(list: &mut Vec<String>, disallowed: &[String]) -> bool {
+    let before = list.len();
+    list.retain(|key| {
+        !disallowed
+            .iter()
+            .any(|blocked| blocked.eq_ignore_ascii_case(key))
+    });
     before != list.len()
 }
 
@@ -1108,7 +1176,7 @@ fn replace_keybinding(list: &mut Vec<String>, old: &str, new: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Theme, ThemePreset, key_match};
+    use super::{Config, Theme, ThemePreset, key_match};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -1148,5 +1216,20 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Char('\u{314E}'), KeyModifiers::SHIFT);
         assert!(key_match(&key, &[String::from("shift+g")]));
         assert!(!key_match(&key, &[String::from("g")]));
+    }
+
+    #[test]
+    fn normalize_keybindings_preserves_ctrl_f_for_goto_date() {
+        let mut config = Config::default();
+        config.keybindings.global.goto_date = vec!["ctrl+f".to_string()];
+        config.keybindings.timeline.context_work = vec!["ctrl+f".to_string()];
+        config.keybindings.timeline.context_personal = vec!["ctrl+f".to_string()];
+        config.keybindings.timeline.context_clear = vec!["ctrl+f".to_string()];
+
+        assert!(config.normalize_keybindings());
+        assert_eq!(config.keybindings.global.goto_date, vec!["ctrl+f"]);
+        assert_eq!(config.keybindings.timeline.context_work, vec!["ctrl+w"]);
+        assert_eq!(config.keybindings.timeline.context_personal, vec!["ctrl+e"]);
+        assert_eq!(config.keybindings.timeline.context_clear, vec!["ctrl+r"]);
     }
 }

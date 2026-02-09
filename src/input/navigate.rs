@@ -7,15 +7,19 @@ use crate::{
 use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+fn is_ctrl_char(key: &KeyEvent, ch: char) -> bool {
+    let key_code = key_code_for_shortcuts(key);
+    matches!(key_code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&ch))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
 pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     let key_code = key_code_for_shortcuts(&key);
 
     // Handle gg/G vim-style navigation for Timeline
     if app.navigate_focus == models::NavigateFocus::Timeline {
         // Check for 'G' (shift+g) - go to bottom
-        if matches!(key_code, KeyCode::Char('G'))
-            && key.modifiers.contains(KeyModifiers::SHIFT)
-        {
+        if matches!(key_code, KeyCode::Char('G')) && key.modifiers.contains(KeyModifiers::SHIFT) {
             app.pending_nav_key = None;
             app.scroll_to_bottom();
             return;
@@ -24,7 +28,8 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         // Handle 'g' key sequence (gg = go to top)
         if let Some(pending) = app.pending_nav_key {
             app.pending_nav_key = None;
-            if pending == 'g' && matches!(key_code, KeyCode::Char('g')) && key.modifiers.is_empty() {
+            if pending == 'g' && matches!(key_code, KeyCode::Char('g')) && key.modifiers.is_empty()
+            {
                 app.scroll_to_top();
                 return;
             }
@@ -39,6 +44,36 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     } else {
         // Clear pending key when not in Timeline focus
         app.pending_nav_key = None;
+    }
+
+    if key_match(&key, &app.config.keybindings.global.goto_date) {
+        app.show_goto_date_popup = true;
+        app.goto_date_input.clear();
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.global.quick_capture) {
+        app.show_quick_capture_popup = true;
+        app.quick_capture_input.clear();
+        return;
+    }
+
+    // Keep Vim-like page movement reliable in Timeline even if user bindings conflict.
+    if app.navigate_focus == models::NavigateFocus::Timeline
+        && (key_match(&key, &app.config.keybindings.timeline.page_up) || is_ctrl_char(&key, 'u'))
+    {
+        for _ in 0..10 {
+            app.scroll_up();
+        }
+        return;
+    }
+    if app.navigate_focus == models::NavigateFocus::Timeline
+        && (key_match(&key, &app.config.keybindings.timeline.page_down) || is_ctrl_char(&key, 'd'))
+    {
+        for _ in 0..10 {
+            app.scroll_down();
+        }
+        return;
     }
 
     if app.navigate_focus == models::NavigateFocus::Timeline
@@ -115,11 +150,6 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
                 app.set_navigate_focus(next_focus);
                 true
             }
-            KeyCode::Char('n') => {
-                app.show_quick_capture_popup = true;
-                app.quick_capture_input.clear();
-                true
-            }
             _ => false,
         };
         if handled {
@@ -127,15 +157,20 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         }
     } else if key_match(&key, &app.config.keybindings.global.agenda) {
         actions::focus_agenda_panel(app);
-    } else if key_match(&key, &app.config.keybindings.global.focus_next)
-        || key_match(&key, &app.config.keybindings.global.focus_prev)
-    {
+    } else if key_match(&key, &app.config.keybindings.global.focus_next) {
         let next_focus = match app.navigate_focus {
             models::NavigateFocus::Timeline => models::NavigateFocus::Agenda,
             models::NavigateFocus::Agenda => models::NavigateFocus::Tasks,
             models::NavigateFocus::Tasks => models::NavigateFocus::Timeline,
         };
         app.set_navigate_focus(next_focus);
+    } else if key_match(&key, &app.config.keybindings.global.focus_prev) {
+        let prev_focus = match app.navigate_focus {
+            models::NavigateFocus::Timeline => models::NavigateFocus::Tasks,
+            models::NavigateFocus::Agenda => models::NavigateFocus::Timeline,
+            models::NavigateFocus::Tasks => models::NavigateFocus::Agenda,
+        };
+        app.set_navigate_focus(prev_focus);
     } else if key_match(&key, &app.config.keybindings.global.focus_composer) {
         app.transition_to(InputMode::Editing);
     } else if key_match(&key, &app.config.keybindings.global.search) {
@@ -149,18 +184,6 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     {
         app.scroll_down();
     } else if app.navigate_focus == models::NavigateFocus::Timeline
-        && key_match(&key, &app.config.keybindings.timeline.page_up)
-    {
-        for _ in 0..10 {
-            app.scroll_up();
-        }
-    } else if app.navigate_focus == models::NavigateFocus::Timeline
-        && key_match(&key, &app.config.keybindings.timeline.page_down)
-    {
-        for _ in 0..10 {
-            app.scroll_down();
-        }
-    } else if app.navigate_focus == models::NavigateFocus::Timeline
         && key_match(&key, &app.config.keybindings.timeline.top)
     {
         app.scroll_to_top();
@@ -168,6 +191,10 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         && key_match(&key, &app.config.keybindings.timeline.bottom)
     {
         app.scroll_to_bottom();
+    } else if app.navigate_focus == models::NavigateFocus::Timeline
+        && key_match(&key, &app.config.keybindings.timeline.open)
+    {
+        actions::open_timeline_preview(app);
     } else if app.navigate_focus == models::NavigateFocus::Timeline
         && key_match(&key, &app.config.keybindings.timeline.edit)
     {

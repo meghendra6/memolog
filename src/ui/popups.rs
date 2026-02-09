@@ -1284,11 +1284,12 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             ("Help".to_string(), fmt_keys(&kb.global.help)),
             ("Focus move".to_string(), "Ctrl+H/J/K/L".to_string()),
             (
-                "Compose / Search / Tags".to_string(),
+                "Compose / Search / Jump / Tags".to_string(),
                 join_key_groups_with_sep(
                     &[
                         fmt_keys(&kb.global.focus_composer),
                         fmt_keys(&kb.global.search),
+                        fmt_keys(&kb.global.goto_date),
                         fmt_keys(&kb.global.tags),
                     ],
                     " | ",
@@ -1335,6 +1336,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 fmt_keys(&kb.global.quick_capture),
             ),
             ("Search".to_string(), fmt_keys(&kb.global.search)),
+            ("Go to date".to_string(), fmt_keys(&kb.global.goto_date)),
             ("Tags".to_string(), fmt_keys(&kb.global.tags)),
             ("Pomodoro".to_string(), fmt_keys(&kb.global.pomodoro)),
             ("Activity".to_string(), fmt_keys(&kb.global.activity)),
@@ -2105,6 +2107,48 @@ pub fn render_quick_capture_popup(f: &mut Frame, app: &App) {
 
     // Show cursor
     let cursor_x = inner[0].x + 1 + app.quick_capture_input.len() as u16;
+    let cursor_y = inner[0].y + 1;
+    f.set_cursor_position((cursor_x.min(inner[0].right() - 2), cursor_y));
+}
+
+pub fn render_goto_date_popup(f: &mut Frame, app: &App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let block = Block::default()
+        .title(" 📅 Go To Date ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_accent));
+
+    let area = centered_rect(62, 18, f.area());
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(2),
+            Constraint::Length(1),
+        ])
+        .margin(1)
+        .split(area);
+
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_border_default));
+    let input = Paragraph::new(app.goto_date_input.as_str())
+        .style(Style::default().fg(tokens.ui_fg))
+        .block(input_block);
+    f.render_widget(input, inner[0]);
+
+    let examples = Paragraph::new("Examples: 2026-02-01 | today | +3d | next mon")
+        .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(examples, inner[1]);
+
+    let help =
+        Paragraph::new("Enter: Jump  |  Esc: Cancel").style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(help, inner[2]);
+
+    let cursor_x = inner[0].x + 1 + app.goto_date_input.chars().count() as u16;
     let cursor_y = inner[0].y + 1;
     f.set_cursor_position((cursor_x.min(inner[0].right() - 2), cursor_y));
 }
