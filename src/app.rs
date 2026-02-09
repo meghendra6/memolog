@@ -937,6 +937,7 @@ impl<'a> App<'a> {
         self.entry_scroll_to_bottom = false;
         self.set_agenda_selected_day(clamped);
 
+        let target_label = target.format("%Y-%m-%d").to_string();
         if clamped != target {
             if target > today {
                 self.toast(format!("Future date not allowed. Jumped to {date_label}."));
@@ -956,7 +957,7 @@ impl<'a> App<'a> {
             self.toast(format!("Jumped to {date_label}."));
         } else {
             self.toast(format!(
-                "No entries on {date_label}. Showing nearest loaded entries."
+                "No entries on {target_label}. Showing nearest loaded entries."
             ));
         }
     }

@@ -1193,6 +1193,13 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
         ],
         " / ",
     );
+    let tasks_snooze_keys = join_key_groups_with_sep(
+        &[
+            fmt_keys(&kb.tasks.snooze_day),
+            fmt_keys(&kb.tasks.snooze_week),
+        ],
+        " / ",
+    );
     let composer_context_keys = join_key_groups_with_sep(
         &[
             fmt_keys(&kb.composer.context_work),
@@ -1294,6 +1301,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                     ],
                     " | ",
                 ),
+            ),
+            (
+                "Quick capture".to_string(),
+                fmt_keys(&kb.global.quick_capture),
             ),
             (
                 "Pomodoro / Activity".to_string(),
@@ -1405,9 +1416,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 timeline_context_keys.clone(),
             ),
             (
-                "Edit / Complete tasks".to_string(),
+                "Open / Edit / Complete".to_string(),
                 join_key_groups_with_sep(
                     &[
+                        fmt_keys(&kb.timeline.open),
                         fmt_keys(&kb.timeline.edit),
                         fmt_keys(&kb.timeline.toggle_todo),
                     ],
@@ -1441,6 +1453,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 "Context: work/personal/clear".to_string(),
                 timeline_context_keys.clone(),
             ),
+            ("Open memo".to_string(), fmt_keys(&kb.timeline.open)),
             ("Edit".to_string(), fmt_keys(&kb.timeline.edit)),
             (
                 "Complete tasks".to_string(),
@@ -1466,10 +1479,11 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 ),
             ),
             (
-                "Priority / Pomodoro".to_string(),
+                "Priority / Snooze / Pomodoro".to_string(),
                 join_key_groups_with_sep(
                     &[
                         fmt_keys(&kb.tasks.priority_cycle),
+                        tasks_snooze_keys.clone(),
                         fmt_keys(&kb.tasks.start_pomodoro),
                     ],
                     " | ",
@@ -1494,6 +1508,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 "Priority cycle".to_string(),
                 fmt_keys(&kb.tasks.priority_cycle),
             ),
+            ("Snooze".to_string(), tasks_snooze_keys.clone()),
             ("Pomodoro".to_string(), fmt_keys(&kb.tasks.start_pomodoro)),
             ("Edit".to_string(), fmt_keys(&kb.tasks.edit)),
             (

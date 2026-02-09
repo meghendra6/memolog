@@ -114,12 +114,18 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         app.set_selected_entry_context(TimelineFilter::All);
     } else if key_match(&key, &app.config.keybindings.global.help) {
         app.show_help_popup = true;
+    } else if key_match(&key, &app.config.keybindings.global.goto_date) {
+        app.show_goto_date_popup = true;
+        app.goto_date_input.clear();
     } else if key_match(&key, &app.config.keybindings.global.tags) {
         actions::open_tag_popup(app);
     } else if key_match(&key, &app.config.keybindings.global.edit_config) {
         actions::open_config_in_composer(app);
     } else if key_match(&key, &app.config.keybindings.global.sync_google) {
         actions::sync_google(app);
+    } else if key_match(&key, &app.config.keybindings.global.quick_capture) {
+        app.show_quick_capture_popup = true;
+        app.quick_capture_input.clear();
     } else if key_match(&key, &app.config.keybindings.global.quit) {
         app.quit();
     } else if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -333,6 +339,14 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         && key_match(&key, &app.config.keybindings.tasks.priority_cycle)
     {
         actions::cycle_task_priority(app);
+    } else if app.navigate_focus == models::NavigateFocus::Tasks
+        && key_match(&key, &app.config.keybindings.tasks.snooze_day)
+    {
+        actions::snooze_selected_task(app, 1);
+    } else if app.navigate_focus == models::NavigateFocus::Tasks
+        && key_match(&key, &app.config.keybindings.tasks.snooze_week)
+    {
+        actions::snooze_selected_task(app, 7);
     } else if (app.navigate_focus == models::NavigateFocus::Tasks
         && key_match(&key, &app.config.keybindings.tasks.start_pomodoro))
         || key_match(&key, &app.config.keybindings.global.pomodoro)

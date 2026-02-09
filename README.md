@@ -84,6 +84,8 @@ Agenda controls (when focused):
 - `j/k` move
 - `Space` toggle checkbox
 - `Shift+P` cycle priority
+- `]` snooze selected task by +1 day
+- `}` snooze selected task by +1 week
 - `p` start/stop pomodoro
 - `e` open source entry
 
@@ -353,6 +355,8 @@ Tasks
 - `Space` toggle checkbox
 - `Enter` memo preview
 - `Shift+P` cycle priority
+- `]` snooze +1 day
+- `}` snooze +1 week
 - `p` pomodoro
 - `e` edit source
 
