@@ -49,23 +49,18 @@ pub fn parse_task_metadata(text: &str) -> (TaskSchedule, String) {
         let parsed = match token.key {
             TaskMetadataKey::Scheduled => parse_date(&token.value).map(|d| {
                 schedule.scheduled = Some(d);
-                ()
             }),
             TaskMetadataKey::Due => parse_date(&token.value).map(|d| {
                 schedule.due = Some(d);
-                ()
             }),
             TaskMetadataKey::Start => parse_date(&token.value).map(|d| {
                 schedule.start = Some(d);
-                ()
             }),
             TaskMetadataKey::Time => parse_time(&token.value).map(|t| {
                 schedule.time = Some(t);
-                ()
             }),
             TaskMetadataKey::Duration => parse_duration_minutes(&token.value).map(|m| {
                 schedule.duration_minutes = Some(m);
-                ()
             }),
         };
 
@@ -447,6 +442,9 @@ mod tests {
         // Test combined
         assert_eq!(parse_duration_minutes("1d2h"), Some(24 * 60 + 2 * 60));
         assert_eq!(parse_duration_minutes("1w1d"), Some(7 * 24 * 60 + 24 * 60));
-        assert_eq!(parse_duration_minutes("1w2d3h30m"), Some(7 * 24 * 60 + 2 * 24 * 60 + 3 * 60 + 30));
+        assert_eq!(
+            parse_duration_minutes("1w2d3h30m"),
+            Some(7 * 24 * 60 + 2 * 24 * 60 + 3 * 60 + 30)
+        );
     }
 }

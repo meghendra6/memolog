@@ -328,6 +328,7 @@ Global
 - `Ctrl+N` quick capture
 - `/` search
 - `Ctrl+F` go to date (`YYYY-MM-DD`, `today`, `+3d`, `next mon`)
+  - In the popup: `←/→` day, `↑/↓` week, `PgUp/PgDn` month, `Home` today, `Ctrl+T` today
 - `t` tags
 - `Ctrl+A` activity
 - `T` theme presets

@@ -351,7 +351,8 @@ pub struct SearchMatch {
     pub explain: String,
 }
 
-pub fn search_entries(log_path: &Path, query: &str) -> io::Result<Vec<LogEntry>> {
+#[cfg(test)]
+fn search_entries(log_path: &Path, query: &str) -> io::Result<Vec<LogEntry>> {
     Ok(search_entries_with_explain(log_path, query)?
         .into_iter()
         .map(|item| item.entry)
@@ -813,7 +814,11 @@ fn score_search_term(term: &SearchTerm, haystack: &SearchHaystack) -> TermScore 
     }
 
     let content_hits = haystack.content_lower.match_indices(needle).count();
-    let tag_hits = haystack.tags.iter().filter(|tag| tag.as_str() == needle).count();
+    let tag_hits = haystack
+        .tags
+        .iter()
+        .filter(|tag| tag.as_str() == needle)
+        .count();
     let context_hits = haystack
         .contexts
         .iter()
@@ -879,9 +884,8 @@ fn extract_search_words(text: &str) -> Vec<String> {
 
 fn extract_search_tags(text: &str) -> Vec<String> {
     static TAG_RE: OnceLock<Regex> = OnceLock::new();
-    let tag_re = TAG_RE.get_or_init(|| {
-        Regex::new(r"#([a-z0-9_-]+)").expect("tag regex must compile")
-    });
+    let tag_re =
+        TAG_RE.get_or_init(|| Regex::new(r"#([a-z0-9_-]+)").expect("tag regex must compile"));
     let mut tags = Vec::new();
     for captures in tag_re.captures_iter(text) {
         if let Some(tag) = captures.get(1) {
