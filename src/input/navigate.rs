@@ -362,3 +362,51 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         actions::open_editor_style_switcher(app);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::handle_normal_mode;
+    use crate::app::App;
+    use crate::models::{LogEntry, NavigateFocus};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn make_nav_app() -> App<'static> {
+        let mut app = App::new();
+        app.navigate_focus = NavigateFocus::Timeline;
+        app.logs = (0..20)
+            .map(|i| LogEntry {
+                content: format!("entry {i}"),
+                file_path: "/tmp/2026-02-09.md".to_string(),
+                line_number: i,
+                end_line: i,
+            })
+            .collect();
+        app.all_logs = app.logs.clone();
+        app.logs_state.select(Some(10));
+        app
+    }
+
+    #[test]
+    fn ctrl_f_opens_goto_date_popup() {
+        let mut app = make_nav_app();
+        let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
+        handle_normal_mode(&mut app, key);
+        assert!(app.show_goto_date_popup);
+    }
+
+    #[test]
+    fn ctrl_u_and_ctrl_d_page_in_timeline() {
+        let mut app = make_nav_app();
+        handle_normal_mode(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(app.logs_state.selected(), Some(0));
+
+        handle_normal_mode(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(app.logs_state.selected(), Some(10));
+    }
+}

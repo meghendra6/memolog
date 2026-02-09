@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -149,6 +150,85 @@ fn is_match(key: &KeyEvent, binding: &str) -> bool {
     key_mods.contains(target_mods)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+enum BindingScope {
+    Global,
+    Timeline,
+    Agenda,
+    Tasks,
+    Composer,
+    Search,
+    Popup,
+}
+
+impl BindingScope {
+    fn label(self) -> &'static str {
+        match self {
+            BindingScope::Global => "Global",
+            BindingScope::Timeline => "Timeline",
+            BindingScope::Agenda => "Agenda",
+            BindingScope::Tasks => "Tasks",
+            BindingScope::Composer => "Composer",
+            BindingScope::Search => "Search",
+            BindingScope::Popup => "Popup",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BindingSpec<'a> {
+    scope: BindingScope,
+    action: &'static str,
+    keys: &'a [String],
+}
+
+fn canonical_binding(binding: &str) -> Option<String> {
+    let parts: Vec<String> = binding
+        .split('+')
+        .map(|p| p.trim().to_ascii_lowercase())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    let mut has_ctrl = false;
+    let mut has_alt = false;
+    let mut has_shift = false;
+    let mut target_code: Option<String> = None;
+
+    for part in parts {
+        match part.as_str() {
+            "ctrl" => has_ctrl = true,
+            "alt" | "opt" => has_alt = true,
+            "shift" => has_shift = true,
+            "enter" | "esc" | "backspace" | "tab" | "backtab" | "space" | "up" | "down"
+            | "left" | "right" | "home" | "end" | "pageup" | "pagedown" | "delete"
+            | "insert" => {
+                target_code = Some(part);
+            }
+            _ if part.chars().count() == 1 => {
+                target_code = Some(part);
+            }
+            _ => {}
+        }
+    }
+
+    let code = target_code?;
+    let mut out = Vec::new();
+    if has_ctrl {
+        out.push("ctrl".to_string());
+    }
+    if has_alt {
+        out.push("alt".to_string());
+    }
+    if has_shift {
+        out.push("shift".to_string());
+    }
+    out.push(code);
+    Some(out.join("+"))
+}
+
 fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("com", "meghendra", "memolog")
 }
@@ -189,6 +269,22 @@ pub fn config_path() -> PathBuf {
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(".memolog-config.toml")
+}
+
+fn config_sibling_path(file_name: &str) -> PathBuf {
+    let base = config_path();
+    if let Some(parent) = base.parent() {
+        return parent.join(file_name);
+    }
+    PathBuf::from(file_name)
+}
+
+pub fn saved_searches_path() -> PathBuf {
+    config_sibling_path("saved_searches.txt")
+}
+
+pub fn onboarding_seen_path() -> PathBuf {
+    config_sibling_path("onboarding_seen")
 }
 
 pub fn google_token_path(config: &Config) -> PathBuf {
@@ -575,6 +671,10 @@ pub struct SearchBindings {
     pub submit: Vec<String>,
     pub cancel: Vec<String>,
     pub clear: Vec<String>,
+    pub recent_prev: Vec<String>,
+    pub recent_next: Vec<String>,
+    pub save_current: Vec<String>,
+    pub open_saved: Vec<String>,
 }
 
 impl Default for SearchBindings {
@@ -583,6 +683,10 @@ impl Default for SearchBindings {
             submit: vec!["enter".to_string()],
             cancel: vec!["esc".to_string()],
             clear: Vec::new(),
+            recent_prev: vec!["ctrl+p".to_string()],
+            recent_next: vec!["ctrl+n".to_string()],
+            save_current: vec!["ctrl+s".to_string()],
+            open_saved: vec!["ctrl+o".to_string()],
         }
     }
 }
@@ -1128,6 +1232,323 @@ impl Config {
 
         changed
     }
+
+    pub fn keybinding_conflicts(&self) -> Vec<String> {
+        find_keybinding_conflicts(&self.binding_specs())
+    }
+
+    fn binding_specs(&self) -> Vec<BindingSpec<'_>> {
+        let kb = &self.keybindings;
+        vec![
+            BindingSpec {
+                scope: BindingScope::Global,
+                action: "global.quit",
+                keys: &kb.global.quit,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
+                action: "global.help",
+                keys: &kb.global.help,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
+                action: "global.focus_timeline",
+                keys: &kb.global.focus_timeline,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
+                action: "global.focus_tasks",
+                keys: &kb.global.focus_tasks,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
+                action: "global.focus_composer",
+                keys: &kb.global.focus_composer,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
+                action: "global.focus_next",
+                keys: &kb.global.focus_next,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
+                action: "global.focus_prev",
+                keys: &kb.global.focus_prev,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
+                action: "global.search",
+                keys: &kb.global.search,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
+                action: "global.goto_date",
+                keys: &kb.global.goto_date,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
+                action: "global.quick_capture",
+                keys: &kb.global.quick_capture,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.page_up",
+                keys: &kb.timeline.page_up,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.page_down",
+                keys: &kb.timeline.page_down,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.filter_toggle",
+                keys: &kb.timeline.filter_toggle,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.filter_work",
+                keys: &kb.timeline.filter_work,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.filter_personal",
+                keys: &kb.timeline.filter_personal,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.filter_all",
+                keys: &kb.timeline.filter_all,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.context_work",
+                keys: &kb.timeline.context_work,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.context_personal",
+                keys: &kb.timeline.context_personal,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.context_clear",
+                keys: &kb.timeline.context_clear,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.toggle_todo",
+                keys: &kb.timeline.toggle_todo,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.open",
+                keys: &kb.timeline.open,
+            },
+            BindingSpec {
+                scope: BindingScope::Timeline,
+                action: "timeline.edit",
+                keys: &kb.timeline.edit,
+            },
+            BindingSpec {
+                scope: BindingScope::Agenda,
+                action: "agenda.toggle",
+                keys: &kb.agenda.toggle,
+            },
+            BindingSpec {
+                scope: BindingScope::Agenda,
+                action: "agenda.filter",
+                keys: &kb.agenda.filter,
+            },
+            BindingSpec {
+                scope: BindingScope::Agenda,
+                action: "agenda.toggle_unscheduled",
+                keys: &kb.agenda.toggle_unscheduled,
+            },
+            BindingSpec {
+                scope: BindingScope::Tasks,
+                action: "tasks.toggle",
+                keys: &kb.tasks.toggle,
+            },
+            BindingSpec {
+                scope: BindingScope::Tasks,
+                action: "tasks.priority_cycle",
+                keys: &kb.tasks.priority_cycle,
+            },
+            BindingSpec {
+                scope: BindingScope::Tasks,
+                action: "tasks.snooze_day",
+                keys: &kb.tasks.snooze_day,
+            },
+            BindingSpec {
+                scope: BindingScope::Tasks,
+                action: "tasks.snooze_week",
+                keys: &kb.tasks.snooze_week,
+            },
+            BindingSpec {
+                scope: BindingScope::Tasks,
+                action: "tasks.start_pomodoro",
+                keys: &kb.tasks.start_pomodoro,
+            },
+            BindingSpec {
+                scope: BindingScope::Composer,
+                action: "composer.submit",
+                keys: &kb.composer.submit,
+            },
+            BindingSpec {
+                scope: BindingScope::Composer,
+                action: "composer.cancel",
+                keys: &kb.composer.cancel,
+            },
+            BindingSpec {
+                scope: BindingScope::Composer,
+                action: "composer.context_work",
+                keys: &kb.composer.context_work,
+            },
+            BindingSpec {
+                scope: BindingScope::Composer,
+                action: "composer.context_personal",
+                keys: &kb.composer.context_personal,
+            },
+            BindingSpec {
+                scope: BindingScope::Composer,
+                action: "composer.context_clear",
+                keys: &kb.composer.context_clear,
+            },
+            BindingSpec {
+                scope: BindingScope::Search,
+                action: "search.submit",
+                keys: &kb.search.submit,
+            },
+            BindingSpec {
+                scope: BindingScope::Search,
+                action: "search.cancel",
+                keys: &kb.search.cancel,
+            },
+            BindingSpec {
+                scope: BindingScope::Search,
+                action: "search.clear",
+                keys: &kb.search.clear,
+            },
+            BindingSpec {
+                scope: BindingScope::Search,
+                action: "search.recent_prev",
+                keys: &kb.search.recent_prev,
+            },
+            BindingSpec {
+                scope: BindingScope::Search,
+                action: "search.recent_next",
+                keys: &kb.search.recent_next,
+            },
+            BindingSpec {
+                scope: BindingScope::Search,
+                action: "search.save_current",
+                keys: &kb.search.save_current,
+            },
+            BindingSpec {
+                scope: BindingScope::Search,
+                action: "search.open_saved",
+                keys: &kb.search.open_saved,
+            },
+            BindingSpec {
+                scope: BindingScope::Popup,
+                action: "popup.confirm",
+                keys: &kb.popup.confirm,
+            },
+            BindingSpec {
+                scope: BindingScope::Popup,
+                action: "popup.cancel",
+                keys: &kb.popup.cancel,
+            },
+            BindingSpec {
+                scope: BindingScope::Popup,
+                action: "popup.up",
+                keys: &kb.popup.up,
+            },
+            BindingSpec {
+                scope: BindingScope::Popup,
+                action: "popup.down",
+                keys: &kb.popup.down,
+            },
+        ]
+    }
+}
+
+fn is_priority_global_action(action: &str) -> bool {
+    matches!(
+        action,
+        "global.help"
+            | "global.search"
+            | "global.goto_date"
+            | "global.quick_capture"
+            | "global.quit"
+    )
+}
+
+fn find_keybinding_conflicts(specs: &[BindingSpec<'_>]) -> Vec<String> {
+    let mut map: BTreeMap<(BindingScope, String), Vec<&'static str>> = BTreeMap::new();
+
+    for spec in specs {
+        let mut seen = BTreeSet::new();
+        for key in spec.keys {
+            if let Some(canonical) = canonical_binding(key) {
+                if !seen.insert(canonical.clone()) {
+                    continue;
+                }
+                map.entry((spec.scope, canonical))
+                    .or_default()
+                    .push(spec.action);
+            }
+        }
+    }
+
+    let mut conflicts = Vec::new();
+    for ((scope, key), actions) in &map {
+        if actions.len() > 1 {
+            conflicts.push(format!(
+                "[{}] `{}` is shared by {}",
+                scope.label(),
+                key,
+                actions.join(", ")
+            ));
+        }
+    }
+
+    let mut priority_global: BTreeMap<String, &'static str> = BTreeMap::new();
+    for spec in specs.iter().filter(|s| s.scope == BindingScope::Global) {
+        if !is_priority_global_action(spec.action) {
+            continue;
+        }
+        for key in spec.keys {
+            if let Some(canonical) = canonical_binding(key) {
+                priority_global
+                    .entry(canonical)
+                    .or_insert(spec.action);
+            }
+        }
+    }
+
+    for spec in specs.iter().filter(|s| {
+        matches!(
+            s.scope,
+            BindingScope::Timeline | BindingScope::Agenda | BindingScope::Tasks
+        )
+    }) {
+        for key in spec.keys {
+            if let Some(canonical) = canonical_binding(key)
+                && let Some(global_action) = priority_global.get(&canonical)
+            {
+                conflicts.push(format!(
+                    "[Navigate] `{}` uses high-priority `{}` and may shadow `{}`",
+                    canonical, global_action, spec.action
+                ));
+            }
+        }
+    }
+
+    conflicts.sort();
+    conflicts.dedup();
+    conflicts
 }
 
 fn remove_keybinding(list: &mut Vec<String>, key: &str) -> bool {
@@ -1235,5 +1656,33 @@ mod tests {
         assert_eq!(config.keybindings.timeline.context_work, vec!["ctrl+w"]);
         assert_eq!(config.keybindings.timeline.context_personal, vec!["ctrl+e"]);
         assert_eq!(config.keybindings.timeline.context_clear, vec!["ctrl+r"]);
+    }
+
+    #[test]
+    fn keybinding_conflicts_detect_duplicate_global_binding() {
+        let mut config = Config::default();
+        config.keybindings.global.help = vec!["ctrl+f".to_string()];
+        config.keybindings.global.goto_date = vec!["ctrl+f".to_string()];
+
+        let conflicts = config.keybinding_conflicts();
+        assert!(
+            conflicts
+                .iter()
+                .any(|msg| msg.contains("global.help") && msg.contains("global.goto_date"))
+        );
+    }
+
+    #[test]
+    fn keybinding_conflicts_detect_priority_shadowing() {
+        let mut config = Config::default();
+        config.keybindings.global.goto_date = vec!["ctrl+f".to_string()];
+        config.keybindings.timeline.edit = vec!["ctrl+f".to_string()];
+
+        let conflicts = config.keybinding_conflicts();
+        assert!(
+            conflicts
+                .iter()
+                .any(|msg| msg.contains("global.goto_date") && msg.contains("timeline.edit"))
+        );
     }
 }
