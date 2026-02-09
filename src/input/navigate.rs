@@ -47,8 +47,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     }
 
     if key_match(&key, &app.config.keybindings.global.goto_date) {
-        app.show_goto_date_popup = true;
-        app.goto_date_input.clear();
+        app.open_goto_date_popup();
         return;
     }
 
@@ -115,8 +114,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     } else if key_match(&key, &app.config.keybindings.global.help) {
         app.show_help_popup = true;
     } else if key_match(&key, &app.config.keybindings.global.goto_date) {
-        app.show_goto_date_popup = true;
-        app.goto_date_input.clear();
+        app.open_goto_date_popup();
     } else if key_match(&key, &app.config.keybindings.global.tags) {
         actions::open_tag_popup(app);
     } else if key_match(&key, &app.config.keybindings.global.edit_config) {
@@ -392,6 +390,7 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
         handle_normal_mode(&mut app, key);
         assert!(app.show_goto_date_popup);
+        assert_eq!(app.goto_date_input, "2026-02-09");
     }
 
     #[test]

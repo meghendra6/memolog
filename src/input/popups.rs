@@ -8,7 +8,7 @@ use crate::{
     models::{self, DatePickerField, InputMode, Mood},
     storage,
 };
-use chrono::{Duration, Local, NaiveTime, Timelike};
+use chrono::{Duration, Local, NaiveDate, NaiveTime, Timelike};
 use crossterm::event::{KeyCode, KeyEvent};
 
 pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
@@ -642,7 +642,8 @@ fn handle_tag_popup(app: &mut App, key: KeyEvent) {
             && i < app.tags.len()
         {
             let query = app.tags[i].0.clone();
-            if let Ok(results) = storage::search_entries_with_explain(&app.config.data.log_path, &query)
+            if let Ok(results) =
+                storage::search_entries_with_explain(&app.config.data.log_path, &query)
             {
                 app.clear_search_match_metadata();
                 let mut logs = Vec::with_capacity(results.len());
@@ -843,14 +844,15 @@ fn handle_google_auth_popup(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_goto_date_popup(app: &mut App, key: KeyEvent) {
-    match key.code {
+    let key_code = key_code_for_shortcuts(&key);
+    match key_code {
         KeyCode::Esc => {
             app.show_goto_date_popup = false;
             app.goto_date_input.clear();
         }
         KeyCode::Enter => {
             let input = app.goto_date_input.trim().to_string();
-            let base = Local::now().date_naive();
+            let base = app.goto_date_anchor();
             let parsed = if input.is_empty() {
                 Some(base)
             } else {
@@ -865,19 +867,68 @@ fn handle_goto_date_popup(app: &mut App, key: KeyEvent) {
                 app.toast("Invalid date. Use YYYY-MM-DD, today, +3d, next mon.");
             }
         }
+        KeyCode::Left => shift_goto_popup_days(app, -1),
+        KeyCode::Right => shift_goto_popup_days(app, 1),
+        KeyCode::Up => shift_goto_popup_days(app, -7),
+        KeyCode::Down => shift_goto_popup_days(app, 7),
+        KeyCode::PageUp => shift_goto_popup_months(app, -1),
+        KeyCode::PageDown => shift_goto_popup_months(app, 1),
+        KeyCode::Home => set_goto_popup_date(app, Local::now().date_naive()),
+        KeyCode::End => set_goto_popup_date(app, app.goto_date_anchor()),
         KeyCode::Backspace => {
             app.goto_date_input.pop();
         }
         KeyCode::Char(c) => {
-            if !key
+            if key
                 .modifiers
                 .contains(crossterm::event::KeyModifiers::CONTROL)
             {
+                match c.to_ascii_lowercase() {
+                    't' => set_goto_popup_date(app, Local::now().date_naive()),
+                    'y' => set_goto_popup_date(app, Local::now().date_naive() - Duration::days(1)),
+                    'n' => set_goto_popup_date(app, Local::now().date_naive() + Duration::days(1)),
+                    'h' => shift_goto_popup_days(app, -1),
+                    'l' => shift_goto_popup_days(app, 1),
+                    'k' => shift_goto_popup_days(app, -7),
+                    'j' => shift_goto_popup_days(app, 7),
+                    'u' => app.goto_date_input.clear(),
+                    _ => {}
+                }
+            } else {
                 app.goto_date_input.push(c);
             }
         }
         _ => {}
     }
+}
+
+fn resolved_goto_popup_date(app: &App) -> NaiveDate {
+    let anchor = app.goto_date_anchor();
+    let input = app.goto_date_input.trim();
+    if input.is_empty() {
+        return anchor;
+    }
+    parse_relative_date_input(input, anchor).unwrap_or(anchor)
+}
+
+fn set_goto_popup_date(app: &mut App, date: chrono::NaiveDate) {
+    app.goto_date_input = date.format("%Y-%m-%d").to_string();
+}
+
+fn shift_goto_popup_days(app: &mut App, delta_days: i64) {
+    let current = resolved_goto_popup_date(app);
+    set_goto_popup_date(app, current + Duration::days(delta_days));
+}
+
+fn shift_goto_popup_months(app: &mut App, delta_months: i32) {
+    let current = resolved_goto_popup_date(app);
+    let expr = if delta_months >= 0 {
+        format!("+{}m", delta_months)
+    } else {
+        format!("{delta_months}m")
+    };
+    let shifted = parse_relative_date_input(&expr, current).unwrap_or(current);
+    set_goto_popup_date(app, shifted);
 }
 
 fn handle_saved_search_popup(app: &mut App, key: KeyEvent) {
@@ -926,7 +977,8 @@ fn handle_saved_search_popup(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_onboarding_popup(app: &mut App, key: KeyEvent) {
-    if key_match(&key, &app.config.keybindings.global.help) || matches!(key.code, KeyCode::Char('?'))
+    if key_match(&key, &app.config.keybindings.global.help)
+        || matches!(key.code, KeyCode::Char('?'))
     {
         app.show_onboarding_popup = false;
         app.show_help_popup = true;
@@ -937,6 +989,49 @@ fn handle_onboarding_popup(app: &mut App, key: KeyEvent) {
         || key.code == KeyCode::Esc
     {
         app.show_onboarding_popup = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_goto_date_popup;
+    use crate::app::App;
+    use chrono::Local;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn make_app_with_input(input: &str) -> App<'static> {
+        let mut app = App::new();
+        app.show_goto_date_popup = true;
+        app.goto_date_input = input.to_string();
+        app
+    }
+
+    #[test]
+    fn goto_popup_arrow_shortcuts_shift_day_and_week() {
+        let mut app = make_app_with_input("2025-01-15");
+        handle_goto_date_popup(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.goto_date_input, "2025-01-14");
+
+        handle_goto_date_popup(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.goto_date_input, "2025-01-21");
+    }
+
+    #[test]
+    fn goto_popup_page_shortcuts_shift_month() {
+        let mut app = make_app_with_input("2025-03-31");
+        handle_goto_date_popup(&mut app, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert_eq!(app.goto_date_input, "2025-02-28");
+    }
+
+    #[test]
+    fn goto_popup_ctrl_t_sets_today() {
+        let mut app = make_app_with_input("2025-01-01");
+        handle_goto_date_popup(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+        );
+        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        assert_eq!(app.goto_date_input, today);
     }
 }
 

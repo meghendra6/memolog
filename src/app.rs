@@ -285,9 +285,7 @@ impl<'a> App<'a> {
                 keybinding_conflicts.len()
             ))
         };
-        let startup_toast_expiry = startup_toast
-            .as_ref()
-            .map(|_| now + Duration::seconds(8));
+        let startup_toast_expiry = startup_toast.as_ref().map(|_| now + Duration::seconds(8));
 
         let mut app = App {
             input_mode,
@@ -1059,6 +1057,41 @@ impl<'a> App<'a> {
         } else {
             self.toast("No pinned entries found".to_string());
         }
+    }
+
+    pub fn goto_date_anchor(&self) -> NaiveDate {
+        let selected_path = match self.navigate_focus {
+            NavigateFocus::Timeline => self
+                .logs_state
+                .selected()
+                .and_then(|i| self.logs.get(i))
+                .map(|entry| entry.file_path.as_str()),
+            NavigateFocus::Agenda => self
+                .agenda_state
+                .selected()
+                .and_then(|i| self.agenda_items.get(i))
+                .map(|item| item.file_path.as_str()),
+            NavigateFocus::Tasks => self
+                .tasks_state
+                .selected()
+                .and_then(|i| self.tasks.get(i))
+                .map(|task| task.file_path.as_str()),
+        };
+
+        if let Some(path) = selected_path
+            && let Some(date) = parse_date_from_file_path(path)
+        {
+            return date;
+        }
+        if let Ok(date) = NaiveDate::parse_from_str(&self.active_date, "%Y-%m-%d") {
+            return date;
+        }
+        Local::now().date_naive()
+    }
+
+    pub fn open_goto_date_popup(&mut self) {
+        self.show_goto_date_popup = true;
+        self.goto_date_input = self.goto_date_anchor().format("%Y-%m-%d").to_string();
     }
 
     pub fn jump_to_date(&mut self, target: NaiveDate) {
@@ -2004,6 +2037,11 @@ fn file_date(file_path: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+fn parse_date_from_file_path(file_path: &str) -> Option<NaiveDate> {
+    let date_str = file_date(file_path)?;
+    NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()
+}
+
 fn round_time_to_quarter(time: NaiveTime) -> NaiveTime {
     let total_minutes = time.hour() as i32 * 60 + time.minute() as i32;
     let rounded = ((total_minutes + 14) / 15) * 15;
@@ -2325,5 +2363,17 @@ mod tests {
 
         assert_eq!(app.logs_state.selected(), Some(1));
         assert_eq!(app.entry_scroll_offset, 0);
+    }
+
+    #[test]
+    fn open_goto_date_popup_prefills_selected_entry_date() {
+        let mut app = make_test_app();
+        app.set_navigate_focus(NavigateFocus::Timeline);
+        app.logs_state.select(Some(0));
+
+        app.open_goto_date_popup();
+
+        assert!(app.show_goto_date_popup);
+        assert_eq!(app.goto_date_input, "2025-12-22");
     }
 }

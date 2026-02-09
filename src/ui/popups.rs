@@ -3,6 +3,7 @@ use super::components::{
 };
 use crate::app::App;
 use crate::config::{EditorStyle, ThemePreset};
+use crate::date_input::parse_relative_date_input;
 use crate::models::{DatePickerField, EditorMode, InputMode, Mood, VisualKind};
 use crate::ui::color_parser::parse_color;
 use crate::ui::theme::ThemeTokens;
@@ -1303,6 +1304,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 ),
             ),
             (
+                "Go-to-date adjust".to_string(),
+                "←/→ ±1d | ↑/↓ ±1w | PgUp/PgDn ±1m".to_string(),
+            ),
+            (
                 "Quick capture".to_string(),
                 fmt_keys(&kb.global.quick_capture),
             ),
@@ -1348,6 +1353,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             ),
             ("Search".to_string(), fmt_keys(&kb.global.search)),
             ("Go to date".to_string(), fmt_keys(&kb.global.goto_date)),
+            (
+                "Go-to-date adjust".to_string(),
+                "←/→ ±1d · ↑/↓ ±1w · PgUp/PgDn ±1m".to_string(),
+            ),
             ("Tags".to_string(), fmt_keys(&kb.global.tags)),
             ("Pomodoro".to_string(), fmt_keys(&kb.global.pomodoro)),
             ("Activity".to_string(), fmt_keys(&kb.global.activity)),
@@ -2182,7 +2191,7 @@ pub fn render_goto_date_popup(f: &mut Frame, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(tokens.ui_accent));
 
-    let area = centered_rect(62, 18, f.area());
+    let area = centered_rect(70, 24, f.area());
     f.render_widget(Clear, area);
     f.render_widget(block, area);
 
@@ -2190,11 +2199,23 @@ pub fn render_goto_date_popup(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(2),
             Constraint::Length(2),
             Constraint::Length(1),
         ])
         .margin(1)
         .split(area);
+
+    let anchor = app.goto_date_anchor();
+    let resolved = {
+        let input = app.goto_date_input.trim();
+        if input.is_empty() {
+            anchor
+        } else {
+            parse_relative_date_input(input, anchor).unwrap_or(anchor)
+        }
+    };
 
     let input_block = Block::default()
         .borders(Borders::ALL)
@@ -2204,13 +2225,26 @@ pub fn render_goto_date_popup(f: &mut Frame, app: &App) {
         .block(input_block);
     f.render_widget(input, inner[0]);
 
+    let resolved_line = Paragraph::new(format!("Resolved: {}", resolved.format("%Y-%m-%d"))).style(
+        Style::default()
+            .fg(tokens.ui_fg)
+            .add_modifier(Modifier::BOLD),
+    );
+    f.render_widget(resolved_line, inner[1]);
+
     let examples = Paragraph::new("Examples: 2026-02-01 | today | +3d | next mon")
         .style(Style::default().fg(tokens.ui_muted));
-    f.render_widget(examples, inner[1]);
+    f.render_widget(examples, inner[2]);
 
-    let help =
-        Paragraph::new("Enter: Jump  |  Esc: Cancel").style(Style::default().fg(tokens.ui_muted));
-    f.render_widget(help, inner[2]);
+    let shortcuts = Paragraph::new(
+        "Shortcuts: ←/→ ±1d  ↑/↓ ±1w  PgUp/PgDn ±1m  Home today  End anchor  Ctrl+T/Y/N",
+    )
+    .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(shortcuts, inner[3]);
+
+    let help = Paragraph::new("Enter: Jump  |  Esc: Cancel  |  Ctrl+U: Clear")
+        .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(help, inner[4]);
 
     let cursor_x = inner[0].x + 1 + app.goto_date_input.chars().count() as u16;
     let cursor_y = inner[0].y + 1;
@@ -2239,13 +2273,11 @@ pub fn render_saved_search_popup(f: &mut Frame, app: &mut App) {
         .iter()
         .map(|query| ListItem::new(Line::from(query.clone())))
         .collect();
-    let list = List::new(items)
-        .highlight_symbol("> ")
-        .highlight_style(
-            Style::default()
-                .bg(tokens.ui_selection_bg)
-                .add_modifier(Modifier::BOLD),
-        );
+    let list = List::new(items).highlight_symbol("> ").highlight_style(
+        Style::default()
+            .bg(tokens.ui_selection_bg)
+            .add_modifier(Modifier::BOLD),
+    );
     f.render_stateful_widget(list, inner[0], &mut app.saved_search_list_state);
 
     let help = Paragraph::new("Enter: Apply  |  Del/Backspace: Remove  |  Esc: Close")
