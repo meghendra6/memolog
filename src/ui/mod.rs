@@ -34,9 +34,9 @@ use popups::{
     render_activity_popup, render_ai_loading_popup, render_ai_response_popup,
     render_date_picker_popup, render_delete_entry_popup, render_editor_style_popup,
     render_exit_popup, render_google_auth_popup, render_goto_date_popup, render_help_popup,
-    render_memo_preview_popup, render_mood_popup, render_path_popup, render_pomodoro_popup,
-    render_quick_capture_popup, render_siren_popup, render_tag_popup, render_theme_switcher_popup,
-    render_todo_popup,
+    render_memo_preview_popup, render_mood_popup, render_onboarding_popup, render_path_popup,
+    render_pomodoro_popup, render_quick_capture_popup, render_saved_search_popup,
+    render_siren_popup, render_tag_popup, render_theme_switcher_popup, render_todo_popup,
 };
 
 pub fn ui(f: &mut Frame, app: &mut App) {
@@ -1156,6 +1156,9 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     if app.show_tag_popup {
         render_tag_popup(f, app);
     }
+    if app.show_saved_search_popup {
+        render_saved_search_popup(f, app);
+    }
 
     if app.show_date_picker_popup {
         render_date_picker_popup(f, app);
@@ -1210,6 +1213,9 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
     if app.show_quick_capture_popup {
         render_quick_capture_popup(f, app);
+    }
+    if app.show_onboarding_popup {
+        render_onboarding_popup(f, app);
     }
 }
 
@@ -2437,18 +2443,22 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
     }
 
     let mode_label = match app.input_mode {
-        InputMode::Navigate => match app.navigate_focus {
-            NavigateFocus::Timeline => "NAV:TL",
-            NavigateFocus::Agenda => "NAV:AG",
-            NavigateFocus::Tasks => "NAV:TS",
-        },
+        InputMode::Navigate => "NAV",
         InputMode::Editing => match app.editor_mode {
-            EditorMode::Normal => "[NORMAL]",
-            EditorMode::Insert => "[INSERT]",
-            EditorMode::Visual(_) => "[VISUAL]",
+            EditorMode::Normal => "NORMAL",
+            EditorMode::Insert => "INSERT",
+            EditorMode::Visual(_) => "VISUAL",
         },
         InputMode::Search => "SEARCH",
     };
+    let focus_label = match app.navigate_focus {
+        NavigateFocus::Timeline => "TL",
+        NavigateFocus::Agenda => "AG",
+        NavigateFocus::Tasks => "TS",
+    };
+    let date_label = status_date_label(app);
+    let context_label = format!("ctx:{}", app.timeline_filter_label().to_ascii_lowercase());
+    let search_label = status_search_label(app);
 
     let file_label = status_file_label(app);
     let dirty_mark = if app.input_mode == InputMode::Editing && app.composer_dirty {
@@ -2482,13 +2492,30 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         String::new()
     };
 
-    let left_spans = vec![
+    let mut left_spans = vec![
         Span::styled(
             format!(" {mode_label} "),
             Style::default()
                 .fg(tokens.ui_accent)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(
+            format!(" {focus_label} "),
+            Style::default().fg(tokens.ui_muted),
+        ),
+        Span::styled(format!(" {date_label} "), Style::default().fg(tokens.ui_fg)),
+        Span::styled(
+            format!(" {context_label} "),
+            Style::default().fg(tokens.ui_muted),
+        ),
+    ];
+    if let Some(search_label) = search_label {
+        left_spans.push(Span::styled(
+            format!(" {search_label} "),
+            Style::default().fg(tokens.ui_muted),
+        ));
+    }
+    left_spans.extend([
         Span::raw(" "),
         Span::styled(
             format!("{file_label}{dirty_mark}"),
@@ -2498,7 +2525,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         ),
         Span::styled(streak_label, Style::default().fg(Color::Yellow)),
         Span::styled(progress_label, Style::default().fg(Color::Cyan)),
-    ];
+    ]);
 
     let mut right_plain = String::new();
     let mut right_spans = Vec::new();
@@ -2521,16 +2548,16 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         right_spans.push(Span::styled(wc_text, Style::default().fg(tokens.ui_muted)));
     }
 
-    let status_message = if let Some(hint) = app.visual_hint_message.as_deref() {
+    let status_message: Option<(String, Color)> = if let Some(hint) = app.visual_hint_message.as_deref() {
         if hint.is_empty() {
             None
         } else {
-            Some((hint, tokens.ui_muted))
+            Some((hint.to_string(), tokens.ui_muted))
         }
-    } else if let Some(toast) = app.toast_message.as_deref()
-        && !toast.is_empty()
-    {
-        Some((toast, tokens.ui_toast_info))
+    } else if let Some(explain) = app.selected_search_explain() {
+        Some((truncate(&explain, 96), tokens.ui_muted))
+    } else if let Some(toast) = app.toast_message.as_deref() && !toast.is_empty() {
+        Some((toast.to_string(), tokens.ui_toast_info))
     } else {
         None
     };
@@ -2540,7 +2567,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
             right_plain.push_str("  ");
             right_spans.push(Span::raw("  "));
         }
-        right_plain.push_str(message);
+        right_plain.push_str(&message);
         right_spans.push(Span::styled(
             message,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
@@ -2614,6 +2641,58 @@ fn status_file_label(app: &App) -> String {
     }
 
     format!("{}.md", app.active_date)
+}
+
+fn status_date_label(app: &App) -> String {
+    if app.input_mode == InputMode::Navigate && app.navigate_focus == NavigateFocus::Agenda {
+        return app.agenda_selected_day.format("%Y-%m-%d").to_string();
+    }
+
+    let selected_path = match app.navigate_focus {
+        NavigateFocus::Timeline => app
+            .logs_state
+            .selected()
+            .and_then(|i| app.logs.get(i))
+            .map(|entry| entry.file_path.as_str()),
+        NavigateFocus::Agenda => app
+            .agenda_state
+            .selected()
+            .and_then(|i| app.agenda_items.get(i))
+            .map(|item| item.file_path.as_str()),
+        NavigateFocus::Tasks => app
+            .tasks_state
+            .selected()
+            .and_then(|i| app.tasks.get(i))
+            .map(|task| task.file_path.as_str()),
+    };
+
+    if let Some(path) = selected_path
+        && let Some(stem) = Path::new(path).file_stem().and_then(|s| s.to_str())
+        && stem.len() == 10
+    {
+        return stem.to_string();
+    }
+
+    app.active_date.clone()
+}
+
+fn status_search_label(app: &App) -> Option<String> {
+    if app.input_mode == InputMode::Search {
+        let typed = app.textarea.lines().join(" ");
+        let trimmed = typed.trim();
+        if !trimmed.is_empty() {
+            return Some(format!("q:{}", truncate(trimmed, 20)));
+        }
+    }
+    if app.is_search_result
+        && let Some(query) = app.last_search_query.as_deref()
+    {
+        let trimmed = query.trim();
+        if !trimmed.is_empty() {
+            return Some(format!("q:{}", truncate(trimmed, 20)));
+        }
+    }
+    None
 }
 
 fn next_scroll_top(prev_top: u16, cursor: u16, len: u16) -> u16 {

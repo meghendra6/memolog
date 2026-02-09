@@ -11,6 +11,7 @@ This project was forked from https://github.com/sonohoshi/sonomemo.
 - Agenda timeline view built from schedule metadata
 - Tasks, priorities, tags, and a pomodoro timer
 - Folding with persistent state stored in the Markdown file
+- Smart ranked search (AND/OR/phrase/exclude/date + fuzzy matching)
 - Vim-style composer (Normal/Insert/Visual) with configurable keybindings
 
 ## Quick start
@@ -41,6 +42,7 @@ memolog
 
 Use `Ctrl+H/J/K/L` to move focus between Timeline, Agenda, and Tasks.
 Press `?` anytime to see the full help overlay.
+The status bar always shows mode, focus, date, context, and active search query.
 
 ## Data model
 
@@ -164,6 +166,11 @@ When it completes, MemoLog appends a tomato (🍅) to the task line.
   - `foo | bar` (OR)
   - `-foo` or `-"exact phrase"` (exclude)
   - `date:YYYY-MM-DD`, `from:YYYY-MM-DD`, `to:YYYY-MM-DD` (date filters by log file date)
+- Ranking includes field weights (content/tags/context), fuzzy fallback, and recency bonus.
+- Search mode shortcuts:
+  - `Ctrl+P` / `Ctrl+N`: cycle recent searches
+  - `Ctrl+S`: save current query
+  - `Ctrl+O`: open saved queries popup
 - AI search: prefix your query with `?`, `ai:`, or `ask:` to run a Gemini-assisted search
 
 ## Gemini AI search (experimental)
@@ -311,6 +318,7 @@ Available presets:
 ## Keybindings (defaults)
 
 All keybindings are configurable in `config.toml`.
+MemoLog detects high-priority keybinding conflicts at startup and shows them in Help.
 
 Global
 - `?` help
@@ -368,6 +376,14 @@ Composer
 - `Ctrl+;` date picker
 - `Tab/Shift+Tab` indent/outdent
 - `Esc` back
+
+Search
+- `Enter` apply
+- `Esc` cancel
+- `Ctrl+P` previous recent query
+- `Ctrl+N` next recent query
+- `Ctrl+S` save current query
+- `Ctrl+O` open saved queries
 
 ## License
 

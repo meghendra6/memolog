@@ -325,10 +325,23 @@ fn composer_has_unsaved_input(app: &App) -> bool {
 }
 
 fn refresh_search_results(app: &mut App, query: &str) {
-    if let Ok(results) = storage::search_entries(&app.config.data.log_path, query) {
-        app.logs = results;
+    if let Ok(results) = storage::search_entries_with_explain(&app.config.data.log_path, query) {
+        app.clear_search_match_metadata();
+        let mut logs = Vec::with_capacity(results.len());
+        for result in results {
+            let id = crate::models::EntryIdentity::from(&result.entry);
+            app.search_match_score.insert(id.clone(), result.score);
+            app.search_match_explain.insert(id, result.explain);
+            logs.push(result.entry);
+        }
+        app.logs = logs;
         app.is_search_result = true;
-        app.logs_state.select(Some(0));
+        if app.logs.is_empty() {
+            app.logs_state.select(None);
+        } else {
+            app.logs_state.select(Some(0));
+        }
+        app.remember_search_query(query);
         app.search_highlight_query = Some(query.to_string());
         app.search_highlight_ready_at = Some(Local::now() + Duration::milliseconds(150));
         app.apply_fold_markers();

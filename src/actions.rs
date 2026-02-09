@@ -3,7 +3,7 @@ use crate::{
     config::{EditorStyle, ThemePreset, config_path},
     integrations::gemini,
     integrations::google,
-    models::{self, Priority},
+    models::{self, EntryIdentity, Priority},
     storage,
 };
 use chrono::{Duration, Local};
@@ -345,10 +345,25 @@ pub fn submit_search(app: &mut App) {
     app.last_search_query = Some(trimmed.to_string());
     app.search_highlight_query = Some(trimmed.to_string());
     app.search_highlight_ready_at = Some(Local::now() + Duration::milliseconds(150));
-    if let Ok(results) = storage::search_entries(&app.config.data.log_path, trimmed) {
-        app.logs = results;
+    app.remember_search_query(trimmed);
+    app.clear_search_match_metadata();
+    if let Ok(results) = storage::search_entries_with_explain(&app.config.data.log_path, trimmed) {
+        let mut logs = Vec::with_capacity(results.len());
+        for result in results {
+            let id = EntryIdentity::from(&result.entry);
+            app.search_match_score.insert(id.clone(), result.score);
+            app.search_match_explain.insert(id, result.explain);
+            logs.push(result.entry);
+        }
+        app.logs = logs;
         app.is_search_result = true;
-        app.logs_state.select(Some(0));
+        if app.logs.is_empty() {
+            app.logs_state.select(None);
+            app.toast("No search results.");
+        } else {
+            app.logs_state.select(Some(0));
+            app.toast(format!("Found {} search result(s).", app.logs.len()));
+        }
     }
 }
 
@@ -462,8 +477,10 @@ fn submit_ai_search(app: &mut App, question: &str) {
     }
 
     app.last_search_query = Some(question.to_string());
+    app.remember_search_query(question);
     app.search_highlight_query = None;
     app.search_highlight_ready_at = None;
+    app.clear_search_match_metadata();
     app.is_search_result = false;
     app.update_logs();
     app.show_ai_loading_popup = true;

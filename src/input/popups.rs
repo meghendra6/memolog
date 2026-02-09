@@ -24,6 +24,10 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
         handle_editor_style_popup(app, key);
         return true;
     }
+    if app.show_onboarding_popup {
+        handle_onboarding_popup(app, key);
+        return true;
+    }
     if app.show_help_popup {
         if key.code == KeyCode::Esc || key_match(&key, &app.config.keybindings.global.help) {
             app.show_help_popup = false;
@@ -71,6 +75,10 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
     }
     if app.show_tag_popup {
         handle_tag_popup(app, key);
+        return true;
+    }
+    if app.show_saved_search_popup {
+        handle_saved_search_popup(app, key);
         return true;
     }
     if app.show_activity_popup {
@@ -634,13 +642,27 @@ fn handle_tag_popup(app: &mut App, key: KeyEvent) {
             && i < app.tags.len()
         {
             let query = app.tags[i].0.clone();
-            if let Ok(results) = storage::search_entries(&app.config.data.log_path, &query) {
-                app.logs = results;
+            if let Ok(results) = storage::search_entries_with_explain(&app.config.data.log_path, &query)
+            {
+                app.clear_search_match_metadata();
+                let mut logs = Vec::with_capacity(results.len());
+                for result in results {
+                    let id = crate::models::EntryIdentity::from(&result.entry);
+                    app.search_match_score.insert(id.clone(), result.score);
+                    app.search_match_explain.insert(id, result.explain);
+                    logs.push(result.entry);
+                }
+                app.logs = logs;
                 app.is_search_result = true;
+                app.remember_search_query(&query);
                 app.last_search_query = Some(query);
                 app.search_highlight_query = app.last_search_query.clone();
                 app.search_highlight_ready_at = Some(Local::now() + Duration::milliseconds(150));
-                app.logs_state.select(Some(0));
+                if app.logs.is_empty() {
+                    app.logs_state.select(None);
+                } else {
+                    app.logs_state.select(Some(0));
+                }
             }
         }
         app.show_tag_popup = false;
@@ -855,6 +877,66 @@ fn handle_goto_date_popup(app: &mut App, key: KeyEvent) {
             }
         }
         _ => {}
+    }
+}
+
+fn handle_saved_search_popup(app: &mut App, key: KeyEvent) {
+    if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
+        app.show_saved_search_popup = false;
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.popup.up) {
+        let i = match app.saved_search_list_state.selected() {
+            Some(i) => i.saturating_sub(1),
+            None => 0,
+        };
+        app.saved_search_list_state.select(Some(i));
+        return;
+    }
+    if key_match(&key, &app.config.keybindings.popup.down) {
+        let len = app.saved_searches.len();
+        if len == 0 {
+            app.saved_search_list_state.select(None);
+            return;
+        }
+        let i = match app.saved_search_list_state.selected() {
+            Some(i) => (i + 1).min(len - 1),
+            None => 0,
+        };
+        app.saved_search_list_state.select(Some(i));
+        return;
+    }
+    if key_match(&key, &app.config.keybindings.popup.confirm) {
+        if app.apply_selected_saved_search() {
+            app.toast("Loaded saved search.");
+        } else {
+            app.toast("No saved search selected.");
+        }
+        return;
+    }
+
+    if matches!(key.code, KeyCode::Delete | KeyCode::Backspace) {
+        match app.remove_selected_saved_search() {
+            Ok(Some(query)) => app.toast(format!("Removed saved search: {query}")),
+            Ok(None) => app.toast("No saved search selected."),
+            Err(_) => app.toast("Failed to remove saved search."),
+        }
+    }
+}
+
+fn handle_onboarding_popup(app: &mut App, key: KeyEvent) {
+    if key_match(&key, &app.config.keybindings.global.help) || matches!(key.code, KeyCode::Char('?'))
+    {
+        app.show_onboarding_popup = false;
+        app.show_help_popup = true;
+        return;
+    }
+    if key_match(&key, &app.config.keybindings.popup.confirm)
+        || key_match(&key, &app.config.keybindings.popup.cancel)
+        || key.code == KeyCode::Esc
+    {
+        app.show_onboarding_popup = false;
     }
 }
 

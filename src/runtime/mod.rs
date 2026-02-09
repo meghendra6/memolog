@@ -79,6 +79,7 @@ fn handle_ai_search(app: &mut App) {
             if !response.entries.is_empty() {
                 app.logs = response.entries.clone();
                 app.is_search_result = true;
+                app.clear_search_match_metadata();
                 app.logs_state.select(Some(0));
 
                 if let Some(keyword) = response.keywords.first() {

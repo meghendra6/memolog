@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 pub fn ensure_log_dir(log_path: &Path) -> io::Result<()> {
     let path = PathBuf::from(log_path);
@@ -343,14 +344,28 @@ fn read_note_entries(
     Ok(items)
 }
 
+#[derive(Clone)]
+pub struct SearchMatch {
+    pub entry: LogEntry,
+    pub score: usize,
+    pub explain: String,
+}
+
 pub fn search_entries(log_path: &Path, query: &str) -> io::Result<Vec<LogEntry>> {
+    Ok(search_entries_with_explain(log_path, query)?
+        .into_iter()
+        .map(|item| item.entry)
+        .collect())
+}
+
+pub fn search_entries_with_explain(log_path: &Path, query: &str) -> io::Result<Vec<SearchMatch>> {
     ensure_log_dir(log_path)?;
     let plan = parse_search_query(query);
     if !plan.has_constraints() {
         return Ok(Vec::new());
     }
 
-    let mut scored: Vec<(usize, LogEntry)> = Vec::new();
+    let mut scored: Vec<SearchMatch> = Vec::new();
     let mut paths: Vec<PathBuf> = Vec::new();
     if let Ok(entries) = fs::read_dir(log_path) {
         for entry in entries.flatten() {
@@ -367,21 +382,25 @@ pub fn search_entries(log_path: &Path, query: &str) -> io::Result<Vec<LogEntry>>
         if let Ok(content) = fs::read_to_string(&path) {
             let parsed_entries = parse_log_content(&content, &path_str);
             for entry in parsed_entries {
-                if let Some(score) = score_search_match(&entry, &plan) {
-                    scored.push((score, entry));
+                if let Some(detail) = score_search_match(&entry, &plan) {
+                    scored.push(SearchMatch {
+                        entry,
+                        score: detail.score,
+                        explain: detail.explain(),
+                    });
                 }
             }
         }
     }
 
-    scored.sort_by(|(score_a, entry_a), (score_b, entry_b)| {
-        score_b
-            .cmp(score_a)
-            .then_with(|| entry_b.file_path.cmp(&entry_a.file_path))
-            .then_with(|| entry_b.line_number.cmp(&entry_a.line_number))
+    scored.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| b.entry.file_path.cmp(&a.entry.file_path))
+            .then_with(|| b.entry.line_number.cmp(&a.entry.line_number))
     });
 
-    Ok(scored.into_iter().map(|(_, entry)| entry).collect())
+    Ok(scored)
 }
 
 pub fn build_search_highlight_regex(query: &str) -> Option<Regex> {
@@ -614,48 +633,118 @@ fn normalize_search_text(text: &str, collapse_spaces: bool) -> String {
     }
 }
 
-fn score_search_match(entry: &LogEntry, plan: &SearchPlan) -> Option<usize> {
+#[derive(Default)]
+struct SearchScoreDetail {
+    score: usize,
+    matched_terms: Vec<String>,
+    fuzzy_terms: Vec<String>,
+    tag_hits: usize,
+    context_hits: usize,
+    recency_bonus: usize,
+}
+
+impl SearchScoreDetail {
+    fn explain(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.matched_terms.is_empty() {
+            parts.push(format!("match {}", self.matched_terms.join(", ")));
+        }
+        if !self.fuzzy_terms.is_empty() {
+            parts.push(format!("fuzzy {}", self.fuzzy_terms.join(", ")));
+        }
+        if self.tag_hits > 0 {
+            parts.push(format!("tags {}", self.tag_hits));
+        }
+        if self.context_hits > 0 {
+            parts.push(format!("context {}", self.context_hits));
+        }
+        if self.recency_bonus > 0 {
+            parts.push(format!("recent +{}", self.recency_bonus));
+        }
+        if parts.is_empty() {
+            "matched filters".to_string()
+        } else {
+            parts.join(" · ")
+        }
+    }
+}
+
+struct SearchHaystack {
+    content_lower: String,
+    normalized: String,
+    words: Vec<String>,
+    tags: Vec<String>,
+    contexts: Vec<String>,
+}
+
+#[derive(Default)]
+struct TermScore {
+    matched: bool,
+    score: usize,
+    fuzzy: bool,
+    tag_hits: usize,
+    context_hits: usize,
+}
+
+fn score_search_match(entry: &LogEntry, plan: &SearchPlan) -> Option<SearchScoreDetail> {
     if !matches_date_filters(entry, &plan.filters) {
         return None;
     }
 
-    let haystack = entry.content.to_lowercase();
-    let normalized = normalize_search_text(&haystack, true);
+    let haystack = build_search_haystack(entry);
 
     for term in &plan.exclude_terms {
-        if term_hit_count(term, &haystack, &normalized) > 0 {
+        let score = score_search_term(term, &haystack);
+        if score.matched {
             return None;
         }
     }
 
     if plan.groups.is_empty() {
-        return Some(0);
+        return Some(SearchScoreDetail {
+            recency_bonus: entry_recency_bonus(entry),
+            ..SearchScoreDetail::default()
+        });
     }
 
-    let mut best_score: Option<usize> = None;
+    let mut best: Option<SearchScoreDetail> = None;
     for group in &plan.groups {
-        let mut hits = 0usize;
-        let mut phrase_bonus = 0usize;
+        let mut detail = SearchScoreDetail::default();
         let mut matched = true;
         for term in group {
-            let hit_count = term_hit_count(term, &haystack, &normalized);
-            if hit_count == 0 {
+            let term_score = score_search_term(term, &haystack);
+            if !term_score.matched {
                 matched = false;
                 break;
             }
-            hits += hit_count;
-            if term.is_phrase {
-                phrase_bonus += 1;
+            detail.score += term_score.score;
+            detail.tag_hits += term_score.tag_hits;
+            detail.context_hits += term_score.context_hits;
+            if term_score.fuzzy {
+                detail.fuzzy_terms.push(term.text.clone());
+            } else {
+                detail.matched_terms.push(term.text.clone());
             }
         }
 
         if matched {
-            let score = group.len() * 100 + hits * 10 + phrase_bonus * 30;
-            best_score = Some(best_score.map_or(score, |best| best.max(score)));
+            detail.score += group.len() * 90;
+            detail.score += detail.tag_hits * 16;
+            detail.score += detail.context_hits * 24;
+            detail.recency_bonus = entry_recency_bonus(entry);
+            detail.score += detail.recency_bonus;
+
+            if let Some(existing) = &best {
+                if detail.score > existing.score {
+                    best = Some(detail);
+                }
+            } else {
+                best = Some(detail);
+            }
         }
     }
 
-    best_score
+    best
 }
 
 fn matches_date_filters(entry: &LogEntry, filters: &SearchFilters) -> bool {
@@ -685,17 +774,172 @@ fn matches_date_filters(entry: &LogEntry, filters: &SearchFilters) -> bool {
     true
 }
 
-fn term_hit_count(term: &SearchTerm, haystack: &str, normalized: &str) -> usize {
+fn build_search_haystack(entry: &LogEntry) -> SearchHaystack {
+    let content_lower = entry.content.to_lowercase();
+    let normalized = normalize_search_text(&content_lower, true);
+    let words = extract_search_words(&content_lower);
+    let tags = extract_search_tags(&content_lower);
+    let contexts = tags
+        .iter()
+        .filter(|tag| tag.as_str() == "work" || tag.as_str() == "personal")
+        .cloned()
+        .collect();
+
+    SearchHaystack {
+        content_lower,
+        normalized,
+        words,
+        tags,
+        contexts,
+    }
+}
+
+fn score_search_term(term: &SearchTerm, haystack: &SearchHaystack) -> TermScore {
     let needle = term.text.as_str();
     if needle.is_empty() {
-        return 0;
+        return TermScore::default();
     }
 
     if term.is_phrase {
-        normalized.match_indices(needle).count()
-    } else {
-        haystack.match_indices(needle).count()
+        let phrase_hits = haystack.normalized.match_indices(needle).count();
+        if phrase_hits > 0 {
+            return TermScore {
+                matched: true,
+                score: phrase_hits * 70 + 30,
+                ..TermScore::default()
+            };
+        }
+        return TermScore::default();
     }
+
+    let content_hits = haystack.content_lower.match_indices(needle).count();
+    let tag_hits = haystack.tags.iter().filter(|tag| tag.as_str() == needle).count();
+    let context_hits = haystack
+        .contexts
+        .iter()
+        .filter(|ctx| ctx.as_str() == needle)
+        .count();
+
+    if content_hits > 0 || tag_hits > 0 || context_hits > 0 {
+        return TermScore {
+            matched: true,
+            score: content_hits * 28 + tag_hits * 42 + context_hits * 52,
+            fuzzy: false,
+            tag_hits,
+            context_hits,
+        };
+    }
+
+    if let Some(distance) = fuzzy_word_distance(needle, &haystack.words) {
+        let fuzzy_score = match distance {
+            0 => 12,
+            1 => 10,
+            _ => 7,
+        };
+        return TermScore {
+            matched: true,
+            score: fuzzy_score,
+            fuzzy: true,
+            ..TermScore::default()
+        };
+    }
+
+    TermScore::default()
+}
+
+fn entry_recency_bonus(entry: &LogEntry) -> usize {
+    let Some(entry_date) = extract_date_from_path(&entry.file_path) else {
+        return 0;
+    };
+    let today = Local::now().date_naive();
+    if entry_date > today {
+        return 0;
+    }
+    let days = (today - entry_date).num_days();
+    if days <= 7 {
+        24
+    } else if days <= 30 {
+        14
+    } else if days <= 90 {
+        8
+    } else if days <= 180 {
+        4
+    } else {
+        0
+    }
+}
+
+fn extract_search_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
+        .map(str::trim)
+        .filter(|token| token.len() >= 2)
+        .map(str::to_string)
+        .collect()
+}
+
+fn extract_search_tags(text: &str) -> Vec<String> {
+    static TAG_RE: OnceLock<Regex> = OnceLock::new();
+    let tag_re = TAG_RE.get_or_init(|| {
+        Regex::new(r"#([a-z0-9_-]+)").expect("tag regex must compile")
+    });
+    let mut tags = Vec::new();
+    for captures in tag_re.captures_iter(text) {
+        if let Some(tag) = captures.get(1) {
+            tags.push(tag.as_str().to_string());
+        }
+    }
+    tags
+}
+
+fn fuzzy_word_distance(needle: &str, words: &[String]) -> Option<usize> {
+    let max_dist = if needle.len() <= 4 { 1 } else { 2 };
+    let mut best: Option<usize> = None;
+    for word in words {
+        if word == needle {
+            return Some(0);
+        }
+        if let Some(dist) = bounded_levenshtein(needle, word, max_dist) {
+            best = Some(best.map_or(dist, |existing| existing.min(dist)));
+            if dist == 0 {
+                return Some(0);
+            }
+        }
+    }
+    best
+}
+
+fn bounded_levenshtein(a: &str, b: &str, max_dist: usize) -> Option<usize> {
+    if a == b {
+        return Some(0);
+    }
+    let len_a = a.chars().count();
+    let len_b = b.chars().count();
+    if len_a.abs_diff(len_b) > max_dist {
+        return None;
+    }
+
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=len_b).collect();
+    let mut curr: Vec<usize> = vec![0; len_b + 1];
+
+    for (i, a_ch) in a.chars().enumerate() {
+        curr[0] = i + 1;
+        let mut row_min = curr[0];
+
+        for (j, b_ch) in b_chars.iter().enumerate() {
+            let cost = if a_ch == *b_ch { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+            row_min = row_min.min(curr[j + 1]);
+        }
+
+        if row_min > max_dist {
+            return None;
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    let dist = prev[len_b];
+    if dist <= max_dist { Some(dist) } else { None }
 }
 
 pub fn search_entries_by_keywords(
@@ -2135,6 +2379,32 @@ mod tests {
         assert!(regex.is_match("bar"));
         assert!(regex.is_match("baz"));
         assert!(!regex.is_match("qux"));
+    }
+
+    #[test]
+    fn search_entries_supports_fuzzy_typo_matching() {
+        let dir = temp_log_dir();
+        write_log(
+            &dir,
+            "2024-01-05",
+            "## [09:00:00]\nalpha planning meeting\n",
+        );
+
+        let results = search_entries_with_explain(&dir, "alhpa").expect("search");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].explain.contains("fuzzy"));
+    }
+
+    #[test]
+    fn search_entries_with_explain_mentions_recency_bonus_for_today() {
+        let dir = temp_log_dir();
+        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        write_log(&dir, &today, "## [09:00:00]\nstandup note #work\n");
+
+        let results = search_entries_with_explain(&dir, "standup").expect("search");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].score > 0);
+        assert!(results[0].explain.contains("recent +"));
     }
 
     #[test]
