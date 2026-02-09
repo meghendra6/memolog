@@ -82,6 +82,10 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
         handle_path_popup(app, key);
         return true;
     }
+    if app.show_goto_date_popup {
+        handle_goto_date_popup(app, key);
+        return true;
+    }
     if app.show_quick_capture_popup {
         handle_quick_capture_popup(app, key);
         return true;
@@ -813,6 +817,44 @@ fn handle_google_auth_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
         app.show_google_auth_popup = false;
         return;
+    }
+}
+
+fn handle_goto_date_popup(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.show_goto_date_popup = false;
+            app.goto_date_input.clear();
+        }
+        KeyCode::Enter => {
+            let input = app.goto_date_input.trim().to_string();
+            let base = Local::now().date_naive();
+            let parsed = if input.is_empty() {
+                Some(base)
+            } else {
+                parse_relative_date_input(&input, base)
+            };
+
+            if let Some(date) = parsed {
+                app.show_goto_date_popup = false;
+                app.goto_date_input.clear();
+                app.jump_to_date(date);
+            } else {
+                app.toast("Invalid date. Use YYYY-MM-DD, today, +3d, next mon.");
+            }
+        }
+        KeyCode::Backspace => {
+            app.goto_date_input.pop();
+        }
+        KeyCode::Char(c) => {
+            if !key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)
+            {
+                app.goto_date_input.push(c);
+            }
+        }
+        _ => {}
     }
 }
 

@@ -13,9 +13,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     // Handle gg/G vim-style navigation for Timeline
     if app.navigate_focus == models::NavigateFocus::Timeline {
         // Check for 'G' (shift+g) - go to bottom
-        if matches!(key_code, KeyCode::Char('G'))
-            && key.modifiers.contains(KeyModifiers::SHIFT)
-        {
+        if matches!(key_code, KeyCode::Char('G')) && key.modifiers.contains(KeyModifiers::SHIFT) {
             app.pending_nav_key = None;
             app.scroll_to_bottom();
             return;
@@ -24,7 +22,8 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         // Handle 'g' key sequence (gg = go to top)
         if let Some(pending) = app.pending_nav_key {
             app.pending_nav_key = None;
-            if pending == 'g' && matches!(key_code, KeyCode::Char('g')) && key.modifiers.is_empty() {
+            if pending == 'g' && matches!(key_code, KeyCode::Char('g')) && key.modifiers.is_empty()
+            {
                 app.scroll_to_top();
                 return;
             }
@@ -79,6 +78,9 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         app.set_selected_entry_context(TimelineFilter::All);
     } else if key_match(&key, &app.config.keybindings.global.help) {
         app.show_help_popup = true;
+    } else if key_match(&key, &app.config.keybindings.global.goto_date) {
+        app.show_goto_date_popup = true;
+        app.goto_date_input.clear();
     } else if key_match(&key, &app.config.keybindings.global.tags) {
         actions::open_tag_popup(app);
     } else if key_match(&key, &app.config.keybindings.global.edit_config) {
