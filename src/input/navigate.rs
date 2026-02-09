@@ -315,6 +315,14 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         && key_match(&key, &app.config.keybindings.tasks.priority_cycle)
     {
         actions::cycle_task_priority(app);
+    } else if app.navigate_focus == models::NavigateFocus::Tasks
+        && key_match(&key, &app.config.keybindings.tasks.snooze_day)
+    {
+        actions::snooze_selected_task(app, 1);
+    } else if app.navigate_focus == models::NavigateFocus::Tasks
+        && key_match(&key, &app.config.keybindings.tasks.snooze_week)
+    {
+        actions::snooze_selected_task(app, 7);
     } else if (app.navigate_focus == models::NavigateFocus::Tasks
         && key_match(&key, &app.config.keybindings.tasks.start_pomodoro))
         || key_match(&key, &app.config.keybindings.global.pomodoro)

@@ -54,6 +54,7 @@ Press `?` anytime to see the full help overlay.
 ## Timeline
 
 - Navigate with `j/k`, edit entry with `e`.
+- Press `Enter` to open memo preview.
 - Toggle task checkbox with `Space`.
 - Fold/unfold with `Tab`. Cycle fold mode with `Shift+Tab`.
 - Fold state is persisted per entry using hidden HTML comments.
@@ -81,6 +82,8 @@ Agenda controls (when focused):
 - `j/k` move
 - `Space` toggle checkbox
 - `Shift+P` cycle priority
+- `]` snooze selected task by +1 day
+- `}` snooze selected task by +1 week
 - `p` start/stop pomodoro
 - `e` open source entry
 
@@ -306,14 +309,16 @@ Global
 - `Ctrl+H/J/K/L` focus move
 - `a` agenda focus
 - `i` compose
+- `Ctrl+N` quick capture
 - `/` search
+- `Ctrl+F` go to date (`YYYY-MM-DD`, `today`, `+3d`, `next mon`)
 - `t` tags
 - `Ctrl+A` activity
 - `T` theme presets
 - `p` pomodoro
 - `o` log dir
 - `Ctrl+G` google sync (experimental)
-- `Ctrl+Q` quit
+- `q` quit
 
 Timeline
 - `j/k` move
@@ -322,6 +327,7 @@ Timeline
 - `Shift+P` jump to pinned
 - `Tab` fold entry
 - `Shift+Tab` cycle fold mode
+- `Enter` memo preview
 - `e` edit entry
 - `Space` complete tasks
 
@@ -339,6 +345,8 @@ Tasks
 - `Space` toggle checkbox
 - `Enter` memo preview
 - `Shift+P` cycle priority
+- `]` snooze +1 day
+- `}` snooze +1 week
 - `p` pomodoro
 - `e` edit source
 

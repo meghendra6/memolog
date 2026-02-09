@@ -1090,6 +1090,64 @@ pub fn cycle_task_priority(file_path: &str, line_number: usize) -> io::Result<bo
     Ok(true)
 }
 
+/// Shifts task schedule metadata by `delta_days`.
+/// When no schedule metadata is present, creates `@sched(...)` using the file date as baseline.
+pub fn shift_task_schedule(
+    file_path: &str,
+    line_number: usize,
+    delta_days: i64,
+) -> io::Result<Option<TaskSchedule>> {
+    let content = fs::read_to_string(file_path)?;
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+
+    if line_number >= lines.len() {
+        return Ok(None);
+    }
+
+    let line = lines[line_number].clone();
+    let stripped = strip_timestamp_prefix(&line);
+    let prefix_len = line.len().saturating_sub(stripped.len());
+    let (indent_bytes, _) = parse_indent(stripped);
+    let body_start = prefix_len.saturating_add(indent_bytes);
+    if body_start > line.len() {
+        return Ok(None);
+    }
+    let (prefix, body) = line.split_at(body_start);
+
+    let (checkbox, task_text) = if let Some(text) = body.strip_prefix("- [ ] ") {
+        ("- [ ] ", text)
+    } else if let Some(text) = body.strip_prefix("- [x] ") {
+        ("- [x] ", text)
+    } else if let Some(text) = body.strip_prefix("- [X] ") {
+        ("- [X] ", text)
+    } else {
+        return Ok(None);
+    };
+
+    let (mut schedule, _) = parse_task_metadata(task_text);
+    if schedule.is_empty() {
+        let base_date =
+            extract_date_from_path(file_path).unwrap_or_else(|| Local::now().date_naive());
+        schedule.scheduled = Some(base_date + Duration::days(delta_days));
+    } else {
+        schedule.scheduled = schedule.scheduled.map(|d| d + Duration::days(delta_days));
+        schedule.due = schedule.due.map(|d| d + Duration::days(delta_days));
+        schedule.start = schedule.start.map(|d| d + Duration::days(delta_days));
+    }
+
+    let updated_task_text = apply_schedule_tokens(task_text, &schedule);
+    lines[line_number] = format!("{prefix}{checkbox}{updated_task_text}");
+
+    let mut new_content = lines.join("\n");
+    if !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    let mut file = fs::File::create(file_path)?;
+    file.write_all(new_content.as_bytes())?;
+
+    Ok(Some(schedule))
+}
+
 fn extract_date_from_path(file_path: &str) -> Option<NaiveDate> {
     let path = Path::new(file_path);
     let stem = path.file_stem()?.to_str()?;
@@ -1674,6 +1732,65 @@ mod tests {
         assert_eq!(content.lines().next().unwrap_or(""), "- [ ] Task");
     }
 
+    #[test]
+    fn shift_task_schedule_moves_existing_dates() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-01");
+        fs::write(
+            &path,
+            "- [ ] Task @sched(2024-01-01) @due(2024-01-03) @start(2023-12-31)\n",
+        )
+        .expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        let updated = shift_task_schedule(&path_str, 0, 2)
+            .expect("shift task")
+            .expect("updated task");
+        assert_eq!(updated.scheduled, NaiveDate::from_ymd_opt(2024, 1, 3));
+        assert_eq!(updated.due, NaiveDate::from_ymd_opt(2024, 1, 5));
+        assert_eq!(updated.start, NaiveDate::from_ymd_opt(2024, 1, 2));
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let line = content.lines().next().unwrap_or("");
+        assert!(line.contains("@sched(2024-01-03)"));
+        assert!(line.contains("@due(2024-01-05)"));
+        assert!(line.contains("@start(2024-01-02)"));
+    }
+
+    #[test]
+    fn shift_task_schedule_adds_sched_when_missing() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-01");
+        fs::write(&path, "- [ ] Plan sprint\n").expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        let updated = shift_task_schedule(&path_str, 0, 7)
+            .expect("shift task")
+            .expect("updated task");
+        assert_eq!(updated.scheduled, NaiveDate::from_ymd_opt(2024, 1, 8));
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let line = content.lines().next().unwrap_or("");
+        assert_eq!(line, "- [ ] Plan sprint @sched(2024-01-08)");
+    }
+
+    #[test]
+    fn shift_task_schedule_keeps_priority_and_context() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-01");
+        fs::write(&path, "- [ ] [#A] Review PR ⟦2023-12-31⟧ #work\n").expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        shift_task_schedule(&path_str, 0, 1)
+            .expect("shift task")
+            .expect("updated task");
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let line = content.lines().next().unwrap_or("");
+        assert!(line.starts_with("- [ ] [#A] Review PR ⟦2023-12-31⟧ #work"));
+        assert!(line.contains("@sched(2024-01-02)"));
+    }
+
     fn write_log(dir: &Path, date: &str, content: &str) {
         let path = get_file_path_for_date(dir, date);
         fs::write(path, content).expect("write log");
@@ -1855,16 +1972,20 @@ mod tests {
     #[test]
     fn parse_log_content_with_pinned_tag() {
         // Correct format: ## [HH:MM:SS] as header, content on next line
-        let content = "## [09:00:00]\n#Important Task #pinned\nThis is content\n\n## [10:00:00]\nRegular";
+        let content =
+            "## [09:00:00]\n#Important Task #pinned\nThis is content\n\n## [10:00:00]\nRegular";
         let entries = parse_log_content(content, "2026-02-01.md");
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].content, "## [09:00:00]\n#Important Task #pinned\nThis is content");
+        assert_eq!(
+            entries[0].content,
+            "## [09:00:00]\n#Important Task #pinned\nThis is content"
+        );
         assert!(entries[0].content.contains("#pinned"));
-        
+
         // Verify first line is timestamp header
         let first_line = entries[0].content.lines().next().unwrap();
         assert_eq!(first_line, "## [09:00:00]");
-        
+
         // Verify second line is the pinned content
         let second_line = entries[0].content.lines().nth(1).unwrap();
         assert_eq!(second_line, "#Important Task #pinned");
