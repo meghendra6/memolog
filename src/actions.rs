@@ -91,6 +91,33 @@ pub fn cycle_task_priority(app: &mut App) {
     }
 }
 
+pub fn snooze_selected_task(app: &mut App, delta_days: i64) {
+    let Some(i) = app.tasks_state.selected() else {
+        app.toast("No task selected.");
+        return;
+    };
+    if i >= app.tasks.len() {
+        app.toast("No task selected.");
+        return;
+    }
+
+    let task = app.tasks[i].clone();
+    match storage::shift_task_schedule(&task.file_path, task.line_number, delta_days) {
+        Ok(Some(schedule)) => {
+            app.update_logs();
+            let target = schedule
+                .scheduled
+                .or(schedule.due)
+                .or(schedule.start)
+                .map(|d| d.format("%Y-%m-%d").to_string())
+                .unwrap_or_else(|| "updated".to_string());
+            app.toast(format!("Task moved by {delta_days:+}d -> {target}."));
+        }
+        Ok(None) => app.toast("Task not found."),
+        Err(_) => app.toast("Failed to update task schedule."),
+    }
+}
+
 pub fn open_activity_popup(app: &mut App) {
     if let Ok(data) = storage::get_activity_stats(&app.config.data.log_path) {
         app.activity_data = data;
@@ -179,6 +206,21 @@ pub fn open_task_preview(app: &mut App) {
         Ok(None) => app.toast("Memo not found."),
         Err(_) => app.toast("Failed to load memo."),
     }
+}
+
+pub fn open_timeline_preview(app: &mut App) {
+    let Some(selected) = app.logs_state.selected() else {
+        app.toast("No entry selected.");
+        return;
+    };
+    let Some(entry) = app.logs.get(selected).cloned() else {
+        app.toast("No entry selected.");
+        return;
+    };
+
+    app.memo_preview_entry = Some(entry);
+    app.memo_preview_scroll = 0;
+    app.show_memo_preview_popup = true;
 }
 
 pub fn toggle_agenda_task(app: &mut App) {

@@ -33,9 +33,10 @@ use components::{
 use popups::{
     render_activity_popup, render_ai_loading_popup, render_ai_response_popup,
     render_date_picker_popup, render_delete_entry_popup, render_editor_style_popup,
-    render_exit_popup, render_google_auth_popup, render_help_popup, render_memo_preview_popup,
-    render_mood_popup, render_path_popup, render_pomodoro_popup, render_quick_capture_popup,
-    render_siren_popup, render_tag_popup, render_theme_switcher_popup, render_todo_popup,
+    render_exit_popup, render_google_auth_popup, render_goto_date_popup, render_help_popup,
+    render_memo_preview_popup, render_mood_popup, render_path_popup, render_pomodoro_popup,
+    render_quick_capture_popup, render_siren_popup, render_tag_popup, render_theme_switcher_popup,
+    render_todo_popup,
 };
 
 pub fn ui(f: &mut Frame, app: &mut App) {
@@ -93,16 +94,13 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         // Check for today's pinned entries and split timeline area if needed
         let pinned_entries = app.get_today_pinned_entries();
         let has_pinned = !pinned_entries.is_empty();
-        
+
         let (pinned_area, timeline_area) = if has_pinned {
             // Allocate 2 lines per pinned entry + 2 for borders, max 8 lines total
             let pinned_height = (pinned_entries.len() * 2 + 2).min(8) as u16;
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(pinned_height),
-                    Constraint::Min(5),
-                ])
+                .constraints([Constraint::Length(pinned_height), Constraint::Min(5)])
                 .split(timeline_area_raw);
             (Some(chunks[0]), chunks[1])
         } else {
@@ -116,12 +114,14 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 .border_style(Style::default().fg(tokens.ui_muted))
                 .title(Line::from(Span::styled(
                     " 📌 Pinned ",
-                    Style::default().fg(tokens.ui_accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(tokens.ui_accent)
+                        .add_modifier(Modifier::BOLD),
                 )));
-            
+
             let pinned_inner = pinned_block.inner(pinned_rect);
             let pinned_width = pinned_inner.width.saturating_sub(1).max(1) as usize;
-            
+
             let pinned_lines: Vec<Line> = pinned_entries
                 .iter()
                 .take(3) // Max 3 pinned entries shown
@@ -130,9 +130,12 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                     // First line is timestamp, content starts on second line
                     let mut lines_iter = entry.content.lines();
                     let first_line = lines_iter.next().unwrap_or("");
-                    
+
                     // If first line is just a timestamp, get content from second line
-                    let content_line = if split_timestamp_line(first_line).map(|(_, rest)| rest.trim().is_empty()).unwrap_or(false) {
+                    let content_line = if split_timestamp_line(first_line)
+                        .map(|(_, rest)| rest.trim().is_empty())
+                        .unwrap_or(false)
+                    {
                         // First line is timestamp-only, use second line
                         lines_iter.next().unwrap_or("")
                     } else {
@@ -141,7 +144,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                             .map(|(_, rest)| rest)
                             .unwrap_or(first_line)
                     };
-                    
+
                     // Clean up the title: remove leading # and #pinned tag
                     let title = content_line
                         .trim_start_matches('#')
@@ -149,7 +152,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                         .replace("#pinned", "")
                         .trim()
                         .to_string();
-                    
+
                     // Use cleaned title or fallback
                     let display_title = if title.is_empty() {
                         if content_line.is_empty() {
@@ -162,18 +165,18 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                     } else {
                         title
                     };
-                    
+
                     vec![Line::from(Span::styled(
                         format!(" • {}", display_title),
                         Style::default().fg(tokens.ui_fg),
                     ))]
                 })
                 .collect();
-            
+
             let pinned_text = Paragraph::new(pinned_lines)
                 .block(pinned_block)
                 .wrap(ratatui::widgets::Wrap { trim: true });
-            
+
             f.render_widget(pinned_text, pinned_rect);
         }
 
@@ -1187,6 +1190,10 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
     if app.show_path_popup {
         render_path_popup(f, app);
+    }
+
+    if app.show_goto_date_popup {
+        render_goto_date_popup(f, app);
     }
 
     if app.show_memo_preview_popup {
@@ -2782,15 +2789,20 @@ mod tests {
         let entry_content = "## [09:00:00]\n#Important Task #pinned\nMore content";
         let mut lines = entry_content.lines();
         let first_line = lines.next().unwrap();
-        
+
         // First line should be timestamp-only
-        let first_rest = split_timestamp_line(first_line).map(|(_, rest)| rest).unwrap_or("");
-        assert!(first_rest.trim().is_empty(), "First line should be timestamp-only");
-        
+        let first_rest = split_timestamp_line(first_line)
+            .map(|(_, rest)| rest)
+            .unwrap_or("");
+        assert!(
+            first_rest.trim().is_empty(),
+            "First line should be timestamp-only"
+        );
+
         // Content should come from second line
         let content_line = lines.next().unwrap();
         assert_eq!(content_line, "#Important Task #pinned");
-        
+
         let title = content_line
             .trim_start_matches('#')
             .trim()
@@ -2805,7 +2817,7 @@ mod tests {
             .map(|(_, rest)| rest)
             .unwrap_or(single_line);
         assert_eq!(single_content, "Meeting #pinned");
-        
+
         let single_title = single_content
             .trim_start_matches('#')
             .trim()

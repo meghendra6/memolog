@@ -160,6 +160,8 @@ pub struct App<'a> {
     // Quick capture popup
     pub show_quick_capture_popup: bool,
     pub quick_capture_input: String,
+    pub show_goto_date_popup: bool,
+    pub goto_date_input: String,
 
     // Navigation key sequence (for gg, etc.)
     pub pending_nav_key: Option<char>,
@@ -355,6 +357,8 @@ impl<'a> App<'a> {
             ai_loading_question: None,
             show_quick_capture_popup: false,
             quick_capture_input: String::new(),
+            show_goto_date_popup: false,
+            goto_date_input: String::new(),
             pending_nav_key: None,
             pomodoro_alert_expiry: None,
             pomodoro_alert_message: None,
@@ -741,11 +745,9 @@ impl<'a> App<'a> {
             FoldOverride::Folded
         };
         self.fold_overrides.insert(key, override_state);
-        if let Err(_err) = storage::update_fold_marker(
-            &entry.file_path,
-            entry.line_number,
-            override_state,
-        ) {
+        if let Err(_err) =
+            storage::update_fold_marker(&entry.file_path, entry.line_number, override_state)
+        {
             self.toast("Failed to save fold state.");
         }
         self.entry_scroll_offset = 0;
@@ -855,7 +857,7 @@ impl<'a> App<'a> {
     pub fn get_today_pinned_entries(&self) -> Vec<&LogEntry> {
         let today = Local::now().format("%Y-%m-%d").to_string();
         let today_file_name = format!("{}.md", today);
-        
+
         self.logs
             .iter()
             .filter(|entry| {
@@ -868,27 +870,32 @@ impl<'a> App<'a> {
     pub fn jump_to_next_pinned(&mut self) {
         let today = Local::now().format("%Y-%m-%d").to_string();
         let today_file_name = format!("{}.md", today);
-        
+
         let current_idx = self.logs_state.selected().unwrap_or(0);
-        
+
         // Find next pinned entry after current position
-        let next_pinned = self.logs.iter().enumerate()
+        let next_pinned = self
+            .logs
+            .iter()
+            .enumerate()
             .skip(current_idx + 1)
             .find(|(_, entry)| {
                 entry.file_path.ends_with(&today_file_name) && entry.content.contains("#pinned")
             })
             .map(|(idx, _)| idx);
-        
+
         // If not found, wrap around from the beginning
         let pinned_idx = next_pinned.or_else(|| {
-            self.logs.iter().enumerate()
+            self.logs
+                .iter()
+                .enumerate()
                 .take(current_idx + 1)
                 .find(|(_, entry)| {
                     entry.file_path.ends_with(&today_file_name) && entry.content.contains("#pinned")
                 })
                 .map(|(idx, _)| idx)
         });
-        
+
         if let Some(idx) = pinned_idx {
             self.logs_state.select(Some(idx));
             // Reset scroll offset to show the selected entry
@@ -896,6 +903,62 @@ impl<'a> App<'a> {
             self.entry_scroll_to_bottom = false;
         } else {
             self.toast("No pinned entries found".to_string());
+        }
+    }
+
+    pub fn jump_to_date(&mut self, target: NaiveDate) {
+        let today = Local::now().date_naive();
+        let available_dates =
+            storage::get_available_log_dates(&self.config.data.log_path).unwrap_or_default();
+        let Some(earliest) = available_dates.first().copied() else {
+            self.toast("No logs available.");
+            return;
+        };
+
+        self.earliest_available_date = Some(earliest);
+
+        let clamped = target.min(today).max(earliest);
+        self.loaded_start_date = Some(clamped);
+        self.update_logs();
+
+        let date_label = clamped.format("%Y-%m-%d").to_string();
+        if !self.logs.is_empty() {
+            let selected_idx = self
+                .logs
+                .iter()
+                .position(|entry| {
+                    file_date(&entry.file_path).as_deref() == Some(date_label.as_str())
+                })
+                .unwrap_or(0);
+            self.logs_state.select(Some(selected_idx));
+            *self.timeline_ui_state.offset_mut() = 0;
+        }
+        self.entry_scroll_offset = 0;
+        self.entry_scroll_to_bottom = false;
+        self.set_agenda_selected_day(clamped);
+
+        let target_label = target.format("%Y-%m-%d").to_string();
+        if clamped != target {
+            if target > today {
+                self.toast(format!("Future date not allowed. Jumped to {date_label}."));
+            } else {
+                self.toast(format!(
+                    "No logs before {earliest}. Jumped to {date_label}."
+                ));
+            }
+            return;
+        }
+
+        let has_entry_on_day = self
+            .all_logs
+            .iter()
+            .any(|entry| file_date(&entry.file_path).as_deref() == Some(date_label.as_str()));
+        if has_entry_on_day {
+            self.toast(format!("Jumped to {date_label}."));
+        } else {
+            self.toast(format!(
+                "No entries on {target_label}. Showing nearest loaded entries."
+            ));
         }
     }
 
@@ -1057,7 +1120,9 @@ impl<'a> App<'a> {
                     TaskFilter::Open => !item.is_done,
                     TaskFilter::Done => item.is_done,
                     TaskFilter::All => true,
-                    TaskFilter::HighPriority => !item.is_done && item.priority == Some(Priority::High),
+                    TaskFilter::HighPriority => {
+                        !item.is_done && item.priority == Some(Priority::High)
+                    }
                 },
             })
             .cloned()
