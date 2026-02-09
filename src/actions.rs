@@ -181,6 +181,21 @@ pub fn open_task_preview(app: &mut App) {
     }
 }
 
+pub fn open_timeline_preview(app: &mut App) {
+    let Some(selected) = app.logs_state.selected() else {
+        app.toast("No entry selected.");
+        return;
+    };
+    let Some(entry) = app.logs.get(selected).cloned() else {
+        app.toast("No entry selected.");
+        return;
+    };
+
+    app.memo_preview_entry = Some(entry);
+    app.memo_preview_scroll = 0;
+    app.show_memo_preview_popup = true;
+}
+
 pub fn toggle_agenda_task(app: &mut App) {
     let Some(selected) = app.agenda_state.selected() else {
         app.toast("No agenda item selected.");

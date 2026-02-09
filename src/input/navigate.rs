@@ -85,6 +85,9 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         actions::open_config_in_composer(app);
     } else if key_match(&key, &app.config.keybindings.global.sync_google) {
         actions::sync_google(app);
+    } else if key_match(&key, &app.config.keybindings.global.quick_capture) {
+        app.show_quick_capture_popup = true;
+        app.quick_capture_input.clear();
     } else if key_match(&key, &app.config.keybindings.global.quit) {
         app.quit();
     } else if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -115,11 +118,6 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
                 app.set_navigate_focus(next_focus);
                 true
             }
-            KeyCode::Char('n') => {
-                app.show_quick_capture_popup = true;
-                app.quick_capture_input.clear();
-                true
-            }
             _ => false,
         };
         if handled {
@@ -127,15 +125,20 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         }
     } else if key_match(&key, &app.config.keybindings.global.agenda) {
         actions::focus_agenda_panel(app);
-    } else if key_match(&key, &app.config.keybindings.global.focus_next)
-        || key_match(&key, &app.config.keybindings.global.focus_prev)
-    {
+    } else if key_match(&key, &app.config.keybindings.global.focus_next) {
         let next_focus = match app.navigate_focus {
             models::NavigateFocus::Timeline => models::NavigateFocus::Agenda,
             models::NavigateFocus::Agenda => models::NavigateFocus::Tasks,
             models::NavigateFocus::Tasks => models::NavigateFocus::Timeline,
         };
         app.set_navigate_focus(next_focus);
+    } else if key_match(&key, &app.config.keybindings.global.focus_prev) {
+        let prev_focus = match app.navigate_focus {
+            models::NavigateFocus::Timeline => models::NavigateFocus::Tasks,
+            models::NavigateFocus::Agenda => models::NavigateFocus::Timeline,
+            models::NavigateFocus::Tasks => models::NavigateFocus::Agenda,
+        };
+        app.set_navigate_focus(prev_focus);
     } else if key_match(&key, &app.config.keybindings.global.focus_composer) {
         app.transition_to(InputMode::Editing);
     } else if key_match(&key, &app.config.keybindings.global.search) {
@@ -168,6 +171,10 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         && key_match(&key, &app.config.keybindings.timeline.bottom)
     {
         app.scroll_to_bottom();
+    } else if app.navigate_focus == models::NavigateFocus::Timeline
+        && key_match(&key, &app.config.keybindings.timeline.open)
+    {
+        actions::open_timeline_preview(app);
     } else if app.navigate_focus == models::NavigateFocus::Timeline
         && key_match(&key, &app.config.keybindings.timeline.edit)
     {

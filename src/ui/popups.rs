@@ -1295,6 +1295,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 ),
             ),
             (
+                "Quick capture".to_string(),
+                fmt_keys(&kb.global.quick_capture),
+            ),
+            (
                 "Pomodoro / Activity".to_string(),
                 join_key_groups_with_sep(
                     &[fmt_keys(&kb.global.pomodoro), fmt_keys(&kb.global.activity)],
@@ -1403,9 +1407,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 timeline_context_keys.clone(),
             ),
             (
-                "Edit / Complete tasks".to_string(),
+                "Open / Edit / Complete".to_string(),
                 join_key_groups_with_sep(
                     &[
+                        fmt_keys(&kb.timeline.open),
                         fmt_keys(&kb.timeline.edit),
                         fmt_keys(&kb.timeline.toggle_todo),
                     ],
@@ -1442,6 +1447,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 "Context: work/personal/clear".to_string(),
                 timeline_context_keys.clone(),
             ),
+            ("Open memo".to_string(), fmt_keys(&kb.timeline.open)),
             ("Edit".to_string(), fmt_keys(&kb.timeline.edit)),
             (
                 "Complete tasks".to_string(),
