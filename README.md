@@ -54,6 +54,9 @@ Press `?` anytime to see the full help overlay.
 ## Timeline
 
 - Navigate with `j/k`, edit entry with `e`.
+- Press `Enter` to open memo preview.
+- `Ctrl+U/D` page up/down (10 entries).
+- Context shortcuts: `Ctrl+W` work / `Ctrl+E` personal / `Ctrl+R` clear.
 - Toggle task checkbox with `Space`.
 - Fold/unfold with `Tab`. Cycle fold mode with `Shift+Tab`.
 - Fold state is persisted per entry using hidden HTML comments.
@@ -312,22 +315,27 @@ Global
 - `Ctrl+H/J/K/L` focus move
 - `a` agenda focus
 - `i` compose
+- `Ctrl+N` quick capture
 - `/` search
+- `Ctrl+F` go to date (`YYYY-MM-DD`, `today`, `+3d`, `next mon`)
 - `t` tags
 - `Ctrl+A` activity
 - `T` theme presets
 - `p` pomodoro
 - `o` log dir
 - `Ctrl+G` google sync (experimental)
-- `Ctrl+Q` quit
+- `q` quit
 
 Timeline
 - `j/k` move
+- `Ctrl+U/D` page up/down
 - `gg` go to top
 - `G` go to bottom
 - `Shift+P` jump to pinned
 - `Tab` fold entry
 - `Shift+Tab` cycle fold mode
+- `Enter` memo preview
+- `Ctrl+W/E/R` set context (work/personal/clear)
 - `e` edit entry
 - `Space` complete tasks
 
