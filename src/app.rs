@@ -1,4 +1,4 @@
-use crate::config::{Config, Theme};
+use crate::config::{Config, Theme, onboarding_seen_path, saved_searches_path};
 use crate::integrations::gemini::{AiSearchOutcome, AiSearchResult};
 use crate::integrations::google::{AuthDisplay, AuthPollResult};
 use crate::models::{
@@ -12,6 +12,8 @@ use arboard::Clipboard;
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime, Timelike};
 use ratatui::widgets::ListState;
 use std::collections::HashMap;
+use std::fs;
+use std::io;
 use std::path::Path;
 use std::sync::mpsc::Receiver;
 use tui_textarea::CursorMove;
@@ -174,6 +176,15 @@ pub struct App<'a> {
     pub toast_expiry: Option<DateTime<Local>>,
     pub search_highlight_query: Option<String>,
     pub search_highlight_ready_at: Option<DateTime<Local>>,
+    pub search_match_explain: HashMap<EntryIdentity, String>,
+    pub search_match_score: HashMap<EntryIdentity, usize>,
+    pub recent_searches: Vec<String>,
+    pub recent_search_cursor: Option<usize>,
+    pub saved_searches: Vec<String>,
+    pub saved_search_list_state: ListState,
+    pub show_saved_search_popup: bool,
+    pub keybinding_conflicts: Vec<String>,
+    pub show_onboarding_popup: bool,
 
     // History loading state for infinite scroll
     pub loaded_start_date: Option<NaiveDate>,
@@ -195,11 +206,13 @@ pub struct App<'a> {
 impl<'a> App<'a> {
     pub fn new() -> App<'a> {
         let config = Config::load();
+        let keybinding_conflicts = config.keybinding_conflicts();
 
         let now = Local::now();
         let today = now.date_naive();
         let active_date = today.format("%Y-%m-%d").to_string();
         let rounded_time = round_time_to_quarter(now.time());
+        let show_onboarding_popup = mark_onboarding_seen_if_needed();
 
         let mut textarea = TextArea::default();
         textarea.set_placeholder_text(PLACEHOLDER_COMPOSE);
@@ -257,6 +270,24 @@ impl<'a> App<'a> {
 
         // Calculate streak
         let streak = storage::calculate_streak(&config.data.log_path).unwrap_or((0, false));
+
+        let saved_searches = load_saved_searches();
+        let mut saved_search_list_state = ListState::default();
+        if !saved_searches.is_empty() {
+            saved_search_list_state.select(Some(0));
+        }
+
+        let startup_toast = if keybinding_conflicts.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "{} keybinding conflict(s) detected. Check Help for details.",
+                keybinding_conflicts.len()
+            ))
+        };
+        let startup_toast_expiry = startup_toast
+            .as_ref()
+            .map(|_| now + Duration::seconds(8));
 
         let mut app = App {
             input_mode,
@@ -359,10 +390,19 @@ impl<'a> App<'a> {
             pending_nav_key: None,
             pomodoro_alert_expiry: None,
             pomodoro_alert_message: None,
-            toast_message: None,
-            toast_expiry: None,
+            toast_message: startup_toast,
+            toast_expiry: startup_toast_expiry,
             search_highlight_query: None,
             search_highlight_ready_at: None,
+            search_match_explain: HashMap::new(),
+            search_match_score: HashMap::new(),
+            recent_searches: Vec::new(),
+            recent_search_cursor: None,
+            saved_searches,
+            saved_search_list_state,
+            show_saved_search_popup: false,
+            keybinding_conflicts,
+            show_onboarding_popup,
             loaded_start_date: Some(effective_start),
             earliest_available_date,
             is_loading_more: false,
@@ -447,6 +487,7 @@ impl<'a> App<'a> {
                 self.is_search_result = false;
                 self.search_highlight_query = None;
                 self.search_highlight_ready_at = None;
+                self.clear_search_match_metadata();
                 self.apply_fold_markers();
                 self.apply_timeline_filter(preserve_selection.is_none());
             }
@@ -457,6 +498,7 @@ impl<'a> App<'a> {
                 self.is_search_result = false;
                 self.search_highlight_query = None;
                 self.search_highlight_ready_at = None;
+                self.clear_search_match_metadata();
                 self.apply_fold_markers();
                 self.apply_timeline_filter(preserve_selection.is_none());
             }
@@ -588,6 +630,122 @@ impl<'a> App<'a> {
     pub fn toast(&mut self, message: impl Into<String>) {
         self.toast_message = Some(message.into());
         self.toast_expiry = Some(Local::now() + Duration::seconds(2));
+    }
+
+    pub fn clear_search_match_metadata(&mut self) {
+        self.search_match_explain.clear();
+        self.search_match_score.clear();
+    }
+
+    pub fn remember_search_query(&mut self, query: &str) {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.recent_searches
+            .retain(|existing| !existing.eq_ignore_ascii_case(trimmed));
+        self.recent_searches.insert(0, trimmed.to_string());
+        if self.recent_searches.len() > 25 {
+            self.recent_searches.truncate(25);
+        }
+        self.recent_search_cursor = None;
+    }
+
+    pub fn cycle_recent_search(&mut self, direction: i32) -> bool {
+        if self.recent_searches.is_empty() {
+            return false;
+        }
+        let len = self.recent_searches.len();
+        let next = match self.recent_search_cursor {
+            None => 0,
+            Some(i) if direction < 0 => (i + 1).min(len - 1),
+            Some(i) => i.saturating_sub(1),
+        };
+        self.recent_search_cursor = Some(next);
+        if let Some(query) = self.recent_searches.get(next).cloned() {
+            self.set_search_input(&query);
+            return true;
+        }
+        false
+    }
+
+    pub fn set_search_input(&mut self, query: &str) {
+        self.textarea = TextArea::from(vec![query.to_string()]);
+        self.textarea.set_placeholder_text(PLACEHOLDER_SEARCH);
+        self.textarea.move_cursor(CursorMove::End);
+    }
+
+    pub fn save_search_query(&mut self, query: &str) -> io::Result<bool> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(false);
+        }
+        self.saved_searches
+            .retain(|existing| !existing.eq_ignore_ascii_case(trimmed));
+        self.saved_searches.insert(0, trimmed.to_string());
+        if self.saved_searches.len() > 50 {
+            self.saved_searches.truncate(50);
+        }
+        if self.saved_searches.is_empty() {
+            self.saved_search_list_state.select(None);
+        } else {
+            self.saved_search_list_state.select(Some(0));
+        }
+        save_saved_searches(&self.saved_searches)?;
+        Ok(true)
+    }
+
+    pub fn open_saved_search_popup(&mut self) {
+        if self.saved_searches.is_empty() {
+            self.toast("No saved searches yet. Press Ctrl+S in Search mode to save.");
+            return;
+        }
+        self.show_saved_search_popup = true;
+        self.saved_search_list_state.select(Some(0));
+    }
+
+    pub fn apply_selected_saved_search(&mut self) -> bool {
+        let Some(i) = self.saved_search_list_state.selected() else {
+            return false;
+        };
+        let Some(query) = self.saved_searches.get(i).cloned() else {
+            return false;
+        };
+        self.set_search_input(&query);
+        self.recent_search_cursor = None;
+        self.show_saved_search_popup = false;
+        true
+    }
+
+    pub fn remove_selected_saved_search(&mut self) -> io::Result<Option<String>> {
+        let Some(i) = self.saved_search_list_state.selected() else {
+            return Ok(None);
+        };
+        if i >= self.saved_searches.len() {
+            return Ok(None);
+        }
+        let removed = self.saved_searches.remove(i);
+        if self.saved_searches.is_empty() {
+            self.saved_search_list_state.select(None);
+            self.show_saved_search_popup = false;
+        } else {
+            let next = i.min(self.saved_searches.len() - 1);
+            self.saved_search_list_state.select(Some(next));
+        }
+        save_saved_searches(&self.saved_searches)?;
+        Ok(Some(removed))
+    }
+
+    pub fn selected_search_explain(&self) -> Option<String> {
+        if !self.is_search_result {
+            return None;
+        }
+        let selected = self.logs_state.selected()?;
+        let entry = self.logs.get(selected)?;
+        let id = EntryIdentity::from(entry);
+        let explain = self.search_match_explain.get(&id)?;
+        let score = self.search_match_score.get(&id).copied().unwrap_or(0);
+        Some(format!("score {score} · {explain}"))
     }
 
     /// Returns true if Vim-style editing is enabled
@@ -968,6 +1126,7 @@ impl<'a> App<'a> {
         self.entry_scroll_to_bottom = false;
         *self.timeline_ui_state.offset_mut() = 0;
         self.apply_timeline_filter(false);
+        self.toast(format!("Timeline filter: {}", self.timeline_filter_label()));
     }
 
     pub fn cycle_timeline_filter(&mut self) {
@@ -980,6 +1139,7 @@ impl<'a> App<'a> {
         self.entry_scroll_to_bottom = false;
         *self.timeline_ui_state.offset_mut() = 0;
         self.apply_timeline_filter(false);
+        self.toast(format!("Timeline filter: {}", self.timeline_filter_label()));
     }
 
     pub fn timeline_filter_label(&self) -> &'static str {
@@ -1094,6 +1254,7 @@ impl<'a> App<'a> {
         }
         self.task_filter = filter;
         self.apply_task_filter(true);
+        self.toast(format!("Task filter: {}", self.task_filter_label()));
     }
 
     pub fn cycle_task_filter(&mut self) {
@@ -1104,6 +1265,7 @@ impl<'a> App<'a> {
             TaskFilter::HighPriority => TaskFilter::Open,
         };
         self.apply_task_filter(true);
+        self.toast(format!("Task filter: {}", self.task_filter_label()));
     }
 
     pub fn apply_agenda_filter(&mut self, reset_selection: bool) {
@@ -1150,11 +1312,18 @@ impl<'a> App<'a> {
             TaskFilter::HighPriority => TaskFilter::Open,
         };
         self.apply_agenda_filter(true);
+        self.toast(format!("Agenda filter: {}", self.agenda_filter_label()));
     }
 
     pub fn toggle_agenda_unscheduled(&mut self) {
         self.agenda_show_unscheduled = !self.agenda_show_unscheduled;
         self.set_agenda_selected_day(self.agenda_selected_day);
+        let state = if self.agenda_show_unscheduled {
+            "shown"
+        } else {
+            "hidden"
+        };
+        self.toast(format!("Agenda unscheduled items: {state}."));
     }
 
     pub fn set_agenda_selected_day(&mut self, day: NaiveDate) {
@@ -1367,12 +1536,17 @@ impl<'a> App<'a> {
                 }
             }
             InputMode::Search => {
-                self.textarea = TextArea::default();
-                self.textarea.set_placeholder_text(PLACEHOLDER_SEARCH);
+                if let Some(query) = self.last_search_query.clone() {
+                    self.set_search_input(&query);
+                } else {
+                    self.textarea = TextArea::default();
+                    self.textarea.set_placeholder_text(PLACEHOLDER_SEARCH);
+                }
                 self.textarea_viewport_row = 0;
                 self.textarea_viewport_col = 0;
                 self.textarea_viewport_height = 0;
                 self.composer_dirty = false;
+                self.recent_search_cursor = None;
                 self.reset_editor_state();
             }
         }
@@ -1958,6 +2132,64 @@ fn agenda_timeline_indices(app: &App) -> Vec<usize> {
     visible.extend(timed);
     visible.extend(unscheduled);
     visible
+}
+
+fn load_saved_searches() -> Vec<String> {
+    if cfg!(test) {
+        return Vec::new();
+    }
+    let path = saved_searches_path();
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let mut queries = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if queries
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(trimmed))
+        {
+            continue;
+        }
+        queries.push(trimmed.to_string());
+    }
+    queries
+}
+
+fn save_saved_searches(queries: &[String]) -> io::Result<()> {
+    if cfg!(test) {
+        return Ok(());
+    }
+    let path = saved_searches_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut content = String::new();
+    for query in queries {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        content.push_str(trimmed);
+        content.push('\n');
+    }
+    fs::write(path, content)
+}
+
+fn mark_onboarding_seen_if_needed() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    let path = onboarding_seen_path();
+    if path.exists() {
+        return false;
+    }
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&path, b"seen");
+    true
 }
 
 #[cfg(test)]

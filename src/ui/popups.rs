@@ -1597,6 +1597,26 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             ),
             ("Clear".to_string(), fmt_keys(&kb.search.clear)),
             (
+                "Recent: prev/next".to_string(),
+                join_key_groups_with_sep(
+                    &[
+                        fmt_keys(&kb.search.recent_prev),
+                        fmt_keys(&kb.search.recent_next),
+                    ],
+                    " | ",
+                ),
+            ),
+            (
+                "Save / Open saved".to_string(),
+                join_key_groups_with_sep(
+                    &[
+                        fmt_keys(&kb.search.save_current),
+                        fmt_keys(&kb.search.open_saved),
+                    ],
+                    " | ",
+                ),
+            ),
+            (
                 "Smart query".to_string(),
                 "\"phrase\" / foo bar / foo|bar / -foo / date:2026-02-09".to_string(),
             ),
@@ -1607,6 +1627,19 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             ("Apply".to_string(), fmt_keys(&kb.search.submit)),
             ("Clear".to_string(), fmt_keys(&kb.search.clear)),
             ("Cancel".to_string(), fmt_keys(&kb.search.cancel)),
+            (
+                "Recent previous".to_string(),
+                fmt_keys(&kb.search.recent_prev),
+            ),
+            ("Recent next".to_string(), fmt_keys(&kb.search.recent_next)),
+            (
+                "Save current query".to_string(),
+                fmt_keys(&kb.search.save_current),
+            ),
+            (
+                "Open saved queries".to_string(),
+                fmt_keys(&kb.search.open_saved),
+            ),
             (
                 "Smart query".to_string(),
                 "\"phrase\", foo bar, foo|bar, -foo, date:/from:/to:".to_string(),
@@ -1621,7 +1654,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
         }
     }
 
-    vec![
+    let mut sections = vec![
         HelpSection {
             title: "Global".to_string(),
             entries: global_entries,
@@ -1656,7 +1689,23 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             entries: search_entries,
             show_header,
         },
-    ]
+    ];
+
+    if !app.keybinding_conflicts.is_empty() {
+        let conflict_entries: Vec<(String, String)> = app
+            .keybinding_conflicts
+            .iter()
+            .take(if compact { 3 } else { 6 })
+            .map(|msg| ("Conflict".to_string(), msg.clone()))
+            .collect();
+        sections.push(HelpSection {
+            title: "Keybinding Conflicts".to_string(),
+            entries: conflict_entries,
+            show_header,
+        });
+    }
+
+    sections
 }
 
 fn help_section_height(section: &HelpSection) -> usize {
@@ -2166,6 +2215,90 @@ pub fn render_goto_date_popup(f: &mut Frame, app: &App) {
     let cursor_x = inner[0].x + 1 + app.goto_date_input.chars().count() as u16;
     let cursor_y = inner[0].y + 1;
     f.set_cursor_position((cursor_x.min(inner[0].right() - 2), cursor_y));
+}
+
+pub fn render_saved_search_popup(f: &mut Frame, app: &mut App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let block = Block::default()
+        .title(" 🔎 Saved Searches ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_accent));
+
+    let area = centered_rect(62, 52, f.area());
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .margin(1)
+        .split(area);
+
+    let items: Vec<ListItem> = app
+        .saved_searches
+        .iter()
+        .map(|query| ListItem::new(Line::from(query.clone())))
+        .collect();
+    let list = List::new(items)
+        .highlight_symbol("> ")
+        .highlight_style(
+            Style::default()
+                .bg(tokens.ui_selection_bg)
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_stateful_widget(list, inner[0], &mut app.saved_search_list_state);
+
+    let help = Paragraph::new("Enter: Apply  |  Del/Backspace: Remove  |  Esc: Close")
+        .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(help, inner[1]);
+}
+
+pub fn render_onboarding_popup(f: &mut Frame, app: &App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let block = Block::default()
+        .title(" 👋 Welcome to MemoLog ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_accent));
+
+    let area = centered_rect(70, 48, f.area());
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .margin(1)
+        .split(area);
+
+    let conflict_hint = if app.keybinding_conflicts.is_empty() {
+        "No keybinding conflicts detected."
+    } else {
+        "Some keybinding conflicts were detected. Open Help for details."
+    };
+    let body = vec![
+        Line::from("Core shortcuts"),
+        Line::from(" - i: compose"),
+        Line::from(" - /: search"),
+        Line::from(" - Ctrl+F: go to date"),
+        Line::from(" - Ctrl+U / Ctrl+D: page up/down in timeline"),
+        Line::from(" - Ctrl+W / Ctrl+E / Ctrl+R: set context (work/personal/clear)"),
+        Line::from(""),
+        Line::from("Search tips"),
+        Line::from(" - Smart query: \"phrase\" | foo bar | foo|bar | -foo | date:YYYY-MM-DD"),
+        Line::from(" - Ctrl+S in Search mode: save current query"),
+        Line::from(" - Ctrl+O in Search mode: open saved queries"),
+        Line::from(""),
+        Line::from(conflict_hint),
+    ];
+
+    let paragraph = Paragraph::new(body)
+        .style(Style::default().fg(tokens.ui_fg))
+        .wrap(Wrap { trim: false });
+    f.render_widget(paragraph, inner[0]);
+
+    let footer = Paragraph::new("Enter/Esc: Start  |  ?: Open full help")
+        .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(footer, inner[1]);
 }
 
 fn fmt_keys(keys: &[String]) -> String {
