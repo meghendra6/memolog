@@ -153,6 +153,12 @@ When it completes, MemoLog appends a tomato (🍅) to the task line.
 - `/` opens search
 - `t` shows tag list (tags are any `#word` in your logs)
 - **Special tag: `#pinned`** - Entries with `#pinned` in today's log appear in a fixed section at the top of the timeline (always visible while scrolling). Use `Shift+P` to jump to pinned entries in the timeline.
+- Smart query syntax:
+  - `foo bar` (AND)
+  - `"exact phrase"` (phrase match)
+  - `foo | bar` (OR)
+  - `-foo` or `-"exact phrase"` (exclude)
+  - `date:YYYY-MM-DD`, `from:YYYY-MM-DD`, `to:YYYY-MM-DD` (date filters by log file date)
 - AI search: prefix your query with `?`, `ai:`, or `ask:` to run a Gemini-assisted search
 
 ## Gemini AI search (experimental)

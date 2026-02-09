@@ -1412,10 +1412,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                     " | ",
                 ),
             ),
-            (
-                "Jump to pinned".to_string(),
-                "Shift+P".to_string(),
-            ),
+            ("Jump to pinned".to_string(), "Shift+P".to_string()),
         ]
     } else {
         vec![
@@ -1582,6 +1579,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 ),
             ),
             ("Clear".to_string(), fmt_keys(&kb.search.clear)),
+            (
+                "Smart query".to_string(),
+                "\"phrase\" / foo bar / foo|bar / -foo / date:2026-02-09".to_string(),
+            ),
             ("AI search".to_string(), "Prefix ? / ai: / ask:".to_string()),
         ]
     } else {
@@ -1589,6 +1590,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             ("Apply".to_string(), fmt_keys(&kb.search.submit)),
             ("Clear".to_string(), fmt_keys(&kb.search.clear)),
             ("Cancel".to_string(), fmt_keys(&kb.search.cancel)),
+            (
+                "Smart query".to_string(),
+                "\"phrase\", foo bar, foo|bar, -foo, date:/from:/to:".to_string(),
+            ),
             ("AI search".to_string(), "Prefix ? / ai: / ask:".to_string()),
         ]
     };
