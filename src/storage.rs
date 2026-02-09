@@ -4,9 +4,11 @@ use crate::models::{
     strip_timestamp_prefix, strip_trailing_tomatoes,
 };
 use crate::task_metadata::{
-    TaskMetadataKey, parse_task_metadata, strip_task_metadata_tokens, upsert_task_metadata_token,
+    TaskMetadataKey, parse_date, parse_task_metadata, strip_task_metadata_tokens,
+    upsert_task_metadata_token,
 };
 use chrono::{Duration, Local, NaiveDate};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -343,33 +345,357 @@ fn read_note_entries(
 
 pub fn search_entries(log_path: &Path, query: &str) -> io::Result<Vec<LogEntry>> {
     ensure_log_dir(log_path)?;
-    let dir = PathBuf::from(log_path);
-    let mut results = Vec::new();
+    let plan = parse_search_query(query);
+    if !plan.has_constraints() {
+        return Ok(Vec::new());
+    }
 
-    if let Ok(entries) = fs::read_dir(dir) {
+    let mut scored: Vec<(usize, LogEntry)> = Vec::new();
+    let mut paths: Vec<PathBuf> = Vec::new();
+    if let Ok(entries) = fs::read_dir(log_path) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("md") {
-                let path_str = path.to_string_lossy().to_string();
+                paths.push(path);
+            }
+        }
+    }
+    paths.sort();
 
-                if let Ok(content) = fs::read_to_string(&path) {
-                    let parsed_entries = parse_log_content(&content, &path_str);
-                    for entry in parsed_entries {
-                        if entry.content.contains(query) {
-                            results.push(LogEntry {
-                                content: entry.content,
-                                file_path: entry.file_path,
-                                line_number: entry.line_number,
-                                end_line: entry.end_line,
-                            });
-                        }
-                    }
+    for path in paths {
+        let path_str = path.to_string_lossy().to_string();
+        if let Ok(content) = fs::read_to_string(&path) {
+            let parsed_entries = parse_log_content(&content, &path_str);
+            for entry in parsed_entries {
+                if let Some(score) = score_search_match(&entry, &plan) {
+                    scored.push((score, entry));
                 }
             }
         }
     }
 
-    Ok(results)
+    scored.sort_by(|(score_a, entry_a), (score_b, entry_b)| {
+        score_b
+            .cmp(score_a)
+            .then_with(|| entry_b.file_path.cmp(&entry_a.file_path))
+            .then_with(|| entry_b.line_number.cmp(&entry_a.line_number))
+    });
+
+    Ok(scored.into_iter().map(|(_, entry)| entry).collect())
+}
+
+pub fn build_search_highlight_regex(query: &str) -> Option<Regex> {
+    let plan = parse_search_query(query);
+    let mut terms = plan.highlight_terms();
+    if terms.is_empty() {
+        return None;
+    }
+
+    terms.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    let mut seen = std::collections::HashSet::new();
+    terms.retain(|term| seen.insert(term.to_lowercase()));
+
+    let pattern = terms
+        .into_iter()
+        .map(|term| regex::escape(&term))
+        .collect::<Vec<_>>()
+        .join("|");
+    if pattern.is_empty() {
+        return None;
+    }
+
+    Regex::new(&format!("(?i){pattern}")).ok()
+}
+
+#[derive(Clone, Debug, Default)]
+struct SearchPlan {
+    groups: Vec<Vec<SearchTerm>>,
+    exclude_terms: Vec<SearchTerm>,
+    filters: SearchFilters,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SearchFilters {
+    exact_date: Option<NaiveDate>,
+    from_date: Option<NaiveDate>,
+    to_date: Option<NaiveDate>,
+}
+
+#[derive(Clone, Debug)]
+struct SearchTerm {
+    text: String,
+    is_phrase: bool,
+}
+
+impl SearchPlan {
+    fn has_constraints(&self) -> bool {
+        !self.groups.is_empty()
+            || !self.exclude_terms.is_empty()
+            || self.filters.exact_date.is_some()
+            || self.filters.from_date.is_some()
+            || self.filters.to_date.is_some()
+    }
+
+    fn highlight_terms(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for group in &self.groups {
+            for term in group {
+                if term.is_phrase {
+                    for word in term.text.split_whitespace() {
+                        let word = word.trim();
+                        if !word.is_empty() {
+                            out.push(word.to_string());
+                        }
+                    }
+                } else if !term.text.is_empty() {
+                    out.push(term.text.clone());
+                }
+            }
+        }
+        out
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchTokenKind {
+    Or,
+    Include,
+    Exclude,
+}
+
+#[derive(Clone, Debug)]
+struct SearchToken {
+    kind: SearchTokenKind,
+    text: String,
+    is_phrase: bool,
+}
+
+fn parse_search_query(query: &str) -> SearchPlan {
+    let tokens = tokenize_search_query(query);
+    let mut plan = SearchPlan {
+        groups: vec![Vec::new()],
+        ..SearchPlan::default()
+    };
+
+    for token in tokens {
+        match token.kind {
+            SearchTokenKind::Or => {
+                if !plan.groups.last().is_some_and(|g| g.is_empty()) {
+                    plan.groups.push(Vec::new());
+                }
+            }
+            SearchTokenKind::Include | SearchTokenKind::Exclude => {
+                if !token.is_phrase && apply_search_filter(&mut plan.filters, &token.text) {
+                    continue;
+                }
+                let text = normalize_search_text(&token.text, token.is_phrase);
+                if text.is_empty() {
+                    continue;
+                }
+                let term = SearchTerm {
+                    text,
+                    is_phrase: token.is_phrase,
+                };
+                if token.kind == SearchTokenKind::Exclude {
+                    plan.exclude_terms.push(term);
+                } else if let Some(group) = plan.groups.last_mut() {
+                    group.push(term);
+                }
+            }
+        }
+    }
+
+    plan.groups.retain(|group| !group.is_empty());
+    plan
+}
+
+fn tokenize_search_query(query: &str) -> Vec<SearchToken> {
+    let chars: Vec<char> = query.chars().collect();
+    let mut tokens = Vec::new();
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= chars.len() {
+            break;
+        }
+
+        if chars[i] == '|' {
+            tokens.push(SearchToken {
+                kind: SearchTokenKind::Or,
+                text: String::new(),
+                is_phrase: false,
+            });
+            i += 1;
+            continue;
+        }
+
+        let mut kind = SearchTokenKind::Include;
+        if chars[i] == '-'
+            && i + 1 < chars.len()
+            && !chars[i + 1].is_whitespace()
+            && chars[i + 1] != '|'
+        {
+            kind = SearchTokenKind::Exclude;
+            i += 1;
+        }
+
+        let mut is_phrase = false;
+        let text = if i < chars.len() && chars[i] == '"' {
+            is_phrase = true;
+            i += 1;
+            let start = i;
+            while i < chars.len() && chars[i] != '"' {
+                i += 1;
+            }
+            let text = chars[start..i].iter().collect::<String>();
+            if i < chars.len() && chars[i] == '"' {
+                i += 1;
+            }
+            text
+        } else {
+            let start = i;
+            while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '|' {
+                i += 1;
+            }
+            chars[start..i].iter().collect::<String>()
+        };
+
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+
+        tokens.push(SearchToken {
+            kind,
+            text,
+            is_phrase,
+        });
+    }
+
+    tokens
+}
+
+fn apply_search_filter(filters: &mut SearchFilters, token: &str) -> bool {
+    let Some((raw_key, raw_value)) = token.split_once(':') else {
+        return false;
+    };
+    let key = raw_key.trim().to_ascii_lowercase();
+    let value = raw_value.trim();
+    if value.is_empty() {
+        return false;
+    }
+
+    let parsed = parse_date(value);
+    let Some(date) = parsed else {
+        return false;
+    };
+
+    match key.as_str() {
+        "date" | "on" => filters.exact_date = Some(date),
+        "from" | "after" => filters.from_date = Some(date),
+        "to" | "before" => filters.to_date = Some(date),
+        _ => return false,
+    }
+    true
+}
+
+fn normalize_search_text(text: &str, collapse_spaces: bool) -> String {
+    let lowered = text.trim().to_lowercase();
+    if lowered.is_empty() {
+        return String::new();
+    }
+    if collapse_spaces {
+        lowered.split_whitespace().collect::<Vec<_>>().join(" ")
+    } else {
+        lowered
+    }
+}
+
+fn score_search_match(entry: &LogEntry, plan: &SearchPlan) -> Option<usize> {
+    if !matches_date_filters(entry, &plan.filters) {
+        return None;
+    }
+
+    let haystack = entry.content.to_lowercase();
+    let normalized = normalize_search_text(&haystack, true);
+
+    for term in &plan.exclude_terms {
+        if term_hit_count(term, &haystack, &normalized) > 0 {
+            return None;
+        }
+    }
+
+    if plan.groups.is_empty() {
+        return Some(0);
+    }
+
+    let mut best_score: Option<usize> = None;
+    for group in &plan.groups {
+        let mut hits = 0usize;
+        let mut phrase_bonus = 0usize;
+        let mut matched = true;
+        for term in group {
+            let hit_count = term_hit_count(term, &haystack, &normalized);
+            if hit_count == 0 {
+                matched = false;
+                break;
+            }
+            hits += hit_count;
+            if term.is_phrase {
+                phrase_bonus += 1;
+            }
+        }
+
+        if matched {
+            let score = group.len() * 100 + hits * 10 + phrase_bonus * 30;
+            best_score = Some(best_score.map_or(score, |best| best.max(score)));
+        }
+    }
+
+    best_score
+}
+
+fn matches_date_filters(entry: &LogEntry, filters: &SearchFilters) -> bool {
+    if filters.exact_date.is_none() && filters.from_date.is_none() && filters.to_date.is_none() {
+        return true;
+    }
+
+    let Some(entry_date) = extract_date_from_path(&entry.file_path) else {
+        return false;
+    };
+
+    if let Some(exact) = filters.exact_date
+        && entry_date != exact
+    {
+        return false;
+    }
+    if let Some(from) = filters.from_date
+        && entry_date < from
+    {
+        return false;
+    }
+    if let Some(to) = filters.to_date
+        && entry_date > to
+    {
+        return false;
+    }
+    true
+}
+
+fn term_hit_count(term: &SearchTerm, haystack: &str, normalized: &str) -> usize {
+    let needle = term.text.as_str();
+    if needle.is_empty() {
+        return 0;
+    }
+
+    if term.is_phrase {
+        normalized.match_indices(needle).count()
+    } else {
+        haystack.match_indices(needle).count()
+    }
 }
 
 pub fn search_entries_by_keywords(
@@ -1674,6 +2000,77 @@ mod tests {
         assert_eq!(content.lines().next().unwrap_or(""), "- [ ] Task");
     }
 
+    #[test]
+    fn search_entries_supports_case_insensitive_and_terms() {
+        let dir = temp_log_dir();
+        write_log(
+            &dir,
+            "2024-01-01",
+            "## [09:00:00]\nALPHA beta planning\n\n## [10:00:00]\nalpha only\n",
+        );
+
+        let results = search_entries(&dir, "alpha beta").expect("search");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("ALPHA beta planning"));
+    }
+
+    #[test]
+    fn search_entries_supports_phrase_or_and_exclude() {
+        let dir = temp_log_dir();
+        write_log(
+            &dir,
+            "2024-01-02",
+            "## [09:00:00]\nproject alpha launch\n\n## [10:00:00]\nproject alpha done\n## [11:00:00]\nbeta feature\n",
+        );
+
+        let phrase_results = search_entries(&dir, "\"project alpha\" -done").expect("search");
+        assert_eq!(phrase_results.len(), 1);
+        assert!(phrase_results[0].content.contains("project alpha launch"));
+
+        let or_results = search_entries(&dir, "alpha | beta").expect("search");
+        assert_eq!(or_results.len(), 3);
+    }
+
+    #[test]
+    fn search_entries_supports_date_filters() {
+        let dir = temp_log_dir();
+        write_log(&dir, "2024-01-01", "## [09:00:00]\nreport draft\n");
+        write_log(&dir, "2024-01-03", "## [09:00:00]\nreport final\n");
+
+        let exact = search_entries(&dir, "report date:2024-01-01").expect("search");
+        assert_eq!(exact.len(), 1);
+        assert!(exact[0].file_path.ends_with("2024-01-01.md"));
+
+        let ranged = search_entries(&dir, "report from:2024-01-02").expect("search");
+        assert_eq!(ranged.len(), 1);
+        assert!(ranged[0].file_path.ends_with("2024-01-03.md"));
+    }
+
+    #[test]
+    fn search_entries_ranks_higher_coverage_first() {
+        let dir = temp_log_dir();
+        write_log(
+            &dir,
+            "2024-01-04",
+            "## [09:00:00]\nalpha beta context\n\n## [10:00:00]\nalpha only context\n",
+        );
+
+        let results = search_entries(&dir, "alpha beta | alpha").expect("search");
+        assert_eq!(results.len(), 2);
+        assert!(results[0].content.contains("alpha beta context"));
+        assert!(results[1].content.contains("alpha only context"));
+    }
+
+    #[test]
+    fn build_search_highlight_regex_uses_positive_terms_only() {
+        let regex =
+            build_search_highlight_regex("foo | \"bar baz\" -qux").expect("highlight regex");
+        assert!(regex.is_match("foo"));
+        assert!(regex.is_match("bar"));
+        assert!(regex.is_match("baz"));
+        assert!(!regex.is_match("qux"));
+    }
+
     fn write_log(dir: &Path, date: &str, content: &str) {
         let path = get_file_path_for_date(dir, date);
         fs::write(path, content).expect("write log");
@@ -1855,16 +2252,20 @@ mod tests {
     #[test]
     fn parse_log_content_with_pinned_tag() {
         // Correct format: ## [HH:MM:SS] as header, content on next line
-        let content = "## [09:00:00]\n#Important Task #pinned\nThis is content\n\n## [10:00:00]\nRegular";
+        let content =
+            "## [09:00:00]\n#Important Task #pinned\nThis is content\n\n## [10:00:00]\nRegular";
         let entries = parse_log_content(content, "2026-02-01.md");
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].content, "## [09:00:00]\n#Important Task #pinned\nThis is content");
+        assert_eq!(
+            entries[0].content,
+            "## [09:00:00]\n#Important Task #pinned\nThis is content"
+        );
         assert!(entries[0].content.contains("#pinned"));
-        
+
         // Verify first line is timestamp header
         let first_line = entries[0].content.lines().next().unwrap();
         assert_eq!(first_line, "## [09:00:00]");
-        
+
         // Verify second line is the pinned content
         let second_line = entries[0].content.lines().nth(1).unwrap();
         assert_eq!(second_line, "#Important Task #pinned");
