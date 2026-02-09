@@ -1878,6 +1878,9 @@ mod tests {
     use regex::Regex;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn temp_log_dir() -> PathBuf {
         let mut dir = std::env::temp_dir();
@@ -1885,7 +1888,12 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        dir.push(format!("memolog-test-{}-{}", std::process::id(), stamp));
+        let seq = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        dir.push(format!(
+            "memolog-test-{}-{}-{seq}",
+            std::process::id(),
+            stamp
+        ));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }
