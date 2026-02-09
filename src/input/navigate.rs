@@ -127,7 +127,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     } else if key_match(&key, &app.config.keybindings.global.quit) {
         app.quit();
     } else if key.modifiers.contains(KeyModifiers::CONTROL) {
-        let handled = match key_code {
+        match key_code {
             KeyCode::Char('h')
                 if matches!(
                     app.navigate_focus,
@@ -135,15 +135,12 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
                 ) =>
             {
                 app.set_navigate_focus(models::NavigateFocus::Timeline);
-                true
             }
             KeyCode::Char('j') if app.navigate_focus == models::NavigateFocus::Agenda => {
                 app.set_navigate_focus(models::NavigateFocus::Tasks);
-                true
             }
             KeyCode::Char('k') if app.navigate_focus == models::NavigateFocus::Tasks => {
                 app.set_navigate_focus(models::NavigateFocus::Agenda);
-                true
             }
             KeyCode::Char('l') if app.navigate_focus == models::NavigateFocus::Timeline => {
                 let next_focus = if app.last_navigate_focus == Some(models::NavigateFocus::Tasks) {
@@ -152,13 +149,9 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
                     models::NavigateFocus::Agenda
                 };
                 app.set_navigate_focus(next_focus);
-                true
             }
-            _ => false,
+            _ => {}
         };
-        if handled {
-            return;
-        }
     } else if key_match(&key, &app.config.keybindings.global.agenda) {
         actions::focus_agenda_panel(app);
     } else if key_match(&key, &app.config.keybindings.global.focus_next) {

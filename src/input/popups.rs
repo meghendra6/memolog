@@ -592,7 +592,7 @@ fn handle_todo_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.confirm) {
         let mut failed = 0;
         for todo in &app.pending_todos {
-            if let Err(_) = storage::append_entry(&app.config.data.log_path, todo) {
+            if storage::append_entry(&app.config.data.log_path, todo).is_err() {
                 failed += 1;
             }
         }
@@ -829,17 +829,16 @@ fn handle_path_popup(app: &mut App, key: KeyEvent) {
 
 fn handle_google_auth_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.confirm) {
-        if let Some(display) = app.google_auth_display.as_ref() {
-            if let Err(e) = open::that(&display.local_url) {
-                app.toast(format!("Failed to open browser: {}", e));
-            }
+        if let Some(display) = app.google_auth_display.as_ref()
+            && let Err(e) = open::that(&display.local_url)
+        {
+            app.toast(format!("Failed to open browser: {}", e));
         }
         return;
     }
 
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
         app.show_google_auth_popup = false;
-        return;
     }
 }
 
@@ -992,6 +991,35 @@ fn handle_onboarding_popup(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.show_quick_capture_popup = false;
+            app.quick_capture_input.clear();
+        }
+        KeyCode::Enter => {
+            if !app.quick_capture_input.trim().is_empty() {
+                let content = app.quick_capture_input.trim().to_string();
+                if let Err(e) = crate::storage::append_entry(&app.config.data.log_path, &content) {
+                    app.toast(format!("Failed to save: {}", e));
+                } else {
+                    app.toast("⚡ Quick note saved!");
+                    app.update_logs();
+                }
+            }
+            app.show_quick_capture_popup = false;
+            app.quick_capture_input.clear();
+        }
+        KeyCode::Backspace => {
+            app.quick_capture_input.pop();
+        }
+        KeyCode::Char(c) => {
+            app.quick_capture_input.push(c);
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::handle_goto_date_popup;
@@ -1032,34 +1060,5 @@ mod tests {
         );
         let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
         assert_eq!(app.goto_date_input, today);
-    }
-}
-
-fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Esc => {
-            app.show_quick_capture_popup = false;
-            app.quick_capture_input.clear();
-        }
-        KeyCode::Enter => {
-            if !app.quick_capture_input.trim().is_empty() {
-                let content = app.quick_capture_input.trim().to_string();
-                if let Err(e) = crate::storage::append_entry(&app.config.data.log_path, &content) {
-                    app.toast(format!("Failed to save: {}", e));
-                } else {
-                    app.toast("⚡ Quick note saved!");
-                    app.update_logs();
-                }
-            }
-            app.show_quick_capture_popup = false;
-            app.quick_capture_input.clear();
-        }
-        KeyCode::Backspace => {
-            app.quick_capture_input.pop();
-        }
-        KeyCode::Char(c) => {
-            app.quick_capture_input.push(c);
-        }
-        _ => {}
     }
 }
