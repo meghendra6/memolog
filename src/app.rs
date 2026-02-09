@@ -225,16 +225,13 @@ impl<'a> App<'a> {
         let tasks_state = ListState::default();
         let task_filter = TaskFilter::Open;
 
-        // Check if mood has already been logged today
         let today_logs =
             storage::read_today_entries(&config.data.log_path).unwrap_or_else(|_| Vec::new());
-        let has_mood = today_logs.iter().any(|log| log.content.contains("Mood: "));
-        let show_mood_popup = !has_mood;
+        // Disable mood prompt on startup.
+        let show_mood_popup = false;
 
         let mut mood_list_state = ListState::default();
-        if show_mood_popup {
-            mood_list_state.select(Some(0));
-        }
+        mood_list_state.select(Some(0));
 
         let mut show_todo_popup = false;
         let mut pending_todos = Vec::new();
@@ -1993,6 +1990,12 @@ mod tests {
     fn app_starts_in_navigate_mode() {
         let app = App::new();
         assert!(matches!(app.input_mode, InputMode::Navigate));
+    }
+
+    #[test]
+    fn app_does_not_show_mood_popup_on_startup() {
+        let app = App::new();
+        assert!(!app.show_mood_popup);
     }
 
     #[test]
