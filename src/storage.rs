@@ -10,10 +10,17 @@ use crate::task_metadata::{
 use chrono::{Duration, Local, NaiveDate};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::hash::{Hash, Hasher};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+const SEARCH_CACHE_MAX_ENTRIES: usize = 64;
+static ATOMIC_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn ensure_log_dir(log_path: &Path) -> io::Result<()> {
     let path = PathBuf::from(log_path);
@@ -36,6 +43,91 @@ fn get_file_path_for_date(log_path: &Path, date: &str) -> PathBuf {
     path
 }
 
+fn atomic_temp_path(path: &Path) -> PathBuf {
+    let mut temp_path = path.to_path_buf();
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("memolog");
+    let counter = ATOMIC_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    temp_path.set_file_name(format!(
+        ".{file_name}.tmp-{}-{stamp}-{counter}",
+        std::process::id()
+    ));
+    temp_path
+}
+
+pub fn write_atomic_bytes(path: &Path, content: &[u8]) -> io::Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let temp_path = atomic_temp_path(path);
+    {
+        let mut temp_file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)?;
+        if let Err(err) = temp_file
+            .write_all(content)
+            .and_then(|_| temp_file.sync_all())
+        {
+            let _ = fs::remove_file(&temp_path);
+            return Err(err);
+        }
+    }
+
+    #[cfg(unix)]
+    if let Ok(metadata) = fs::metadata(path) {
+        let _ = fs::set_permissions(&temp_path, metadata.permissions());
+    }
+
+    #[cfg(windows)]
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+
+    if let Err(err) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+fn write_log_content(path: &Path, content: &str) -> io::Result<()> {
+    write_atomic_bytes(path, content.as_bytes())?;
+    invalidate_search_cache();
+    Ok(())
+}
+
+fn trailing_newline_count(path: &Path) -> io::Result<usize> {
+    let mut file = fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    if len == 0 {
+        return Ok(0);
+    }
+    let read_len = len.min(2) as usize;
+    file.seek(SeekFrom::End(-(read_len as i64)))?;
+    let mut buf = vec![0u8; read_len];
+    file.read_exact(&mut buf)?;
+    Ok(buf.iter().rev().take_while(|&&b| b == b'\n').count().min(2))
+}
+
+fn separator_for_existing_file(path: &Path) -> io::Result<&'static [u8]> {
+    match trailing_newline_count(path)? {
+        2 => Ok(b""),
+        1 => Ok(b"\n"),
+        _ => Ok(b"\n\n"),
+    }
+}
+
 pub fn append_entry(log_path: &Path, content: &str) -> io::Result<()> {
     let today = Local::now().date_naive();
     append_entry_to_date(log_path, today, content)
@@ -45,6 +137,11 @@ pub fn append_entry_to_date(log_path: &Path, date: NaiveDate, content: &str) -> 
     ensure_log_dir(log_path)?;
     let date_str = date.format("%Y-%m-%d").to_string();
     let path = get_file_path_for_date(log_path, &date_str);
+    let separator = if path.exists() && path.metadata()?.len() > 0 {
+        separator_for_existing_file(&path)?
+    } else {
+        b""
+    };
 
     let time = Local::now().format("%H:%M:%S").to_string();
     let entry_body = content.trim_end_matches('\n');
@@ -63,18 +160,11 @@ pub fn append_entry_to_date(log_path: &Path, date: NaiveDate, content: &str) -> 
     }
 
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-    if path.exists() && path.metadata()?.len() > 0 {
-        let existing = fs::read_to_string(&path).unwrap_or_default();
-        if !existing.ends_with("\n\n") {
-            if existing.ends_with('\n') {
-                file.write_all(b"\n")?;
-            } else {
-                file.write_all(b"\n\n")?;
-            }
-        }
+    if !separator.is_empty() {
+        file.write_all(separator)?;
     }
-
     file.write_all(entry.as_bytes())?;
+    invalidate_search_cache();
     Ok(())
 }
 
@@ -351,22 +441,40 @@ pub struct SearchMatch {
     pub explain: String,
 }
 
-#[cfg(test)]
-fn search_entries(log_path: &Path, query: &str) -> io::Result<Vec<LogEntry>> {
-    Ok(search_entries_with_explain(log_path, query)?
-        .into_iter()
-        .map(|item| item.entry)
-        .collect())
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct SearchCacheKey {
+    log_path: PathBuf,
+    query: String,
 }
 
-pub fn search_entries_with_explain(log_path: &Path, query: &str) -> io::Result<Vec<SearchMatch>> {
-    ensure_log_dir(log_path)?;
-    let plan = parse_search_query(query);
-    if !plan.has_constraints() {
-        return Ok(Vec::new());
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SearchSnapshot {
+    file_count: usize,
+    total_size: u64,
+    digest: u64,
+}
 
-    let mut scored: Vec<SearchMatch> = Vec::new();
+#[derive(Clone)]
+struct SearchCacheEntry {
+    snapshot: SearchSnapshot,
+    results: Vec<SearchMatch>,
+}
+
+static SEARCH_CACHE: OnceLock<Mutex<HashMap<SearchCacheKey, SearchCacheEntry>>> = OnceLock::new();
+
+fn search_cache() -> &'static Mutex<HashMap<SearchCacheKey, SearchCacheEntry>> {
+    SEARCH_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn invalidate_search_cache() {
+    if let Some(cache) = SEARCH_CACHE.get()
+        && let Ok(mut guard) = cache.lock()
+    {
+        guard.clear();
+    }
+}
+
+fn collect_markdown_paths_with_snapshot(log_path: &Path) -> (Vec<PathBuf>, SearchSnapshot) {
     let mut paths: Vec<PathBuf> = Vec::new();
     if let Ok(entries) = fs::read_dir(log_path) {
         for entry in entries.flatten() {
@@ -377,6 +485,75 @@ pub fn search_entries_with_explain(log_path: &Path, query: &str) -> io::Result<V
         }
     }
     paths.sort();
+
+    let mut hasher = DefaultHasher::new();
+    let mut total_size = 0u64;
+    for path in &paths {
+        path.hash(&mut hasher);
+        if let Ok(meta) = fs::metadata(path) {
+            total_size = total_size.saturating_add(meta.len());
+            meta.len().hash(&mut hasher);
+            if let Ok(modified) = meta.modified()
+                && let Ok(since_epoch) = modified.duration_since(std::time::UNIX_EPOCH)
+            {
+                since_epoch.as_nanos().hash(&mut hasher);
+            }
+        }
+    }
+    let file_count = paths.len();
+
+    (
+        paths,
+        SearchSnapshot {
+            file_count,
+            total_size,
+            digest: hasher.finish(),
+        },
+    )
+}
+
+fn read_search_cache(key: &SearchCacheKey, snapshot: SearchSnapshot) -> Option<Vec<SearchMatch>> {
+    let cache = SEARCH_CACHE.get()?;
+    let guard = cache.lock().ok()?;
+    let entry = guard.get(key)?;
+    (entry.snapshot == snapshot).then(|| entry.results.clone())
+}
+
+fn store_search_cache(key: SearchCacheKey, snapshot: SearchSnapshot, results: Vec<SearchMatch>) {
+    if let Ok(mut guard) = search_cache().lock() {
+        if guard.len() >= SEARCH_CACHE_MAX_ENTRIES {
+            guard.clear();
+        }
+        guard.insert(key, SearchCacheEntry { snapshot, results });
+    }
+}
+
+#[cfg(test)]
+fn search_entries(log_path: &Path, query: &str) -> io::Result<Vec<LogEntry>> {
+    Ok(search_entries_with_explain(log_path, query)?
+        .into_iter()
+        .map(|item| item.entry)
+        .collect())
+}
+
+pub fn search_entries_with_explain(log_path: &Path, query: &str) -> io::Result<Vec<SearchMatch>> {
+    ensure_log_dir(log_path)?;
+    let query = query.trim();
+    let plan = parse_search_query(query);
+    if !plan.has_constraints() {
+        return Ok(Vec::new());
+    }
+
+    let (paths, snapshot) = collect_markdown_paths_with_snapshot(log_path);
+    let cache_key = SearchCacheKey {
+        log_path: log_path.to_path_buf(),
+        query: query.to_string(),
+    };
+    if let Some(cached) = read_search_cache(&cache_key, snapshot) {
+        return Ok(cached);
+    }
+
+    let mut scored: Vec<SearchMatch> = Vec::new();
 
     for path in paths {
         let path_str = path.to_string_lossy().to_string();
@@ -400,6 +577,8 @@ pub fn search_entries_with_explain(log_path: &Path, query: &str) -> io::Result<V
             .then_with(|| b.entry.file_path.cmp(&a.entry.file_path))
             .then_with(|| b.entry.line_number.cmp(&a.entry.line_number))
     });
+
+    store_search_cache(cache_key, snapshot, scored.clone());
 
     Ok(scored)
 }
@@ -1456,8 +1635,7 @@ fn mark_task_completed_at_line(file_path: &str, line_number: usize) -> io::Resul
         if !new_content.ends_with('\n') {
             new_content.push('\n');
         }
-        let mut file = fs::File::create(file_path)?;
-        file.write_all(new_content.as_bytes())?;
+        write_log_content(Path::new(file_path), &new_content)?;
     }
 
     Ok(updated)
@@ -1469,6 +1647,7 @@ fn mark_task_completed_at_line(file_path: &str, line_number: usize) -> io::Resul
 pub fn toggle_task_status(file_path: &str, line_number: usize) -> io::Result<()> {
     let content = fs::read_to_string(file_path)?;
     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let mut changed = false;
 
     if line_number < lines.len() {
         let line = &lines[line_number];
@@ -1481,7 +1660,12 @@ pub fn toggle_task_status(file_path: &str, line_number: usize) -> io::Result<()>
         } else {
             line.clone()
         };
+        changed = new_line != *line;
         lines[line_number] = new_line;
+    }
+
+    if !changed {
+        return Ok(());
     }
 
     let mut new_content = lines.join("\n");
@@ -1490,8 +1674,7 @@ pub fn toggle_task_status(file_path: &str, line_number: usize) -> io::Result<()>
         new_content.push('\n');
     }
 
-    let mut file = fs::File::create(file_path)?;
-    file.write_all(new_content.as_bytes())?;
+    write_log_content(Path::new(file_path), &new_content)?;
 
     Ok(())
 }
@@ -1544,8 +1727,7 @@ pub fn update_task_line(
     if !new_content.ends_with('\n') {
         new_content.push('\n');
     }
-    let mut file = fs::File::create(file_path)?;
-    file.write_all(new_content.as_bytes())?;
+    write_log_content(Path::new(file_path), &new_content)?;
 
     Ok(true)
 }
@@ -1581,8 +1763,7 @@ pub fn update_note_line(
     if !new_content.ends_with('\n') {
         new_content.push('\n');
     }
-    let mut file = fs::File::create(file_path)?;
-    file.write_all(new_content.as_bytes())?;
+    write_log_content(Path::new(file_path), &new_content)?;
 
     Ok(true)
 }
@@ -1658,8 +1839,7 @@ pub fn cycle_task_priority(file_path: &str, line_number: usize) -> io::Result<bo
     if !new_content.ends_with('\n') {
         new_content.push('\n');
     }
-    let mut file = fs::File::create(file_path)?;
-    file.write_all(new_content.as_bytes())?;
+    write_log_content(Path::new(file_path), &new_content)?;
 
     Ok(true)
 }
@@ -1716,8 +1896,7 @@ pub fn shift_task_schedule(
     if !new_content.ends_with('\n') {
         new_content.push('\n');
     }
-    let mut file = fs::File::create(file_path)?;
-    file.write_all(new_content.as_bytes())?;
+    write_log_content(Path::new(file_path), &new_content)?;
 
     Ok(Some(schedule))
 }
@@ -1792,7 +1971,7 @@ pub fn complete_task_chain(log_path: &Path, task: &TaskItem) -> io::Result<usize
             if !new_content.ends_with('\n') {
                 new_content.push('\n');
             }
-            fs::write(&path, new_content)?;
+            write_log_content(&path, &new_content)?;
         }
 
         for next_date in next_dates {
@@ -1827,7 +2006,7 @@ pub fn complete_entry_tasks(entry: &LogEntry) -> io::Result<usize> {
         if !new_content.ends_with('\n') {
             new_content.push('\n');
         }
-        fs::write(&entry.file_path, new_content)?;
+        write_log_content(Path::new(&entry.file_path), &new_content)?;
     }
 
     Ok(updated)
@@ -1854,7 +2033,7 @@ pub fn replace_entry_lines(
         new_content.push('\n');
     }
 
-    fs::write(file_path, new_content)
+    write_log_content(Path::new(file_path), &new_content)
 }
 
 pub fn delete_entry_lines(file_path: &str, start_line: usize, end_line: usize) -> io::Result<()> {
@@ -1888,7 +2067,7 @@ pub fn write_file_lines(file_path: &str, lines: &[String]) -> io::Result<()> {
     if !content.ends_with('\n') {
         content.push('\n');
     }
-    fs::write(path, content)
+    write_log_content(path, &content)
 }
 
 pub fn update_fold_marker(
@@ -1919,7 +2098,7 @@ pub fn update_fold_marker(
     if !new_content.ends_with('\n') {
         new_content.push('\n');
     }
-    fs::write(file_path, new_content)
+    write_log_content(Path::new(file_path), &new_content)
 }
 
 fn fold_marker_line(state: FoldOverride) -> &'static str {
@@ -1958,8 +2137,7 @@ pub fn append_tomato_to_line(file_path: &str, line_number: usize) -> io::Result<
         new_content.push('\n');
     }
 
-    let mut file = fs::File::create(file_path)?;
-    file.write_all(new_content.as_bytes())?;
+    write_log_content(Path::new(file_path), &new_content)?;
     Ok(())
 }
 
@@ -2175,7 +2353,7 @@ fn save_state(log_path: &Path, state: &AppState) -> io::Result<()> {
 
     let path = state_file_path(log_path);
     let content = toml::to_string(state).unwrap_or_default();
-    fs::write(path, content)
+    write_atomic_bytes(&path, content.as_bytes())
 }
 
 #[cfg(test)]
@@ -2237,6 +2415,30 @@ mod tests {
             lines.get(second.saturating_sub(1)).copied().unwrap_or(""),
             ""
         );
+    }
+
+    #[test]
+    fn append_entry_repairs_separator_when_file_ends_with_single_newline() {
+        let dir = temp_log_dir();
+        let path = get_today_file_path(&dir);
+        fs::write(&path, "## [09:00:00]\nFirst\n").expect("write initial");
+
+        append_entry(&dir, "Second").expect("append");
+
+        let content = fs::read_to_string(&path).expect("read log");
+        assert!(content.contains("First\n\n## ["));
+    }
+
+    #[test]
+    fn append_entry_repairs_separator_when_file_has_no_trailing_newline() {
+        let dir = temp_log_dir();
+        let path = get_today_file_path(&dir);
+        fs::write(&path, "## [09:00:00]\nFirst").expect("write initial");
+
+        append_entry(&dir, "Second").expect("append");
+
+        let content = fs::read_to_string(&path).expect("read log");
+        assert!(content.contains("First\n\n## ["));
     }
 
     #[test]
@@ -2409,6 +2611,25 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(results[0].score > 0);
         assert!(results[0].explain.contains("recent +"));
+    }
+
+    #[test]
+    fn search_entries_cache_refreshes_after_external_file_change() {
+        let dir = temp_log_dir();
+        write_log(&dir, "2024-01-06", "## [09:00:00]\nalpha planning\n");
+
+        let initial = search_entries(&dir, "beta").expect("search initial");
+        assert!(initial.is_empty());
+
+        write_log(
+            &dir,
+            "2024-01-06",
+            "## [09:00:00]\nalpha planning\n\n## [10:00:00]\nbeta launch\n",
+        );
+
+        let refreshed = search_entries(&dir, "beta").expect("search refreshed");
+        assert_eq!(refreshed.len(), 1);
+        assert!(refreshed[0].content.contains("beta launch"));
     }
 
     #[test]
