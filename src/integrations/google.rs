@@ -1,9 +1,9 @@
-use crate::config::{Config, GoogleConfig, google_sync_state_path, google_token_path};
+use crate::config::{google_sync_state_path, google_token_path, Config, GoogleConfig};
 use crate::models::{AgendaItem, AgendaItemKind, TaskSchedule};
 use crate::storage::{self, NoteLineUpdate, TaskLineUpdate};
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
-use reqwest::Url;
 use reqwest::blocking::Client;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -608,7 +608,7 @@ fn decode_component(input: &str) -> String {
 }
 
 fn generate_state() -> String {
-    use rand::{Rng, distributions::Alphanumeric};
+    use rand::{distributions::Alphanumeric, Rng};
     rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(32)
@@ -662,12 +662,9 @@ fn truncate_error(message: &str) -> String {
     out
 }
 fn save_token(path: &Path, token: &StoredToken) -> Result<(), SyncError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let content =
         serde_json::to_string_pretty(token).map_err(|e| SyncError::Request(e.to_string()))?;
-    fs::write(path, content)?;
+    storage::write_atomic_bytes(path, content.as_bytes())?;
     Ok(())
 }
 
@@ -682,12 +679,9 @@ fn load_sync_state(path: &Path) -> Result<SyncState, SyncError> {
 }
 
 fn save_sync_state(path: &Path, state: &SyncState) -> Result<(), SyncError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let content =
         serde_json::to_string_pretty(state).map_err(|e| SyncError::Request(e.to_string()))?;
-    fs::write(path, content)?;
+    storage::write_atomic_bytes(path, content.as_bytes())?;
     Ok(())
 }
 
