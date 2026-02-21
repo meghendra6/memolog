@@ -52,6 +52,42 @@ fn initial_load_start_date(today: NaiveDate, available_dates: &[NaiveDate]) -> N
     }
 }
 
+fn load_initial_logs(
+    log_path: &Path,
+    today: NaiveDate,
+    available_dates: &[NaiveDate],
+) -> (NaiveDate, Vec<LogEntry>) {
+    let effective_start = initial_load_start_date(today, available_dates);
+    let mut logs = storage::read_entries_for_date_range(log_path, effective_start, today)
+        .unwrap_or_else(|_| Vec::new());
+
+    if !logs.is_empty() {
+        return (effective_start, logs);
+    }
+
+    let Some(earliest) = available_dates.first().copied() else {
+        return (effective_start, logs);
+    };
+
+    // If recent files exist but are empty, walk backward to find the most recent
+    // window that actually contains entries so the timeline isn't blank on startup.
+    for fallback_end in available_dates
+        .iter()
+        .rev()
+        .copied()
+        .filter(|date| *date < effective_start && *date <= today)
+    {
+        let fallback_start = (fallback_end - Duration::days(INITIAL_LOAD_DAYS - 1)).max(earliest);
+        logs = storage::read_entries_for_date_range(log_path, fallback_start, fallback_end)
+            .unwrap_or_else(|_| Vec::new());
+        if !logs.is_empty() {
+            return (fallback_start, logs);
+        }
+    }
+
+    (effective_start, logs)
+}
+
 #[derive(Clone)]
 pub struct EditingEntry {
     pub file_path: String,
@@ -248,11 +284,8 @@ impl<'a> App<'a> {
             storage::get_available_log_dates(&config.data.log_path).unwrap_or_default();
         let earliest_available_date =
             storage::get_earliest_log_date(&config.data.log_path).unwrap_or(None);
-        let effective_start = initial_load_start_date(today, &available_dates);
-
-        let mut all_logs =
-            storage::read_entries_for_date_range(&config.data.log_path, effective_start, today)
-                .unwrap_or_else(|_| Vec::new());
+        let (effective_start, mut all_logs) =
+            load_initial_logs(&config.data.log_path, today, &available_dates);
         let fold_overrides = extract_fold_markers_from_logs(&mut all_logs);
         let timeline_filter = TimelineFilter::All;
         let logs = Vec::new();
@@ -2265,6 +2298,20 @@ fn mark_onboarding_seen_if_needed() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_LOG_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_log_dir() -> std::path::PathBuf {
+        let unique = TEST_LOG_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "memolog-app-test-{}-{}",
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&path).expect("create temp log dir");
+        path
+    }
 
     fn make_test_app() -> App<'static> {
         let mut app = App::new();
@@ -2441,5 +2488,30 @@ mod tests {
             start,
             NaiveDate::from_ymd_opt(2026, 2, 15).expect("valid date")
         );
+    }
+
+    #[test]
+    fn load_initial_logs_falls_back_when_recent_files_are_empty() {
+        let log_dir = temp_log_dir();
+        let today = NaiveDate::from_ymd_opt(2026, 2, 21).expect("valid date");
+        let fallback_date = NaiveDate::from_ymd_opt(2026, 2, 13).expect("valid date");
+        let empty_recent_date = NaiveDate::from_ymd_opt(2026, 2, 21).expect("valid date");
+        let fallback_path = log_dir.join(format!("{}.md", fallback_date.format("%Y-%m-%d")));
+        let empty_recent_path =
+            log_dir.join(format!("{}.md", empty_recent_date.format("%Y-%m-%d")));
+
+        fs::write(
+            &fallback_path,
+            "## [00:00:00]\n- example historical entry #work\n",
+        )
+        .expect("write fallback file");
+        fs::write(&empty_recent_path, "").expect("write empty recent file");
+
+        let available = vec![fallback_date, empty_recent_date];
+        let (start, logs) = load_initial_logs(&log_dir, today, &available);
+
+        assert_eq!(start, fallback_date);
+        assert_eq!(logs.len(), 1);
+        assert!(logs[0].file_path.ends_with("2026-02-13.md"));
     }
 }
