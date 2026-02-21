@@ -76,17 +76,46 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     let mut cursor_area: Option<Rect> = None;
 
     if app.input_mode != InputMode::Editing {
-        // Split top area: 70% logs, 30% tasks
+        let navigate_mode = app.input_mode == InputMode::Navigate;
+        let is_timeline_focused = navigate_mode && app.navigate_focus == NavigateFocus::Timeline;
+        let is_agenda_focused = navigate_mode && app.navigate_focus == NavigateFocus::Agenda;
+        let is_tasks_focused = navigate_mode && app.navigate_focus == NavigateFocus::Tasks;
+
+        // Adaptive layout: amplify space for the focused panel to improve readability and throughput.
+        let (timeline_pct, right_pct) = if is_timeline_focused {
+            (78, 22)
+        } else if is_tasks_focused {
+            (62, 38)
+        } else if is_agenda_focused {
+            (64, 36)
+        } else {
+            (70, 30)
+        };
+        let (agenda_pct, tasks_pct) = if is_agenda_focused {
+            (68, 32)
+        } else if is_tasks_focused {
+            (42, 58)
+        } else {
+            (60, 40)
+        };
+
+        // Split top area: timeline + right panel
         let top_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+            .constraints([
+                Constraint::Percentage(timeline_pct),
+                Constraint::Percentage(right_pct),
+            ])
             .split(main_area);
 
         let timeline_area_raw = top_chunks[0];
         let right_panel = top_chunks[1];
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .constraints([
+                Constraint::Percentage(agenda_pct),
+                Constraint::Percentage(tasks_pct),
+            ])
             .split(right_panel);
         let agenda_area = right_chunks[0];
         let tasks_area = right_chunks[1];
@@ -109,11 +138,12 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
         // Render pinned section if it exists
         if let Some(pinned_rect) = pinned_area {
+            let pinned_title = format!(" 📌 Pinned ({}) ", pinned_entries.len());
             let pinned_block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(tokens.ui_muted))
                 .title(Line::from(Span::styled(
-                    " 📌 Pinned ",
+                    pinned_title,
                     Style::default()
                         .fg(tokens.ui_accent)
                         .add_modifier(Modifier::BOLD),
@@ -548,14 +578,6 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             ))));
             ui_selected_index = None;
         }
-
-        let is_timeline_focused =
-            app.input_mode == InputMode::Navigate && app.navigate_focus == NavigateFocus::Timeline;
-        let is_agenda_focused =
-            app.input_mode == InputMode::Navigate && app.navigate_focus == NavigateFocus::Agenda;
-        let is_tasks_focused =
-            app.input_mode == InputMode::Navigate && app.navigate_focus == NavigateFocus::Tasks;
-
         // Collect status information (used in both search and normal mode)
         let focus_info = if let Some(selected_idx) = app.logs_state.selected() {
             if let Some(entry) = app.logs.get(selected_idx) {
@@ -666,6 +688,11 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             "TIMELINE"
         };
         let timeline_focus_marker = if is_timeline_focused { "●" } else { "○" };
+        let timeline_hint = if is_timeline_focused {
+            " · j/k move · Enter preview · e edit · i compose"
+        } else {
+            ""
+        };
 
         // Add scroll indicator for tall entries
         let scroll_indicator = if selected_entry_line_count > viewport_height && viewport_height > 0
@@ -683,8 +710,9 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             ""
         };
 
-        let timeline_title_text =
-            format!("{timeline_focus_marker} {title_label}{scroll_indicator} — {summary}");
+        let timeline_title_text = format!(
+            "{timeline_focus_marker} {title_label}{scroll_indicator}{timeline_hint} — {summary}"
+        );
         let timeline_title = truncate(
             &timeline_title_text,
             timeline_area.width.saturating_sub(4) as usize,
@@ -885,8 +913,13 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         let filter_label = app.task_filter_label();
         let filter_summary = format!("{filter_label}: {}", app.tasks.len());
         let tasks_focus_marker = if is_tasks_focused { "●" } else { "○" };
+        let tasks_hint = if is_tasks_focused {
+            " · Space toggle · Shift+P priority · p pomodoro"
+        } else {
+            ""
+        };
         let tasks_title_text =
-            format!("{tasks_focus_marker} TASKS ({filter_summary}) — {tasks_summary}");
+            format!("{tasks_focus_marker} TASKS ({filter_summary}){tasks_hint} — {tasks_summary}");
         let tasks_title = truncate(
             &tasks_title_text,
             tasks_area.width.saturating_sub(4) as usize,
@@ -2069,7 +2102,13 @@ fn render_agenda_panel(
         "Unsched: off"
     };
     let focus_marker = if focused { "●" } else { "○" };
-    let title_text = format!("{focus_marker} AGENDA {date_label} · {filter_label} · {unscheduled}");
+    let focus_hint = if focused {
+        " · h/l day · PgUp/PgDn week · f filter · u unsched"
+    } else {
+        ""
+    };
+    let title_text =
+        format!("{focus_marker} AGENDA {date_label} · {filter_label} · {unscheduled}{focus_hint}");
     let title = truncate(&title_text, area.width.saturating_sub(4) as usize);
 
     let border_color = if focused {
@@ -2628,8 +2667,8 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
             message,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ));
-    } else if right_plain.is_empty() && app.input_mode == InputMode::Navigate {
-        let hint = truncate("i compose · / search · ? help · Ctrl+H/J/K/L focus", 64);
+    } else if right_plain.is_empty() {
+        let hint = truncate(status_focus_hint(app), 72);
         right_plain.push_str(&hint);
         right_spans.push(Span::styled(
             hint,
@@ -2664,6 +2703,24 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         .style(Style::default().fg(tokens.ui_fg).bg(tokens.ui_bg))
         .alignment(Alignment::Right);
     f.render_widget(right, status_chunks[1]);
+}
+
+fn status_focus_hint(app: &App) -> &'static str {
+    match app.input_mode {
+        InputMode::Navigate => match app.navigate_focus {
+            NavigateFocus::Timeline => {
+                "Timeline: j/k move · Enter preview · e edit · i compose · Tab fold"
+            }
+            NavigateFocus::Agenda => {
+                "Agenda: j/k move · h/l day · PgUp/PgDn week · f filter · u unsched"
+            }
+            NavigateFocus::Tasks => {
+                "Tasks: Space toggle · Shift+P priority · ]/} snooze · p pomodoro"
+            }
+        },
+        InputMode::Search => "Search: Enter apply · Esc close · Ctrl+P/N recent · Ctrl+S save",
+        InputMode::Editing => "Editor: Shift+Enter save · Esc confirm · Ctrl+; date · Ctrl+T task",
+    }
 }
 
 fn status_file_label(app: &App) -> String {
