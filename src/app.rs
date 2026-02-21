@@ -88,6 +88,70 @@ fn load_initial_logs(
     (effective_start, logs)
 }
 
+fn gap_days_since_latest_log(today: NaiveDate, available_dates: &[NaiveDate]) -> Option<i64> {
+    available_dates
+        .iter()
+        .rev()
+        .find(|date| **date < today)
+        .map(|date| (today - *date).num_days())
+}
+
+fn apply_startup_carryover(
+    log_path: &Path,
+    today: NaiveDate,
+    active_date: &str,
+    available_dates: &[NaiveDate],
+) -> (Vec<String>, bool, Option<String>, bool) {
+    let already_checked = storage::is_carryover_done(log_path).unwrap_or(false);
+    if already_checked {
+        return (Vec::new(), false, None, false);
+    }
+
+    let todos = match storage::collect_carryover_tasks(log_path, active_date) {
+        Ok(todos) if !todos.is_empty() => todos,
+        _ => return (Vec::new(), false, None, false),
+    };
+
+    let Some(gap_days) = gap_days_since_latest_log(today, available_dates) else {
+        return (todos, true, None, false);
+    };
+
+    if gap_days < 2 {
+        return (todos, true, None, false);
+    }
+
+    let mut failed = 0usize;
+    for todo in &todos {
+        if storage::append_entry(log_path, todo).is_err() {
+            failed += 1;
+        }
+    }
+
+    if failed == 0 {
+        let _ = storage::mark_carryover_done(log_path);
+        return (
+            Vec::new(),
+            false,
+            Some(format!(
+                "Auto-carried over {} task(s) after a {}-day gap.",
+                todos.len(),
+                gap_days
+            )),
+            true,
+        );
+    }
+
+    (
+        todos,
+        true,
+        Some(format!(
+            "Auto-carryover failed for {} task(s); confirm in popup.",
+            failed
+        )),
+        false,
+    )
+}
+
 #[derive(Clone)]
 pub struct EditingEntry {
     pub file_path: String,
@@ -278,12 +342,42 @@ impl<'a> App<'a> {
         let mut textarea = TextArea::default();
         textarea.set_placeholder_text(PLACEHOLDER_COMPOSE);
 
+        // Disable mood prompt on startup.
+        let show_mood_popup = false;
+        let mut mood_list_state = ListState::default();
+        mood_list_state.select(Some(0));
+
+        let mut available_dates =
+            storage::get_available_log_dates(&config.data.log_path).unwrap_or_default();
+        let mut earliest_available_date =
+            storage::get_earliest_log_date(&config.data.log_path).unwrap_or(None);
+        let mut show_todo_popup = false;
+        let mut pending_todos = Vec::new();
+        let mut carryover_startup_toast = None;
+        let mut did_auto_carryover = false;
+
+        if !show_mood_popup {
+            let (todos, show_popup, toast, auto_carried) = apply_startup_carryover(
+                &config.data.log_path,
+                today,
+                &active_date,
+                &available_dates,
+            );
+            pending_todos = todos;
+            show_todo_popup = show_popup;
+            carryover_startup_toast = toast;
+            did_auto_carryover = auto_carried;
+        }
+
+        if did_auto_carryover {
+            available_dates =
+                storage::get_available_log_dates(&config.data.log_path).unwrap_or_default();
+            earliest_available_date =
+                storage::get_earliest_log_date(&config.data.log_path).unwrap_or(None);
+        }
+
         // Load logs from the past week, and fall back to the most recent available window
         // when no entries exist in the recent window.
-        let available_dates =
-            storage::get_available_log_dates(&config.data.log_path).unwrap_or_default();
-        let earliest_available_date =
-            storage::get_earliest_log_date(&config.data.log_path).unwrap_or(None);
         let (effective_start, mut all_logs) =
             load_initial_logs(&config.data.log_path, today, &available_dates);
         let fold_overrides = extract_fold_markers_from_logs(&mut all_logs);
@@ -298,28 +392,6 @@ impl<'a> App<'a> {
 
         let today_logs =
             storage::read_today_entries(&config.data.log_path).unwrap_or_else(|_| Vec::new());
-        // Disable mood prompt on startup.
-        let show_mood_popup = false;
-
-        let mut mood_list_state = ListState::default();
-        mood_list_state.select(Some(0));
-
-        let mut show_todo_popup = false;
-        let mut pending_todos = Vec::new();
-
-        if !show_mood_popup {
-            // Check for unfinished tasks from previous day to carry over
-            let already_checked =
-                storage::is_carryover_done(&config.data.log_path).unwrap_or(false);
-            if !already_checked
-                && let Ok(todos) =
-                    storage::collect_carryover_tasks(&config.data.log_path, &active_date)
-                && !todos.is_empty()
-            {
-                pending_todos = todos;
-                show_todo_popup = true;
-            }
-        }
 
         let input_mode = InputMode::Navigate;
 
@@ -335,13 +407,19 @@ impl<'a> App<'a> {
             saved_search_list_state.select(Some(0));
         }
 
-        let startup_toast = if keybinding_conflicts.is_empty() {
+        let keybinding_toast = if keybinding_conflicts.is_empty() {
             None
         } else {
             Some(format!(
                 "{} keybinding conflict(s) detected. Check Help for details.",
                 keybinding_conflicts.len()
             ))
+        };
+        let startup_toast = match (carryover_startup_toast, keybinding_toast) {
+            (Some(carryover), Some(keybinding)) => Some(format!("{carryover} {keybinding}")),
+            (Some(carryover), None) => Some(carryover),
+            (None, Some(keybinding)) => Some(keybinding),
+            (None, None) => None,
         };
         let startup_toast_expiry = startup_toast.as_ref().map(|_| now + Duration::seconds(8));
 
@@ -2513,5 +2591,65 @@ mod tests {
         assert_eq!(start, fallback_date);
         assert_eq!(logs.len(), 1);
         assert!(logs[0].file_path.ends_with("2026-02-13.md"));
+    }
+
+    #[test]
+    fn startup_carryover_auto_applies_after_multi_day_gap() {
+        let log_dir = temp_log_dir();
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+        let prior_date = today - Duration::days(10);
+        let prior_path = log_dir.join(format!("{}.md", prior_date.format("%Y-%m-%d")));
+
+        fs::write(&prior_path, "## [00:00:00]\n- [ ] unresolved task #work\n")
+            .expect("write prior task");
+
+        let available = vec![prior_date];
+        let (pending, show_popup, toast, auto_carried) =
+            apply_startup_carryover(&log_dir, today, &today_str, &available);
+
+        assert!(pending.is_empty());
+        assert!(!show_popup);
+        assert!(auto_carried);
+        assert!(
+            toast
+                .as_deref()
+                .is_some_and(|message| message.contains("Auto-carried over 1 task(s)"))
+        );
+        assert!(storage::is_carryover_done(&log_dir).expect("carryover state"));
+
+        let today_tasks = storage::read_today_tasks(&log_dir).expect("read today tasks");
+        assert_eq!(today_tasks.len(), 1);
+        assert!(today_tasks[0].text.contains("unresolved task"));
+    }
+
+    #[test]
+    fn startup_carryover_keeps_popup_for_one_day_gap() {
+        let log_dir = temp_log_dir();
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+        let prior_date = today - Duration::days(1);
+        let prior_path = log_dir.join(format!("{}.md", prior_date.format("%Y-%m-%d")));
+
+        fs::write(
+            &prior_path,
+            "## [00:00:00]\n- [ ] unresolved yesterday task #work\n",
+        )
+        .expect("write prior task");
+
+        let available = vec![prior_date];
+        let (pending, show_popup, toast, auto_carried) =
+            apply_startup_carryover(&log_dir, today, &today_str, &available);
+
+        assert_eq!(pending.len(), 1);
+        assert!(show_popup);
+        assert!(!auto_carried);
+        assert!(toast.is_none());
+        assert!(!storage::is_carryover_done(&log_dir).expect("carryover state"));
+        assert!(
+            storage::read_today_tasks(&log_dir)
+                .expect("read today tasks")
+                .is_empty()
+        );
     }
 }
