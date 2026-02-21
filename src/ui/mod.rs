@@ -521,16 +521,33 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             app.entry_scroll_offset = 0;
         }
 
-        let list_items = items_with_separators;
+        let mut list_items = items_with_separators;
 
         // Convert selected log index to UI index for rendering
-        let ui_selected_index = if let Some(selected_log_idx) = app.logs_state.selected() {
+        let mut ui_selected_index = if let Some(selected_log_idx) = app.logs_state.selected() {
             ui_to_log_index
                 .iter()
                 .position(|&log_idx| log_idx == Some(selected_log_idx))
         } else {
             None
         };
+        if list_items.is_empty() {
+            list_items.push(ListItem::new(Line::from(Span::styled(
+                "No timeline entries yet.",
+                Style::default().fg(tokens.ui_muted),
+            ))));
+            list_items.push(ListItem::new(Line::from(Span::styled(
+                "Press i to capture your first memo.",
+                Style::default()
+                    .fg(tokens.ui_accent)
+                    .add_modifier(Modifier::BOLD),
+            ))));
+            list_items.push(ListItem::new(Line::from(Span::styled(
+                "Tip: use #pinned for always-visible notes.",
+                Style::default().fg(tokens.ui_muted),
+            ))));
+            ui_selected_index = None;
+        }
 
         let is_timeline_focused =
             app.input_mode == InputMode::Navigate && app.navigate_focus == NavigateFocus::Timeline;
@@ -648,6 +665,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         } else {
             "TIMELINE"
         };
+        let timeline_focus_marker = if is_timeline_focused { "●" } else { "○" };
 
         // Add scroll indicator for tall entries
         let scroll_indicator = if selected_entry_line_count > viewport_height && viewport_height > 0
@@ -665,7 +683,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             ""
         };
 
-        let timeline_title_text = format!("{title_label}{scroll_indicator} — {summary}");
+        let timeline_title_text =
+            format!("{timeline_focus_marker} {title_label}{scroll_indicator} — {summary}");
         let timeline_title = truncate(
             &timeline_title_text,
             timeline_area.width.saturating_sub(4) as usize,
@@ -673,7 +692,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         let timeline_border_color = if is_timeline_focused {
             tokens.ui_accent
         } else {
-            tokens.ui_border_default
+            tokens.ui_muted
         };
         let timeline_title_style = if is_timeline_focused {
             Style::default()
@@ -696,7 +715,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 .bg(highlight_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().bg(highlight_bg)
+            Style::default().bg(tokens.ui_cursorline_bg)
         };
 
         // When the selected entry is tall (taller than viewport), render it as a Paragraph
@@ -739,7 +758,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         let todo_area_width = tasks_inner.width.saturating_sub(1).max(1) as usize;
 
         let today = Local::now().date_naive();
-        let todos: Vec<ListItem> = app
+        let mut todos: Vec<ListItem> = app
             .tasks
             .iter()
             .map(|task| {
@@ -841,6 +860,22 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 ListItem::new(Text::from(lines))
             })
             .collect();
+        if todos.is_empty() {
+            todos.push(ListItem::new(Line::from(Span::styled(
+                "No tasks in this view.",
+                Style::default().fg(tokens.ui_muted),
+            ))));
+            todos.push(ListItem::new(Line::from(Span::styled(
+                "Press i to add a task, Space to toggle done.",
+                Style::default()
+                    .fg(tokens.ui_accent)
+                    .add_modifier(Modifier::BOLD),
+            ))));
+            todos.push(ListItem::new(Line::from(Span::styled(
+                "Use Shift+P for priority and ] / } to snooze.",
+                Style::default().fg(tokens.ui_muted),
+            ))));
+        }
 
         let (open_count, done_count) = app.task_counts();
         let tasks_summary = format!(
@@ -849,7 +884,9 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         );
         let filter_label = app.task_filter_label();
         let filter_summary = format!("{filter_label}: {}", app.tasks.len());
-        let tasks_title_text = format!("TASKS ({filter_summary}) — {tasks_summary}");
+        let tasks_focus_marker = if is_tasks_focused { "●" } else { "○" };
+        let tasks_title_text =
+            format!("{tasks_focus_marker} TASKS ({filter_summary}) — {tasks_summary}");
         let tasks_title = truncate(
             &tasks_title_text,
             tasks_area.width.saturating_sub(4) as usize,
@@ -857,7 +894,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         let tasks_border_color = if is_tasks_focused {
             tokens.ui_accent
         } else {
-            tokens.ui_border_default
+            tokens.ui_muted
         };
         let tasks_title_style = if is_tasks_focused {
             Style::default()
@@ -877,7 +914,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 .bg(highlight_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().bg(highlight_bg)
+            Style::default().bg(tokens.ui_cursorline_bg)
         };
 
         let todo_list = List::new(todos)
@@ -2031,13 +2068,14 @@ fn render_agenda_panel(
     } else {
         "Unsched: off"
     };
-    let title_text = format!("AGENDA {date_label} · {filter_label} · {unscheduled}");
+    let focus_marker = if focused { "●" } else { "○" };
+    let title_text = format!("{focus_marker} AGENDA {date_label} · {filter_label} · {unscheduled}");
     let title = truncate(&title_text, area.width.saturating_sub(4) as usize);
 
     let border_color = if focused {
         tokens.ui_accent
     } else {
-        tokens.ui_border_default
+        tokens.ui_muted
     };
     let title_style = if focused {
         Style::default()
@@ -2090,7 +2128,17 @@ fn render_agenda_panel(
 
     if visible.is_empty() {
         items.push(ListItem::new(Line::from(Span::styled(
-            "No agenda items.",
+            "No agenda items for this day.",
+            Style::default().fg(tokens.ui_muted),
+        ))));
+        items.push(ListItem::new(Line::from(Span::styled(
+            "Tip: add @sched(...) or @time(...) in a task.",
+            Style::default()
+                .fg(tokens.ui_accent)
+                .add_modifier(Modifier::BOLD),
+        ))));
+        items.push(ListItem::new(Line::from(Span::styled(
+            "Navigate dates with h/l or PgUp/PgDn.",
             Style::default().fg(tokens.ui_muted),
         ))));
     } else {
@@ -2262,7 +2310,7 @@ fn render_agenda_panel(
             .bg(highlight_bg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().bg(highlight_bg)
+        Style::default().bg(tokens.ui_cursorline_bg)
     };
 
     let list = List::new(items)
@@ -2454,12 +2502,15 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         InputMode::Search => "SEARCH",
     };
     let focus_label = match app.navigate_focus {
-        NavigateFocus::Timeline => "TL",
-        NavigateFocus::Agenda => "AG",
-        NavigateFocus::Tasks => "TS",
+        NavigateFocus::Timeline => "Focus:Timeline",
+        NavigateFocus::Agenda => "Focus:Agenda",
+        NavigateFocus::Tasks => "Focus:Tasks",
     };
     let date_label = status_date_label(app);
-    let context_label = format!("ctx:{}", app.timeline_filter_label().to_ascii_lowercase());
+    let context_label = format!(
+        "Context:{}",
+        app.timeline_filter_label().to_ascii_lowercase()
+    );
     let search_label = status_search_label(app);
 
     let file_label = status_file_label(app);
@@ -2576,6 +2627,15 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         right_spans.push(Span::styled(
             message,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+    } else if right_plain.is_empty() && app.input_mode == InputMode::Navigate {
+        let hint = truncate("i compose · / search · ? help · Ctrl+H/J/K/L focus", 64);
+        right_plain.push_str(&hint);
+        right_spans.push(Span::styled(
+            hint,
+            Style::default()
+                .fg(tokens.ui_muted)
+                .add_modifier(Modifier::DIM),
         ));
     }
 
