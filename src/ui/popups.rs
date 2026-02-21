@@ -1290,6 +1290,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
     let global_entries = if compact {
         vec![
             ("Help".to_string(), fmt_keys(&kb.global.help)),
+            (
+                "Focus sprint mode".to_string(),
+                fmt_keys(&kb.global.focus_mode_toggle),
+            ),
             ("Focus move".to_string(), "Ctrl+H/J/K/L".to_string()),
             (
                 "Compose / Search / Jump / Tags".to_string(),
@@ -1345,6 +1349,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
     } else {
         vec![
             ("Help".to_string(), fmt_keys(&kb.global.help)),
+            (
+                "Focus sprint mode".to_string(),
+                fmt_keys(&kb.global.focus_mode_toggle),
+            ),
             ("Focus move".to_string(), "Ctrl+H/J/K/L".to_string()),
             ("Compose".to_string(), fmt_keys(&kb.global.focus_composer)),
             (

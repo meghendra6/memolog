@@ -459,6 +459,7 @@ pub struct KeyBindings {
 pub struct GlobalBindings {
     pub quit: Vec<String>,
     pub help: Vec<String>,
+    pub focus_mode_toggle: Vec<String>,
     pub focus_timeline: Vec<String>,
     pub focus_tasks: Vec<String>,
     pub focus_composer: Vec<String>,
@@ -483,6 +484,7 @@ impl Default for GlobalBindings {
         Self {
             quit: vec!["q".to_string()],
             help: vec!["?".to_string()],
+            focus_mode_toggle: vec!["z".to_string()],
             focus_timeline: Vec::new(),
             focus_tasks: Vec::new(),
             focus_composer: vec!["i".to_string()],
@@ -1251,6 +1253,11 @@ impl Config {
             },
             BindingSpec {
                 scope: BindingScope::Global,
+                action: "global.focus_mode_toggle",
+                keys: &kb.global.focus_mode_toggle,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
                 action: "global.focus_timeline",
                 keys: &kb.global.focus_timeline,
             },
@@ -1477,6 +1484,7 @@ fn is_priority_global_action(action: &str) -> bool {
     matches!(
         action,
         "global.help"
+            | "global.focus_mode_toggle"
             | "global.search"
             | "global.goto_date"
             | "global.quick_capture"
