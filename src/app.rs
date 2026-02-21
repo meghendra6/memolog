@@ -1391,7 +1391,7 @@ impl<'a> App<'a> {
             return;
         }
         if let Some(current) = self.agenda_state.selected()
-            && visible.iter().any(|idx| *idx == current)
+            && visible.contains(&current)
         {
             return;
         }
@@ -1793,11 +1793,9 @@ fn entry_matches_timeline_filter(entry: &LogEntry, filter: TimelineFilter) -> bo
 }
 
 pub(crate) fn entry_context_kind(entry: &LogEntry) -> TimelineFilter {
-    let (has_work, has_personal) = entry_context_flags(entry);
+    let (has_work, _has_personal) = entry_context_flags(entry);
     if has_work {
         TimelineFilter::Work
-    } else if has_personal {
-        TimelineFilter::Personal
     } else {
         TimelineFilter::Personal
     }
@@ -1815,7 +1813,7 @@ pub(crate) fn entry_context_flags(entry: &LogEntry) -> (bool, bool) {
             }
 
             let prev = line[..idx].chars().last();
-            let prev_ok = prev.map_or(true, |c| !is_context_tag_char(c));
+            let prev_ok = prev.is_none_or(|c| !is_context_tag_char(c));
 
             let mut token_lower = String::new();
             let mut end_idx = idx + ch.len_utf8();
@@ -1830,7 +1828,7 @@ pub(crate) fn entry_context_flags(entry: &LogEntry) -> (bool, bool) {
             }
 
             let next = line[end_idx..].chars().next();
-            let next_ok = next.map_or(true, |c| !is_context_tag_char(c));
+            let next_ok = next.is_none_or(|c| !is_context_tag_char(c));
             if !(prev_ok && next_ok) {
                 continue;
             }
@@ -1866,7 +1864,7 @@ pub(crate) fn strip_context_tags_from_line(line: &str) -> (String, bool) {
         }
 
         let prev = line[..idx].chars().last();
-        let prev_ok = prev.map_or(true, |c| !is_context_tag_char(c));
+        let prev_ok = prev.is_none_or(|c| !is_context_tag_char(c));
 
         let mut token = String::new();
         let mut token_lower = String::new();
@@ -1883,7 +1881,7 @@ pub(crate) fn strip_context_tags_from_line(line: &str) -> (String, bool) {
         }
 
         let next = line[end_idx..].chars().next();
-        let next_ok = next.map_or(true, |c| !is_context_tag_char(c));
+        let next_ok = next.is_none_or(|c| !is_context_tag_char(c));
         let is_context = token_lower == "work" || token_lower == "personal";
 
         if prev_ok && next_ok && is_context {
@@ -1956,9 +1954,7 @@ fn apply_context_tag_to_lines(lines: &mut Vec<String>, context: TimelineFilter) 
     true
 }
 
-fn extract_fold_markers_from_logs(
-    logs: &mut Vec<LogEntry>,
-) -> HashMap<EntryIdentity, FoldOverride> {
+fn extract_fold_markers_from_logs(logs: &mut [LogEntry]) -> HashMap<EntryIdentity, FoldOverride> {
     let mut overrides = HashMap::new();
     for entry in logs.iter_mut() {
         let (override_state, cleaned) = strip_fold_markers(&entry.content);

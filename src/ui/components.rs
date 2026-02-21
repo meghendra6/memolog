@@ -209,13 +209,9 @@ fn bullet_for_level(leading_spaces: usize) -> char {
 
 fn split_priority_marker(text: &str) -> Option<(Priority, &str)> {
     let trimmed = text.trim_start();
-    let Some(rest) = trimmed.strip_prefix("[#") else {
-        return None;
-    };
+    let rest = trimmed.strip_prefix("[#")?;
     let mut chars = rest.chars();
-    let Some(letter) = chars.next() else {
-        return None;
-    };
+    let letter = chars.next()?;
     if !matches!(chars.next(), Some(']')) {
         return None;
     }

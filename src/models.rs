@@ -109,17 +109,12 @@ impl From<&LogEntry> for EntryIdentity {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum FoldState {
     Overview,
     Contents,
+    #[default]
     ShowAll,
-}
-
-impl Default for FoldState {
-    fn default() -> Self {
-        FoldState::ShowAll
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

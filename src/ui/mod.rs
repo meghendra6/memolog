@@ -468,10 +468,11 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 displayed_raw += 1;
             }
 
-            if is_folded && !lines.is_empty() {
-                if let Some(last) = lines.last_mut() {
-                    last.spans.push(Span::raw(" ..."));
-                }
+            if is_folded
+                && !lines.is_empty()
+                && let Some(last) = lines.last_mut()
+            {
+                last.spans.push(Span::raw(" ..."));
             }
 
             // Track line count for this entry
@@ -752,12 +753,11 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 line.push_str(&task.text);
 
                 // Show overdue indicator for tasks with past due dates
-                if !task.is_done {
-                    if let Some(due_date) = task.schedule.due {
-                        if due_date < today {
-                            line.push_str(" ⚠️OVERDUE");
-                        }
-                    }
+                if !task.is_done
+                    && let Some(due_date) = task.schedule.due
+                    && due_date < today
+                {
+                    line.push_str(" ⚠️OVERDUE");
                 }
 
                 let is_active_pomodoro = if let (
@@ -1096,46 +1096,44 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     }
 
     // Manual cursor position setting (required for Korean/CJK IME support)
-    if app.input_mode == InputMode::Editing {
-        if let Some(inner) = cursor_area
-            && inner.height > 0
-            && inner.width > 0
-        {
-            let (cursor_row, cursor_col) = app.textarea.cursor();
-            let prefix_width = compose_prefix_width(app.config.ui.line_numbers);
-            let content_width = (inner.width as usize)
-                .saturating_sub(prefix_width as usize)
-                .max(1);
+    if app.input_mode == InputMode::Editing
+        && let Some(inner) = cursor_area
+        && inner.height > 0
+        && inner.width > 0
+    {
+        let (cursor_row, cursor_col) = app.textarea.cursor();
+        let prefix_width = compose_prefix_width(app.config.ui.line_numbers);
+        let content_width = (inner.width as usize)
+            .saturating_sub(prefix_width as usize)
+            .max(1);
 
-            // Calculate visual row considering line wrapping
-            let lines = app.textarea.lines();
-            let mut visual_row: usize = 0;
-            let mut cursor_visual_col: usize = 0;
+        // Calculate visual row considering line wrapping
+        let lines = app.textarea.lines();
+        let mut visual_row: usize = 0;
+        let mut cursor_visual_col: usize = 0;
 
-            for (idx, line) in lines.iter().enumerate() {
-                let wrapped = wrap_line_for_editor(line, content_width);
+        for (idx, line) in lines.iter().enumerate() {
+            let wrapped = wrap_line_for_editor(line, content_width);
 
-                if idx == cursor_row {
-                    let (wrap_offset, wrap_col) =
-                        find_cursor_in_wrapped_lines(&wrapped, cursor_col);
-                    visual_row += wrap_offset;
-                    cursor_visual_col = wrap_col;
-                    break;
-                }
-
-                visual_row += wrapped.len();
+            if idx == cursor_row {
+                let (wrap_offset, wrap_col) = find_cursor_in_wrapped_lines(&wrapped, cursor_col);
+                visual_row += wrap_offset;
+                cursor_visual_col = wrap_col;
+                break;
             }
 
-            let visual_row_u16 = (visual_row.min(u16::MAX as usize)) as u16;
-            let row_in_view = visual_row_u16.saturating_sub(app.textarea_viewport_row);
-            let row_in_view = row_in_view.min(inner.height.saturating_sub(1));
-
-            let col_in_view = (cursor_visual_col.min(u16::MAX as usize)) as u16;
-            let col_in_view = col_in_view.saturating_add(prefix_width);
-            let col_in_view = col_in_view.min(inner.width.saturating_sub(1));
-
-            f.set_cursor_position((inner.x + col_in_view, inner.y + row_in_view));
+            visual_row += wrapped.len();
         }
+
+        let visual_row_u16 = (visual_row.min(u16::MAX as usize)) as u16;
+        let row_in_view = visual_row_u16.saturating_sub(app.textarea_viewport_row);
+        let row_in_view = row_in_view.min(inner.height.saturating_sub(1));
+
+        let col_in_view = (cursor_visual_col.min(u16::MAX as usize)) as u16;
+        let col_in_view = col_in_view.saturating_add(prefix_width);
+        let col_in_view = col_in_view.min(inner.width.saturating_sub(1));
+
+        f.set_cursor_position((inner.x + col_in_view, inner.y + row_in_view));
     }
 
     render_status_bar(f, status_area, app, &tokens);
@@ -1385,7 +1383,7 @@ fn hide_fence_marker(line: &str) -> String {
     let fence_end = fence_start.saturating_add(fence_len);
     let mut out = String::with_capacity(line.len());
     out.push_str(&line[..fence_start]);
-    out.extend(std::iter::repeat(' ').take(fence_len));
+    out.extend(std::iter::repeat_n(' ', fence_len));
     out.push_str(&line[fence_end..]);
     out
 }
@@ -1777,7 +1775,7 @@ fn compose_wrapped_line(
 
     let mut rendered = Line::from(spans);
     let segment_len = line.chars().count();
-    let selection_covers_segment = selection.map_or(false, |range| {
+    let selection_covers_segment = selection.is_some_and(|range| {
         range.start <= wrap_start_col && range.end >= wrap_start_col.saturating_add(segment_len)
     });
     if selection_covers_segment {
@@ -2125,27 +2123,27 @@ fn render_agenda_panel(
             }
         }
 
+        let section_ctx = AgendaSectionContext {
+            selected,
+            app,
+            list_width,
+            tokens,
+        };
         push_agenda_section(
             &mut items,
             &mut ui_index,
             "OVERDUE",
             &overdue,
-            selected,
             &mut ui_selected_index,
-            app,
-            list_width,
-            tokens,
+            &section_ctx,
         );
         push_agenda_section(
             &mut items,
             &mut ui_index,
             "ALL-DAY",
             &all_day,
-            selected,
             &mut ui_selected_index,
-            app,
-            list_width,
-            tokens,
+            &section_ctx,
         );
 
         items.push(ListItem::new(Line::from(Span::styled(
@@ -2175,10 +2173,13 @@ fn render_agenda_panel(
             let end_row = end_row.max(start_row + 1);
             block_start_row.insert(block.idx, start_row);
 
-            for row in start_row..end_row {
-                if row < row_count {
-                    row_blocks[row].push(block_idx);
-                }
+            for (_row, row_block) in row_blocks
+                .iter_mut()
+                .enumerate()
+                .take(end_row.min(row_count))
+                .skip(start_row)
+            {
+                row_block.push(block_idx);
             }
         }
 
@@ -2249,11 +2250,8 @@ fn render_agenda_panel(
                 &mut ui_index,
                 "UNSCHEDULED",
                 &unscheduled_items,
-                selected,
                 &mut ui_selected_index,
-                app,
-                list_width,
-                tokens,
+                &section_ctx,
             );
         }
     }
@@ -2320,11 +2318,8 @@ fn push_agenda_section(
     ui_index: &mut usize,
     label: &str,
     indices: &[usize],
-    selected: Option<usize>,
     ui_selected_index: &mut Option<usize>,
-    app: &App,
-    list_width: usize,
-    tokens: &theme::ThemeTokens,
+    ctx: &AgendaSectionContext<'_>,
 ) {
     if indices.is_empty() {
         return;
@@ -2333,23 +2328,23 @@ fn push_agenda_section(
     items.push(ListItem::new(Line::from(Span::styled(
         label.to_string(),
         Style::default()
-            .fg(tokens.ui_accent)
+            .fg(ctx.tokens.ui_accent)
             .add_modifier(Modifier::BOLD),
     ))));
     *ui_index += 1;
 
     for idx in indices {
-        if selected == Some(*idx) {
+        if ctx.selected == Some(*idx) {
             *ui_selected_index = Some(*ui_index);
         }
-        let line = agenda_item_label(&app.agenda_items[*idx], app.agenda_selected_day);
-        let wrapped = wrap_markdown_line(&line, list_width);
+        let line = agenda_item_label(&ctx.app.agenda_items[*idx], ctx.app.agenda_selected_day);
+        let wrapped = wrap_markdown_line(&line, ctx.list_width);
         let lines: Vec<Line<'static>> = wrapped
             .iter()
             .map(|l| {
                 Line::from(parse_markdown_spans(
                     l,
-                    &app.config.theme,
+                    &ctx.app.config.theme,
                     false,
                     None,
                     Style::default(),
@@ -2362,6 +2357,13 @@ fn push_agenda_section(
 
     items.push(ListItem::new(Line::from("")));
     *ui_index += 1;
+}
+
+struct AgendaSectionContext<'a> {
+    selected: Option<usize>,
+    app: &'a App<'a>,
+    list_width: usize,
+    tokens: &'a theme::ThemeTokens,
 }
 
 fn agenda_item_label(item: &crate::models::AgendaItem, day: chrono::NaiveDate) -> String {
@@ -2548,19 +2550,22 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         right_spans.push(Span::styled(wc_text, Style::default().fg(tokens.ui_muted)));
     }
 
-    let status_message: Option<(String, Color)> = if let Some(hint) = app.visual_hint_message.as_deref() {
-        if hint.is_empty() {
-            None
+    let status_message: Option<(String, Color)> =
+        if let Some(hint) = app.visual_hint_message.as_deref() {
+            if hint.is_empty() {
+                None
+            } else {
+                Some((hint.to_string(), tokens.ui_muted))
+            }
+        } else if let Some(explain) = app.selected_search_explain() {
+            Some((truncate(&explain, 96), tokens.ui_muted))
+        } else if let Some(toast) = app.toast_message.as_deref()
+            && !toast.is_empty()
+        {
+            Some((toast.to_string(), tokens.ui_toast_info))
         } else {
-            Some((hint.to_string(), tokens.ui_muted))
-        }
-    } else if let Some(explain) = app.selected_search_explain() {
-        Some((truncate(&explain, 96), tokens.ui_muted))
-    } else if let Some(toast) = app.toast_message.as_deref() && !toast.is_empty() {
-        Some((toast.to_string(), tokens.ui_toast_info))
-    } else {
-        None
-    };
+            None
+        };
 
     if let Some((message, color)) = status_message {
         if !right_plain.is_empty() {

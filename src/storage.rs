@@ -279,7 +279,7 @@ pub fn calculate_streak(log_path: &Path) -> io::Result<(usize, bool)> {
     for i in (0..=start_pos).rev() {
         if dates[i] == expected_date {
             streak += 1;
-            expected_date = expected_date - Duration::days(1);
+            expected_date -= Duration::days(1);
         } else if dates[i] < expected_date {
             break;
         }
@@ -1255,7 +1255,7 @@ fn strip_context_tags(text: &str) -> String {
         }
 
         let prev = text[..idx].chars().last();
-        let prev_ok = prev.map_or(true, |c| !is_context_tag_char(c));
+        let prev_ok = prev.is_none_or(|c| !is_context_tag_char(c));
 
         let mut token = String::new();
         let mut token_lower = String::new();
@@ -1272,7 +1272,7 @@ fn strip_context_tags(text: &str) -> String {
         }
 
         let next = text[end_idx..].chars().next();
-        let next_ok = next.map_or(true, |c| !is_context_tag_char(c));
+        let next_ok = next.is_none_or(|c| !is_context_tag_char(c));
         let is_context = token_lower == "work" || token_lower == "personal";
 
         if prev_ok && next_ok && is_context {
@@ -1388,13 +1388,9 @@ fn strip_carryover_marker(text: &str) -> (String, Option<String>) {
 
 fn parse_priority_marker(text: &str) -> Option<Priority> {
     let trimmed = text.trim_start();
-    let Some(rest) = trimmed.strip_prefix("[#") else {
-        return None;
-    };
+    let rest = trimmed.strip_prefix("[#")?;
     let mut chars = rest.chars();
-    let Some(letter) = chars.next() else {
-        return None;
-    };
+    let letter = chars.next()?;
     if !matches!(chars.next(), Some(']')) {
         return None;
     }
