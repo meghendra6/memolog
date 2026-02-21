@@ -28,6 +28,30 @@ const INITIAL_LOAD_DAYS: i64 = 7;
 /// Number of log files to load per infinite-scroll chunk.
 const HISTORY_LOAD_FILE_COUNT: usize = 2;
 
+fn initial_load_start_date(today: NaiveDate, available_dates: &[NaiveDate]) -> NaiveDate {
+    let default_start = today - Duration::days(INITIAL_LOAD_DAYS - 1);
+
+    let Some(earliest) = available_dates.first().copied() else {
+        return default_start;
+    };
+
+    let Some(latest_on_or_before_today) = available_dates
+        .iter()
+        .rev()
+        .find(|date| **date <= today)
+        .copied()
+    else {
+        return default_start.max(earliest).min(today);
+    };
+
+    if latest_on_or_before_today < default_start {
+        let fallback_start = latest_on_or_before_today - Duration::days(INITIAL_LOAD_DAYS - 1);
+        fallback_start.max(earliest)
+    } else {
+        default_start.max(earliest)
+    }
+}
+
 #[derive(Clone)]
 pub struct EditingEntry {
     pub file_path: String,
@@ -217,13 +241,13 @@ impl<'a> App<'a> {
         let mut textarea = TextArea::default();
         textarea.set_placeholder_text(PLACEHOLDER_COMPOSE);
 
-        // Load logs from the past week (or earliest available)
-        let start_date = today - Duration::days(INITIAL_LOAD_DAYS - 1);
+        // Load logs from the past week, and fall back to the most recent available window
+        // when no entries exist in the recent window.
+        let available_dates =
+            storage::get_available_log_dates(&config.data.log_path).unwrap_or_default();
         let earliest_available_date =
             storage::get_earliest_log_date(&config.data.log_path).unwrap_or(None);
-        let effective_start = earliest_available_date
-            .map(|e| e.max(start_date))
-            .unwrap_or(start_date);
+        let effective_start = initial_load_start_date(today, &available_dates);
 
         let mut all_logs =
             storage::read_entries_for_date_range(&config.data.log_path, effective_start, today)
@@ -2375,5 +2399,39 @@ mod tests {
 
         assert!(app.show_goto_date_popup);
         assert_eq!(app.goto_date_input, "2025-12-22");
+    }
+
+    #[test]
+    fn initial_load_start_falls_back_to_latest_available_window() {
+        let today = NaiveDate::from_ymd_opt(2026, 2, 21).expect("valid date");
+        let available = vec![
+            NaiveDate::from_ymd_opt(2020, 10, 21).expect("valid date"),
+            NaiveDate::from_ymd_opt(2026, 2, 10).expect("valid date"),
+            NaiveDate::from_ymd_opt(2026, 2, 13).expect("valid date"),
+        ];
+
+        let start = initial_load_start_date(today, &available);
+
+        assert_eq!(
+            start,
+            NaiveDate::from_ymd_opt(2026, 2, 7).expect("valid date")
+        );
+    }
+
+    #[test]
+    fn initial_load_start_keeps_recent_window_when_recent_logs_exist() {
+        let today = NaiveDate::from_ymd_opt(2026, 2, 21).expect("valid date");
+        let available = vec![
+            NaiveDate::from_ymd_opt(2020, 10, 21).expect("valid date"),
+            NaiveDate::from_ymd_opt(2026, 2, 18).expect("valid date"),
+            NaiveDate::from_ymd_opt(2026, 2, 20).expect("valid date"),
+        ];
+
+        let start = initial_load_start_date(today, &available);
+
+        assert_eq!(
+            start,
+            NaiveDate::from_ymd_opt(2026, 2, 15).expect("valid date")
+        );
     }
 }
