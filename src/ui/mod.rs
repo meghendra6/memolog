@@ -578,7 +578,6 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             ))));
             ui_selected_index = None;
         }
-
         // Collect status information (used in both search and normal mode)
         let focus_info = if let Some(selected_idx) = app.logs_state.selected() {
             if let Some(entry) = app.logs.get(selected_idx) {
