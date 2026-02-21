@@ -41,13 +41,13 @@ pub(crate) fn parse_duration_input(input: &str) -> Option<u32> {
 fn parse_relative_offset(input: &str, base: NaiveDate) -> Option<NaiveDate> {
     let mut chars = input.chars().peekable();
     let mut sign: i32 = 1;
-    if let Some(&c) = chars.peek() {
-        if c == '+' || c == '-' {
-            if c == '-' {
-                sign = -1;
-            }
-            chars.next();
+    if let Some(&c) = chars.peek()
+        && (c == '+' || c == '-')
+    {
+        if c == '-' {
+            sign = -1;
         }
+        chars.next();
     }
 
     let mut digits = String::new();

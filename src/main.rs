@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
     let poll_interval = std::time::Duration::from_millis(app.config.ui.poll_interval_ms);
-    
+
     loop {
         runtime::tick(app);
 
@@ -80,11 +80,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
             if event::poll(std::time::Duration::from_millis(100))? {
                 let ev = event::read()?;
                 // Allow Escape key to dismiss the alert early
-                if let crossterm::event::Event::Key(key) = ev {
-                    if key.code == crossterm::event::KeyCode::Esc {
-                        app.pomodoro_alert_expiry = None;
-                        app.pomodoro_alert_message = None;
-                    }
+                if let crossterm::event::Event::Key(key) = ev
+                    && key.code == crossterm::event::KeyCode::Esc
+                {
+                    app.pomodoro_alert_expiry = None;
+                    app.pomodoro_alert_message = None;
                 }
             }
             continue;

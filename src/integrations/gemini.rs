@@ -5,7 +5,7 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
@@ -36,7 +36,7 @@ pub fn spawn_ai_search(
     receiver
 }
 
-fn run_ai_search(config: &GeminiConfig, log_path: &PathBuf, question: &str) -> AiSearchOutcome {
+fn run_ai_search(config: &GeminiConfig, log_path: &Path, question: &str) -> AiSearchOutcome {
     if !config.enabled {
         return AiSearchOutcome::Error("Gemini is disabled in config.".to_string());
     }
@@ -112,7 +112,7 @@ fn extract_keywords(
 ) -> Result<Vec<String>, String> {
     let model = resolve_extraction_model(config);
     let max_keywords = config.max_keywords.max(1);
-    let attempts = config.extraction_attempts.max(1).min(6);
+    let attempts = config.extraction_attempts.clamp(1, 6);
     let prompts = keyword_prompts(question.trim(), max_keywords);
     let mut candidates: HashMap<String, (String, usize)> = HashMap::new();
     let mut last_error: Option<String> = None;
@@ -212,7 +212,7 @@ Entries:\n{context}",
     );
 
     let model = resolve_answer_model(config);
-    let max_tokens = config.answer_max_tokens.max(256).min(8192);
+    let max_tokens = config.answer_max_tokens.clamp(256, 8192);
     generate_text(client, api_key, &model, &prompt, max_tokens, 0.2)
 }
 

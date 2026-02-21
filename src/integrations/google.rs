@@ -1,9 +1,9 @@
-use crate::config::{google_sync_state_path, google_token_path, Config, GoogleConfig};
+use crate::config::{Config, GoogleConfig, google_sync_state_path, google_token_path};
 use crate::models::{AgendaItem, AgendaItemKind, TaskSchedule};
 use crate::storage::{self, NoteLineUpdate, TaskLineUpdate};
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
-use reqwest::blocking::Client;
 use reqwest::Url;
+use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -14,6 +14,12 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration as StdDuration;
 
+mod helpers;
+use helpers::{
+    parse_query, schedule_anchor_date, schedule_from_remote_event, schedule_from_remote_task,
+    stable_hash,
+};
+
 const OAUTH_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const CALENDAR_API: &str = "https://www.googleapis.com/calendar/v3";
@@ -23,7 +29,7 @@ const LOCAL_SYNC_FUTURE_DAYS: i64 = 3650;
 
 #[derive(Debug)]
 pub enum SyncError {
-    AuthRequired(AuthSession),
+    AuthRequired(Box<AuthSession>),
     Config(String),
     Request(String),
     Io(String),
@@ -207,7 +213,7 @@ pub fn spawn_sync(config: Config) -> Receiver<SyncOutcome> {
     thread::spawn(move || {
         let outcome = match sync(&config) {
             Ok(report) => SyncOutcome::Success(report),
-            Err(SyncError::AuthRequired(session)) => SyncOutcome::AuthRequired(session),
+            Err(SyncError::AuthRequired(session)) => SyncOutcome::AuthRequired(*session),
             Err(err) => SyncOutcome::Error(err.message()),
         };
         let _ = tx.send(outcome);
@@ -243,26 +249,30 @@ pub fn sync(config: &Config) -> Result<SyncReport, SyncError> {
 
     let mut report = SyncReport::default();
     sync_tasks(
-        config,
-        &client,
-        &access_token,
         &mut state,
-        &local_tasks,
-        &remote_tasks,
-        policy,
-        &mut report,
+        TaskSyncParams {
+            config,
+            client: &client,
+            access_token: &access_token,
+            local_items: &local_tasks,
+            remote_items: &remote_tasks,
+            policy,
+            report: &mut report,
+        },
     )?;
     sync_events(
-        config,
-        &client,
-        &access_token,
         &mut state,
-        &local_events,
-        &remote_events,
-        start_date,
-        end_date,
-        policy,
-        &mut report,
+        EventSyncParams {
+            config,
+            client: &client,
+            access_token: &access_token,
+            local_items: &local_events,
+            remote_items: &remote_events,
+            remote_start: start_date,
+            remote_end: end_date,
+            policy,
+            report: &mut report,
+        },
     )?;
 
     save_sync_state(&google_sync_state_path(config), &state)?;
@@ -383,7 +393,7 @@ fn ensure_access_token(config: &Config) -> Result<String, SyncError> {
     let token_path = google_token_path(config);
     if !token_path.exists() {
         let session = start_local_oauth_flow(&config.google)?;
-        return Err(SyncError::AuthRequired(session));
+        return Err(SyncError::AuthRequired(Box::new(session)));
     }
 
     let stored = load_token(&token_path)?;
@@ -399,7 +409,7 @@ fn ensure_access_token(config: &Config) -> Result<String, SyncError> {
         }
         Err(_) => {
             let session = start_local_oauth_flow(&config.google)?;
-            Err(SyncError::AuthRequired(session))
+            Err(SyncError::AuthRequired(Box::new(session)))
         }
     }
 }
@@ -561,54 +571,8 @@ fn respond_with_message(stream: &mut std::net::TcpStream, message: &str) -> io::
     stream.write_all(response.as_bytes())
 }
 
-fn parse_query(query: &str) -> HashMap<String, String> {
-    let mut params = HashMap::new();
-    for pair in query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        let (key, value) = pair
-            .split_once('=')
-            .map(|(k, v)| (k, v))
-            .unwrap_or((pair, ""));
-        params.insert(decode_component(key), decode_component(value));
-    }
-    params
-}
-
-fn decode_component(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = String::new();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'+' => {
-                out.push(' ');
-                i += 1;
-            }
-            b'%' if i + 2 < bytes.len() => {
-                if let Some(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
-                    .ok()
-                    .and_then(|s| u8::from_str_radix(s, 16).ok())
-                {
-                    out.push(hex as char);
-                    i += 3;
-                } else {
-                    out.push('%');
-                    i += 1;
-                }
-            }
-            _ => {
-                out.push(bytes[i] as char);
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
 fn generate_state() -> String {
-    use rand::{distributions::Alphanumeric, Rng};
+    use rand::{Rng, distributions::Alphanumeric};
     rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(32)
@@ -705,16 +669,26 @@ enum ConflictPolicy {
     PreferRemote,
 }
 
-fn sync_tasks(
-    config: &Config,
-    client: &Client,
-    access_token: &str,
-    state: &mut SyncState,
-    local_items: &[AgendaItem],
-    remote_items: &[RemoteTask],
+struct TaskSyncParams<'a> {
+    config: &'a Config,
+    client: &'a Client,
+    access_token: &'a str,
+    local_items: &'a [AgendaItem],
+    remote_items: &'a [RemoteTask],
     policy: ConflictPolicy,
-    report: &mut SyncReport,
-) -> Result<(), SyncError> {
+    report: &'a mut SyncReport,
+}
+
+fn sync_tasks(state: &mut SyncState, params: TaskSyncParams<'_>) -> Result<(), SyncError> {
+    let TaskSyncParams {
+        config,
+        client,
+        access_token,
+        local_items,
+        remote_items,
+        policy,
+        report,
+    } = params;
     let mut remote_by_id = HashMap::new();
     for item in remote_items {
         remote_by_id.insert(item.id.clone(), item.clone());
@@ -751,58 +725,58 @@ fn sync_tasks(
             .as_ref()
             .and_then(|entry| remote_by_id.get(&entry.google_id));
         let match_key = task_match_key(&item.text, &item.schedule);
-        if stored.is_none() || remote.is_none() {
-            if let Some(matched_remote) = take_match(&mut remote_match, &match_key) {
-                let remote_hash = task_hash_from_remote(&matched_remote);
-                if remote_hash == hash {
-                    state.tasks.insert(
-                        key,
-                        SyncItem {
-                            google_id: matched_remote.id.clone(),
-                            hash,
-                            remote_updated: matched_remote.updated.clone(),
-                        },
-                    );
-                } else {
-                    report.conflicts += 1;
-                    match policy {
-                        ConflictPolicy::PreferLocal => {
-                            let updated = update_remote_task(
-                                client,
-                                access_token,
-                                &config.google.tasks_list_id,
-                                &matched_remote.id,
-                                item,
-                            )?;
-                            report.tasks_updated += 1;
-                            state.tasks.insert(
-                                key,
-                                SyncItem {
-                                    google_id: matched_remote.id.clone(),
-                                    hash,
-                                    remote_updated: updated
-                                        .updated
-                                        .clone()
-                                        .or(matched_remote.updated.clone()),
-                                },
-                            );
-                        }
-                        ConflictPolicy::PreferRemote => {
-                            let applied = apply_remote_task_update(item, &matched_remote)?;
-                            report.tasks_imported += 1;
-                            state.tasks.insert(
-                                key,
-                                SyncItem {
-                                    google_id: matched_remote.id.clone(),
-                                    hash: task_hash_from_update(&applied),
-                                    remote_updated: matched_remote.updated.clone(),
-                                },
-                            );
-                        }
+        if (stored.is_none() || remote.is_none())
+            && let Some(matched_remote) = take_match(&mut remote_match, &match_key)
+        {
+            let remote_hash = task_hash_from_remote(&matched_remote);
+            if remote_hash == hash {
+                state.tasks.insert(
+                    key,
+                    SyncItem {
+                        google_id: matched_remote.id.clone(),
+                        hash,
+                        remote_updated: matched_remote.updated.clone(),
+                    },
+                );
+            } else {
+                report.conflicts += 1;
+                match policy {
+                    ConflictPolicy::PreferLocal => {
+                        let updated = update_remote_task(
+                            client,
+                            access_token,
+                            &config.google.tasks_list_id,
+                            &matched_remote.id,
+                            item,
+                        )?;
+                        report.tasks_updated += 1;
+                        state.tasks.insert(
+                            key,
+                            SyncItem {
+                                google_id: matched_remote.id.clone(),
+                                hash,
+                                remote_updated: updated
+                                    .updated
+                                    .clone()
+                                    .or(matched_remote.updated.clone()),
+                            },
+                        );
+                    }
+                    ConflictPolicy::PreferRemote => {
+                        let applied = apply_remote_task_update(item, &matched_remote)?;
+                        report.tasks_imported += 1;
+                        state.tasks.insert(
+                            key,
+                            SyncItem {
+                                google_id: matched_remote.id.clone(),
+                                hash: task_hash_from_update(&applied),
+                                remote_updated: matched_remote.updated.clone(),
+                            },
+                        );
                     }
                 }
-                continue;
             }
+            continue;
         }
 
         match (stored, remote) {
@@ -985,18 +959,30 @@ fn sync_tasks(
     Ok(())
 }
 
-fn sync_events(
-    config: &Config,
-    client: &Client,
-    access_token: &str,
-    state: &mut SyncState,
-    local_items: &[AgendaItem],
-    remote_items: &[RemoteEvent],
+struct EventSyncParams<'a> {
+    config: &'a Config,
+    client: &'a Client,
+    access_token: &'a str,
+    local_items: &'a [AgendaItem],
+    remote_items: &'a [RemoteEvent],
     remote_start: NaiveDate,
     remote_end: NaiveDate,
     policy: ConflictPolicy,
-    report: &mut SyncReport,
-) -> Result<(), SyncError> {
+    report: &'a mut SyncReport,
+}
+
+fn sync_events(state: &mut SyncState, params: EventSyncParams<'_>) -> Result<(), SyncError> {
+    let EventSyncParams {
+        config,
+        client,
+        access_token,
+        local_items,
+        remote_items,
+        remote_start,
+        remote_end,
+        policy,
+        report,
+    } = params;
     let mut remote_by_id = HashMap::new();
     for item in remote_items {
         remote_by_id.insert(item.id.clone(), item.clone());
@@ -1575,9 +1561,7 @@ fn take_match<T>(matches: &mut HashMap<String, Vec<T>>, key: &str) -> Option<T> 
 }
 
 fn take_unique_match<T>(matches: &mut HashMap<String, Vec<T>>, key: &str) -> Option<T> {
-    let Some(values) = matches.get_mut(key) else {
-        return None;
-    };
+    let values = matches.get_mut(key)?;
     if values.len() != 1 {
         return None;
     }
@@ -1870,53 +1854,6 @@ fn schedule_to_event_times_patch(
     }
 }
 
-fn schedule_from_remote_task(remote: &RemoteTask) -> TaskSchedule {
-    let mut schedule = TaskSchedule::default();
-    if let Some(due) = remote.due.as_deref() {
-        if let Ok(dt) = DateTime::parse_from_rfc3339(due) {
-            schedule.due = Some(dt.date_naive());
-            schedule.time = Some(dt.time());
-        }
-    }
-    schedule
-}
-
-fn schedule_from_remote_event(remote: &RemoteEvent) -> TaskSchedule {
-    let mut schedule = TaskSchedule::default();
-    if let Some(start) = &remote.start {
-        if let Some(date_time) = start.date_time.as_deref() {
-            if let Ok(dt) = DateTime::parse_from_rfc3339(date_time) {
-                schedule.scheduled = Some(dt.date_naive());
-                schedule.time = Some(dt.time());
-            }
-        } else if let Some(date) = start.date.as_deref() {
-            if let Ok(date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
-                schedule.scheduled = Some(date);
-            }
-        }
-    }
-    if let (Some(start), Some(end)) = (&remote.start, &remote.end) {
-        if let (Some(start_dt), Some(end_dt)) =
-            (start.date_time.as_deref(), end.date_time.as_deref())
-        {
-            if let (Ok(start), Ok(end)) = (
-                DateTime::parse_from_rfc3339(start_dt),
-                DateTime::parse_from_rfc3339(end_dt),
-            ) {
-                let duration = end - start;
-                if duration.num_minutes() > 0 {
-                    schedule.duration_minutes = Some(duration.num_minutes() as u32);
-                }
-            }
-        }
-    }
-    schedule
-}
-
-fn schedule_anchor_date(schedule: &TaskSchedule) -> Option<NaiveDate> {
-    schedule.scheduled.or(schedule.due).or(schedule.start)
-}
-
 fn log_path_for_date(log_path: &Path, date: NaiveDate) -> PathBuf {
     log_path.join(format!("{}.md", date.format("%Y-%m-%d")))
 }
@@ -1937,13 +1874,4 @@ fn to_rfc3339(date: NaiveDate, time: NaiveTime) -> String {
         .from_local_datetime(&NaiveDateTime::new(date, time))
         .unwrap()
         .to_rfc3339()
-}
-
-fn stable_hash(input: &str) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for b in input.as_bytes() {
-        hash ^= *b as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{:x}", hash)
 }

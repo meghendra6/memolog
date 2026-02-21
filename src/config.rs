@@ -203,8 +203,7 @@ fn canonical_binding(binding: &str) -> Option<String> {
             "alt" | "opt" => has_alt = true,
             "shift" => has_shift = true,
             "enter" | "esc" | "backspace" | "tab" | "backtab" | "space" | "up" | "down"
-            | "left" | "right" | "home" | "end" | "pageup" | "pagedown" | "delete"
-            | "insert" => {
+            | "left" | "right" | "home" | "end" | "pageup" | "pagedown" | "delete" | "insert" => {
                 target_code = Some(part);
             }
             _ if part.chars().count() == 1 => {
@@ -1521,9 +1520,7 @@ fn find_keybinding_conflicts(specs: &[BindingSpec<'_>]) -> Vec<String> {
         }
         for key in spec.keys {
             if let Some(canonical) = canonical_binding(key) {
-                priority_global
-                    .entry(canonical)
-                    .or_insert(spec.action);
+                priority_global.entry(canonical).or_insert(spec.action);
             }
         }
     }
@@ -1567,7 +1564,7 @@ fn remove_bindings_in_set(list: &mut Vec<String>, disallowed: &[String]) -> bool
     before != list.len()
 }
 
-fn migrate_single_binding(list: &mut Vec<String>, old: &str, new: &str) -> bool {
+fn migrate_single_binding(list: &mut [String], old: &str, new: &str) -> bool {
     if list.len() == 1 && list[0].eq_ignore_ascii_case(old) {
         list[0] = new.to_string();
         return true;
