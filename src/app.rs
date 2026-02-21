@@ -86,6 +86,7 @@ pub struct App<'a> {
     pub input_mode: InputMode,
     pub navigate_focus: NavigateFocus,
     pub last_navigate_focus: Option<NavigateFocus>,
+    pub focus_mode: bool,
     pub textarea: TextArea<'a>,
     pub textarea_viewport_row: u16,
     pub textarea_viewport_col: u16,
@@ -315,6 +316,7 @@ impl<'a> App<'a> {
             input_mode,
             navigate_focus: NavigateFocus::Timeline,
             last_navigate_focus: None,
+            focus_mode: false,
             textarea,
             textarea_viewport_row: 0,
             textarea_viewport_col: 0,
@@ -1545,6 +1547,16 @@ impl<'a> App<'a> {
         }
         self.last_navigate_focus = Some(self.navigate_focus);
         self.navigate_focus = focus;
+    }
+
+    pub fn toggle_focus_mode(&mut self) {
+        self.focus_mode = !self.focus_mode;
+        let state = if self.focus_mode { "ON" } else { "OFF" };
+        self.toast(format!("Focus mode {state}"));
+    }
+
+    pub fn focus_mode_label(&self) -> &'static str {
+        if self.focus_mode { "ON" } else { "OFF" }
     }
 
     pub fn transition_to(&mut self, mode: InputMode) {

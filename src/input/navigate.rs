@@ -57,6 +57,11 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    if key_match(&key, &app.config.keybindings.global.focus_mode_toggle) {
+        app.toggle_focus_mode();
+        return;
+    }
+
     // Keep Vim-like page movement reliable in Timeline even if user bindings conflict.
     if app.navigate_focus == models::NavigateFocus::Timeline
         && (key_match(&key, &app.config.keybindings.timeline.page_up) || is_ctrl_char(&key, 'u'))

@@ -82,7 +82,14 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         let is_tasks_focused = navigate_mode && app.navigate_focus == NavigateFocus::Tasks;
 
         // Adaptive layout: amplify space for the focused panel to improve readability and throughput.
-        let (timeline_pct, right_pct) = if is_timeline_focused {
+        // Focus mode goes further and maximizes the active panel.
+        let (timeline_pct, right_pct) = if navigate_mode && app.focus_mode {
+            if is_timeline_focused {
+                (100, 0)
+            } else {
+                (0, 100)
+            }
+        } else if is_timeline_focused {
             (78, 22)
         } else if is_tasks_focused {
             (62, 38)
@@ -91,7 +98,9 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         } else {
             (70, 30)
         };
-        let (agenda_pct, tasks_pct) = if is_agenda_focused {
+        let (agenda_pct, tasks_pct) = if navigate_mode && app.focus_mode {
+            if is_tasks_focused { (0, 100) } else { (100, 0) }
+        } else if is_agenda_focused {
             (68, 32)
         } else if is_tasks_focused {
             (42, 58)
@@ -688,6 +697,11 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             "TIMELINE"
         };
         let timeline_focus_marker = if is_timeline_focused { "●" } else { "○" };
+        let timeline_focus_badge = if app.focus_mode && is_timeline_focused {
+            " [FOCUS]"
+        } else {
+            ""
+        };
         let timeline_hint = if is_timeline_focused {
             " · j/k move · Enter preview · e edit · i compose"
         } else {
@@ -711,7 +725,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         };
 
         let timeline_title_text = format!(
-            "{timeline_focus_marker} {title_label}{scroll_indicator}{timeline_hint} — {summary}"
+            "{timeline_focus_marker} {title_label}{timeline_focus_badge}{scroll_indicator}{timeline_hint} — {summary}"
         );
         let timeline_title = truncate(
             &timeline_title_text,
@@ -913,13 +927,19 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         let filter_label = app.task_filter_label();
         let filter_summary = format!("{filter_label}: {}", app.tasks.len());
         let tasks_focus_marker = if is_tasks_focused { "●" } else { "○" };
+        let tasks_focus_badge = if app.focus_mode && is_tasks_focused {
+            " [FOCUS]"
+        } else {
+            ""
+        };
         let tasks_hint = if is_tasks_focused {
             " · Space toggle · Shift+P priority · p pomodoro"
         } else {
             ""
         };
-        let tasks_title_text =
-            format!("{tasks_focus_marker} TASKS ({filter_summary}){tasks_hint} — {tasks_summary}");
+        let tasks_title_text = format!(
+            "{tasks_focus_marker} TASKS{tasks_focus_badge} ({filter_summary}){tasks_hint} — {tasks_summary}"
+        );
         let tasks_title = truncate(
             &tasks_title_text,
             tasks_area.width.saturating_sub(4) as usize,
@@ -2102,13 +2122,19 @@ fn render_agenda_panel(
         "Unsched: off"
     };
     let focus_marker = if focused { "●" } else { "○" };
+    let focus_badge = if app.focus_mode && focused {
+        " [FOCUS]"
+    } else {
+        ""
+    };
     let focus_hint = if focused {
         " · h/l day · PgUp/PgDn week · f filter · u unsched"
     } else {
         ""
     };
-    let title_text =
-        format!("{focus_marker} AGENDA {date_label} · {filter_label} · {unscheduled}{focus_hint}");
+    let title_text = format!(
+        "{focus_marker} AGENDA{focus_badge} {date_label} · {filter_label} · {unscheduled}{focus_hint}"
+    );
     let title = truncate(&title_text, area.width.saturating_sub(4) as usize);
 
     let border_color = if focused {
@@ -2545,6 +2571,11 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         NavigateFocus::Agenda => "Focus:Agenda",
         NavigateFocus::Tasks => "Focus:Tasks",
     };
+    let focus_mode_label = if app.input_mode == InputMode::Navigate {
+        format!("FocusMode:{}", app.focus_mode_label())
+    } else {
+        String::new()
+    };
     let date_label = status_date_label(app);
     let context_label = format!(
         "Context:{}",
@@ -2594,6 +2625,16 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         Span::styled(
             format!(" {focus_label} "),
             Style::default().fg(tokens.ui_muted),
+        ),
+        Span::styled(
+            format!(" {focus_mode_label} "),
+            if app.focus_mode {
+                Style::default()
+                    .fg(tokens.ui_accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(tokens.ui_muted)
+            },
         ),
         Span::styled(format!(" {date_label} "), Style::default().fg(tokens.ui_fg)),
         Span::styled(
@@ -2668,7 +2709,8 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ));
     } else if right_plain.is_empty() {
-        let hint = truncate(status_focus_hint(app), 72);
+        let status_hint = status_focus_hint(app);
+        let hint = truncate(&status_hint, 72);
         right_plain.push_str(&hint);
         right_spans.push(Span::styled(
             hint,
@@ -2705,22 +2747,37 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
     f.render_widget(right, status_chunks[1]);
 }
 
-fn status_focus_hint(app: &App) -> &'static str {
+fn status_focus_hint(app: &App) -> String {
+    let focus_toggle = primary_binding(&app.config.keybindings.global.focus_mode_toggle);
     match app.input_mode {
         InputMode::Navigate => match app.navigate_focus {
             NavigateFocus::Timeline => {
-                "Timeline: j/k move · Enter preview · e edit · i compose · Tab fold"
+                format!(
+                    "Timeline: j/k move · Enter preview · e edit · i compose · Tab fold · {focus_toggle} focus"
+                )
             }
             NavigateFocus::Agenda => {
-                "Agenda: j/k move · h/l day · PgUp/PgDn week · f filter · u unsched"
+                format!(
+                    "Agenda: j/k move · h/l day · PgUp/PgDn week · f filter · u unsched · {focus_toggle} focus"
+                )
             }
             NavigateFocus::Tasks => {
-                "Tasks: Space toggle · Shift+P priority · ]/} snooze · p pomodoro"
+                format!(
+                    "Tasks: Space toggle · Shift+P priority · ]/}} snooze · p pomodoro · {focus_toggle} focus"
+                )
             }
         },
-        InputMode::Search => "Search: Enter apply · Esc close · Ctrl+P/N recent · Ctrl+S save",
-        InputMode::Editing => "Editor: Shift+Enter save · Esc confirm · Ctrl+; date · Ctrl+T task",
+        InputMode::Search => {
+            "Search: Enter apply · Esc close · Ctrl+P/N recent · Ctrl+S save".to_string()
+        }
+        InputMode::Editing => {
+            "Editor: Shift+Enter save · Esc confirm · Ctrl+; date · Ctrl+T task".to_string()
+        }
     }
+}
+
+fn primary_binding(keys: &[String]) -> String {
+    keys.first().cloned().unwrap_or_else(|| "-".to_string())
 }
 
 fn status_file_label(app: &App) -> String {
