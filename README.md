@@ -10,6 +10,7 @@ This project was forked from https://github.com/sonohoshi/sonomemo.
 - Timeline-first daily log with multi-line entries
 - Agenda timeline view built from schedule metadata
 - Tasks, priorities, tags, and a pomodoro timer
+- Recurring tasks with automatic next occurrence generation (`@repeat(...)`)
 - Folding with persistent state stored in the Markdown file
 - Smart ranked search (AND/OR/phrase/exclude/date + fuzzy matching)
 - Vim-style composer (Normal/Insert/Visual) with configurable keybindings
@@ -137,12 +138,20 @@ Use inline tokens (Obsidian-friendly):
 - `@start(YYYY-MM-DD)`
 - `@time(HH:MM)`
 - `@dur(30m|1h|90m)`
+- `@repeat(daily|weekdays|weekly|monthly|2d|2w|2m)`
 
 Example:
 
 ```
 - [ ] [#A] Plan sprint @sched(2025-01-10) @time(10:00) @dur(90m)
+- [ ] [#B] Daily standup @sched(2025-01-10) @repeat(weekdays)
 ```
+
+Recurring behavior:
+
+- When an open task with `@repeat(...)` is completed (`- [ ]` -> `- [x]`), MemoLog inserts the next open occurrence right below it.
+- Existing schedule dates (`@sched`, `@due`, `@start`) are shifted by the repeat rule.
+- If no schedule date exists, MemoLog adds `@sched(...)` using the log file date as the base.
 
 Date picker (`Ctrl+;`) supports relative input:
 
