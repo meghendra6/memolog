@@ -41,6 +41,8 @@ pub enum NavigateFocus {
 pub enum TaskFilter {
     #[default]
     Open,
+    /// Filter to show only overdue open tasks
+    Overdue,
     Done,
     All,
     /// Filter to show only high priority tasks
@@ -203,6 +205,20 @@ impl TaskSchedule {
     }
 }
 
+pub fn task_overdue_anchor_date(schedule: &TaskSchedule) -> Option<NaiveDate> {
+    if let Some(due) = schedule.due {
+        return Some(due);
+    }
+    if let Some(scheduled) = schedule.scheduled {
+        return Some(scheduled);
+    }
+    schedule.start
+}
+
+pub fn is_task_overdue(schedule: &TaskSchedule, today: NaiveDate) -> bool {
+    task_overdue_anchor_date(schedule).is_some_and(|date| date < today)
+}
+
 #[derive(Clone)]
 pub enum PomodoroTarget {
     Task {
@@ -298,7 +314,11 @@ pub fn strip_trailing_tomatoes(s: &str) -> (&str, usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_heading_timestamp_line, split_timestamp_line, strip_timestamp_prefix};
+    use super::{
+        TaskSchedule, is_heading_timestamp_line, is_task_overdue, split_timestamp_line,
+        strip_timestamp_prefix, task_overdue_anchor_date,
+    };
+    use chrono::NaiveDate;
 
     #[test]
     fn parses_heading_timestamp_line() {
@@ -313,5 +333,44 @@ mod tests {
     fn strips_heading_timestamp_prefix() {
         let line = "## [10:12:44]";
         assert_eq!(strip_timestamp_prefix(line), "");
+    }
+
+    #[test]
+    fn overdue_prefers_due_over_scheduled() {
+        let today = NaiveDate::from_ymd_opt(2026, 3, 1).expect("date");
+        let schedule = TaskSchedule {
+            due: NaiveDate::from_ymd_opt(2026, 3, 2),
+            scheduled: NaiveDate::from_ymd_opt(2026, 2, 20),
+            ..TaskSchedule::default()
+        };
+        assert_eq!(
+            task_overdue_anchor_date(&schedule),
+            NaiveDate::from_ymd_opt(2026, 3, 2)
+        );
+        assert!(!is_task_overdue(&schedule, today));
+    }
+
+    #[test]
+    fn overdue_falls_back_to_scheduled_then_start() {
+        let today = NaiveDate::from_ymd_opt(2026, 3, 1).expect("date");
+        let scheduled = TaskSchedule {
+            scheduled: NaiveDate::from_ymd_opt(2026, 2, 28),
+            ..TaskSchedule::default()
+        };
+        assert_eq!(
+            task_overdue_anchor_date(&scheduled),
+            NaiveDate::from_ymd_opt(2026, 2, 28)
+        );
+        assert!(is_task_overdue(&scheduled, today));
+
+        let start_only = TaskSchedule {
+            start: NaiveDate::from_ymd_opt(2026, 2, 27),
+            ..TaskSchedule::default()
+        };
+        assert_eq!(
+            task_overdue_anchor_date(&start_only),
+            NaiveDate::from_ymd_opt(2026, 2, 27)
+        );
+        assert!(is_task_overdue(&start_only, today));
     }
 }

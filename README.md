@@ -11,6 +11,7 @@ This project was forked from https://github.com/sonohoshi/sonomemo.
 - Agenda timeline view built from schedule metadata
 - Tasks, priorities, tags, and a pomodoro timer
 - Recurring tasks with automatic next occurrence generation (`@repeat(...)`)
+- Overdue-aware task and agenda filters for fast daily triage
 - Folding with persistent state stored in the Markdown file
 - Smart ranked search (AND/OR/phrase/exclude/date + fuzzy matching)
 - Vim-style composer (Normal/Insert/Visual) with configurable keybindings
@@ -79,7 +80,7 @@ Agenda controls (when focused):
 - `Enter` open memo preview
 - `Space` toggle task checkbox (tasks only)
 - `h/l` day navigation, `PgUp/PgDn` week navigation
-- `f` filter (Open -> Done -> All)
+- `f` filter (Open -> Overdue -> Done -> All -> Priority A)
 - `u` toggle unscheduled section
 
 ## Tasks panel
@@ -87,6 +88,8 @@ Agenda controls (when focused):
 - `j/k` move
 - `Space` toggle checkbox
 - `Shift+P` cycle priority
+- `f` cycle filter (Open -> Overdue -> Done -> All -> Priority A)
+- `1/2/3/4/5` set filter (Open/Done/All/Priority A/Overdue)
 - `]` snooze selected task by +1 day
 - `}` snooze selected task by +1 week
 - `p` start/stop pomodoro
@@ -373,6 +376,8 @@ Tasks
 - `Space` toggle checkbox
 - `Enter` memo preview
 - `Shift+P` cycle priority
+- `f` cycle filter
+- `1/2/3/4/5` set filter (Open/Done/All/Priority A/Overdue)
 - `]` snooze +1 day
 - `}` snooze +1 week
 - `p` pomodoro
