@@ -1695,8 +1695,11 @@ fn build_recurring_follow_up_line(
 ) -> Option<String> {
     let repeat_rule = parse_task_repeat_rule(task_text)?;
     let (mut next_schedule, _) = parse_task_metadata(task_text);
+    let has_date_anchor = next_schedule.scheduled.is_some()
+        || next_schedule.due.is_some()
+        || next_schedule.start.is_some();
 
-    if next_schedule.is_empty() {
+    if !has_date_anchor {
         let base = file_date?;
         next_schedule.scheduled = Some(shift_date_by_repeat_rule(base, repeat_rule));
     } else {
@@ -2875,6 +2878,23 @@ mod tests {
         let content = fs::read_to_string(&path).expect("read log");
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines[1], "- [ ] Journal @repeat(2d) @sched(2024-01-12)");
+    }
+
+    #[test]
+    fn toggle_task_status_without_date_anchor_uses_file_date() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-10");
+        fs::write(&path, "- [ ] Journal @time(09:00) @repeat(2d)\n").expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        toggle_task_status(&path_str, 0).expect("toggle task");
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(
+            lines[1],
+            "- [ ] Journal @repeat(2d) @sched(2024-01-12) @time(09:00)"
+        );
     }
 
     #[test]
