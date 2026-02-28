@@ -10,6 +10,8 @@ This project was forked from https://github.com/sonohoshi/sonomemo.
 - Timeline-first daily log with multi-line entries
 - Agenda timeline view built from schedule metadata
 - Tasks, priorities, tags, and a pomodoro timer
+- Recurring tasks with automatic next occurrence generation (`@repeat(...)`)
+- Overdue-aware task and agenda filters for fast daily triage
 - Folding with persistent state stored in the Markdown file
 - Smart ranked search (AND/OR/phrase/exclude/date + fuzzy matching)
 - Vim-style composer (Normal/Insert/Visual) with configurable keybindings
@@ -78,7 +80,7 @@ Agenda controls (when focused):
 - `Enter` open memo preview
 - `Space` toggle task checkbox (tasks only)
 - `h/l` day navigation, `PgUp/PgDn` week navigation
-- `f` filter (Open -> Done -> All)
+- `f` filter (Open -> Overdue -> Done -> All -> Priority A)
 - `u` toggle unscheduled section
 
 ## Tasks panel
@@ -86,6 +88,8 @@ Agenda controls (when focused):
 - `j/k` move
 - `Space` toggle checkbox
 - `Shift+P` cycle priority
+- `f` cycle filter (Open -> Overdue -> Done -> All -> Priority A)
+- `1/2/3/4/5` set filter (Open/Done/All/Priority A/Overdue)
 - `]` snooze selected task by +1 day
 - `}` snooze selected task by +1 week
 - `p` start/stop pomodoro
@@ -137,12 +141,20 @@ Use inline tokens (Obsidian-friendly):
 - `@start(YYYY-MM-DD)`
 - `@time(HH:MM)`
 - `@dur(30m|1h|90m)`
+- `@repeat(daily|weekdays|weekly|monthly|2d|2w|2m)`
 
 Example:
 
 ```
 - [ ] [#A] Plan sprint @sched(2025-01-10) @time(10:00) @dur(90m)
+- [ ] [#B] Daily standup @sched(2025-01-10) @repeat(weekdays)
 ```
+
+Recurring behavior:
+
+- When an open task with `@repeat(...)` is completed (`- [ ]` -> `- [x]`), MemoLog inserts the next open occurrence right below it.
+- Existing schedule dates (`@sched`, `@due`, `@start`) are shifted by the repeat rule.
+- If no schedule date exists, MemoLog adds `@sched(...)` using the log file date as the base.
 
 Date picker (`Ctrl+;`) supports relative input:
 
@@ -364,6 +376,8 @@ Tasks
 - `Space` toggle checkbox
 - `Enter` memo preview
 - `Shift+P` cycle priority
+- `f` cycle filter
+- `1/2/3/4/5` set filter (Open/Done/All/Priority A/Overdue)
 - `]` snooze +1 day
 - `}` snooze +1 week
 - `p` pomodoro

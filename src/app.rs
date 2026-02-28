@@ -4,8 +4,8 @@ use crate::integrations::google::{AuthDisplay, AuthPollResult};
 use crate::models::{
     DatePickerField, EditorMode, EntryIdentity, FoldOverride, FoldState, InputMode, LogEntry,
     NavigateFocus, PomodoroTarget, Priority, TaskFilter, TaskItem, TaskSchedule, TimelineFilter,
-    count_trailing_tomatoes, is_heading_timestamp_line, is_timestamped_line, split_timestamp_line,
-    strip_timestamp_prefix,
+    count_trailing_tomatoes, is_heading_timestamp_line, is_task_overdue, is_timestamped_line,
+    split_timestamp_line, strip_timestamp_prefix, task_overdue_anchor_date,
 };
 use crate::storage;
 use arboard::Clipboard;
@@ -1381,11 +1381,18 @@ impl<'a> App<'a> {
     }
 
     pub fn apply_task_filter(&mut self, reset_selection: bool) {
+        let today = Local::now().date_naive();
         self.tasks = match self.task_filter {
             TaskFilter::Open => self
                 .all_tasks
                 .iter()
                 .filter(|task| !task.is_done)
+                .cloned()
+                .collect(),
+            TaskFilter::Overdue => self
+                .all_tasks
+                .iter()
+                .filter(|task| !task.is_done && is_task_overdue(&task.schedule, today))
                 .cloned()
                 .collect(),
             TaskFilter::Done => self
@@ -1429,7 +1436,8 @@ impl<'a> App<'a> {
 
     pub fn cycle_task_filter(&mut self) {
         self.task_filter = match self.task_filter {
-            TaskFilter::Open => TaskFilter::Done,
+            TaskFilter::Open => TaskFilter::Overdue,
+            TaskFilter::Overdue => TaskFilter::Done,
             TaskFilter::Done => TaskFilter::All,
             TaskFilter::All => TaskFilter::HighPriority,
             TaskFilter::HighPriority => TaskFilter::Open,
@@ -1440,13 +1448,15 @@ impl<'a> App<'a> {
 
     pub fn apply_agenda_filter(&mut self, reset_selection: bool) {
         let filter = self.agenda_filter;
+        let today = Local::now().date_naive();
         self.agenda_items = self
             .agenda_all_items
             .iter()
             .filter(|item| match item.kind {
-                crate::models::AgendaItemKind::Note => true,
+                crate::models::AgendaItemKind::Note => filter != TaskFilter::Overdue,
                 crate::models::AgendaItemKind::Task => match filter {
                     TaskFilter::Open => !item.is_done,
+                    TaskFilter::Overdue => !item.is_done && is_task_overdue(&item.schedule, today),
                     TaskFilter::Done => item.is_done,
                     TaskFilter::All => true,
                     TaskFilter::HighPriority => {
@@ -1457,7 +1467,6 @@ impl<'a> App<'a> {
             .cloned()
             .collect();
 
-        let today = Local::now().date_naive();
         self.agenda_items
             .sort_by_key(|item| agenda_sort_key(item, today));
 
@@ -1476,7 +1485,8 @@ impl<'a> App<'a> {
 
     pub fn cycle_agenda_filter(&mut self) {
         self.agenda_filter = match self.agenda_filter {
-            TaskFilter::Open => TaskFilter::Done,
+            TaskFilter::Open => TaskFilter::Overdue,
+            TaskFilter::Overdue => TaskFilter::Done,
             TaskFilter::Done => TaskFilter::All,
             TaskFilter::All => TaskFilter::HighPriority,
             TaskFilter::HighPriority => TaskFilter::Open,
@@ -1518,6 +1528,7 @@ impl<'a> App<'a> {
     pub fn agenda_filter_label(&self) -> &'static str {
         match self.agenda_filter {
             TaskFilter::Open => "Open",
+            TaskFilter::Overdue => "Overdue",
             TaskFilter::Done => "Done",
             TaskFilter::All => "All",
             TaskFilter::HighPriority => "Priority A",
@@ -1628,6 +1639,14 @@ impl<'a> App<'a> {
         (open, done)
     }
 
+    pub fn overdue_task_count(&self) -> usize {
+        let today = Local::now().date_naive();
+        self.all_tasks
+            .iter()
+            .filter(|task| !task.is_done && is_task_overdue(&task.schedule, today))
+            .count()
+    }
+
     /// Returns (completed_minutes, total_planned_minutes) for tasks with @dur metadata.
     pub fn time_summary(&self) -> (u32, u32) {
         let mut completed_mins = 0u32;
@@ -1646,6 +1665,7 @@ impl<'a> App<'a> {
     pub fn task_filter_label(&self) -> &'static str {
         match self.task_filter {
             TaskFilter::Open => "Open",
+            TaskFilter::Overdue => "Overdue",
             TaskFilter::Done => "Done",
             TaskFilter::All => "All",
             TaskFilter::HighPriority => "Priority A",
@@ -2208,9 +2228,8 @@ fn agenda_sort_key(
     today: NaiveDate,
 ) -> (NaiveDate, u8, u8, NaiveTime, usize) {
     let is_overdue = item.kind == crate::models::AgendaItemKind::Task
-        && item.schedule.due.is_some()
-        && item.schedule.due.unwrap_or(today) < today
-        && !item.is_done;
+        && !item.is_done
+        && is_task_overdue(&item.schedule, today);
     let overdue_rank = if is_overdue { 0 } else { 1 };
     let kind_rank = match item.kind {
         crate::models::AgendaItemKind::Task => 0,
@@ -2235,9 +2254,7 @@ fn agenda_timeline_indices(app: &App) -> Vec<usize> {
     for (idx, item) in app.agenda_items.iter().enumerate() {
         match item.kind {
             crate::models::AgendaItemKind::Task => {
-                let is_overdue = item.schedule.due.is_some()
-                    && item.schedule.due.unwrap_or(day) < day
-                    && !item.is_done;
+                let is_overdue = !item.is_done && is_task_overdue(&item.schedule, day);
                 if is_overdue {
                     overdue.push(idx);
                     continue;
@@ -2277,8 +2294,9 @@ fn agenda_timeline_indices(app: &App) -> Vec<usize> {
     let time_min = MIDNIGHT;
     overdue.sort_by_key(|idx| {
         let item = &app.agenda_items[*idx];
+        let anchor = task_overdue_anchor_date(&item.schedule).unwrap_or(day);
         (
-            item.schedule.due.unwrap_or(day),
+            anchor,
             item.time.unwrap_or(time_min),
             task_priority_rank(item.priority),
             item.line_number,

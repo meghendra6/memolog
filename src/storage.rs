@@ -4,10 +4,10 @@ use crate::models::{
     strip_timestamp_prefix, strip_trailing_tomatoes,
 };
 use crate::task_metadata::{
-    TaskMetadataKey, parse_date, parse_task_metadata, strip_task_metadata_tokens,
-    upsert_task_metadata_token,
+    TaskMetadataKey, TaskRepeatRule, parse_date, parse_task_metadata, parse_task_repeat_rule,
+    strip_task_metadata_tokens, upsert_task_metadata_token,
 };
-use chrono::{Duration, Local, NaiveDate};
+use chrono::{Datelike, Duration, Local, NaiveDate};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1603,6 +1603,138 @@ fn split_note_prefix(text: &str) -> (String, &str) {
     (String::new(), text)
 }
 
+struct ParsedTaskCheckboxLine<'a> {
+    prefix: &'a str,
+    task_text: &'a str,
+    is_done: bool,
+}
+
+struct TaskCompletionMutation {
+    completed_line: String,
+    follow_up_line: Option<String>,
+}
+
+fn parse_task_checkbox_line(line: &str) -> Option<ParsedTaskCheckboxLine<'_>> {
+    let stripped = strip_timestamp_prefix(line);
+    let prefix_len = line.len().saturating_sub(stripped.len());
+    let (indent_bytes, _) = parse_indent(stripped);
+    let body_start = prefix_len.saturating_add(indent_bytes);
+    if body_start > line.len() {
+        return None;
+    }
+    let (prefix, body) = line.split_at(body_start);
+
+    if let Some(task_text) = body.strip_prefix("- [ ] ") {
+        return Some(ParsedTaskCheckboxLine {
+            prefix,
+            task_text,
+            is_done: false,
+        });
+    }
+    if let Some(task_text) = body.strip_prefix("- [x] ") {
+        return Some(ParsedTaskCheckboxLine {
+            prefix,
+            task_text,
+            is_done: true,
+        });
+    }
+    if let Some(task_text) = body.strip_prefix("- [X] ") {
+        return Some(ParsedTaskCheckboxLine {
+            prefix,
+            task_text,
+            is_done: true,
+        });
+    }
+    None
+}
+
+fn shift_date_by_repeat_rule(date: NaiveDate, rule: TaskRepeatRule) -> NaiveDate {
+    match rule {
+        TaskRepeatRule::Daily => date + Duration::days(1),
+        TaskRepeatRule::Weekdays => {
+            let mut next = date + Duration::days(1);
+            while matches!(next.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun) {
+                next += Duration::days(1);
+            }
+            next
+        }
+        TaskRepeatRule::Weekly => date + Duration::days(7),
+        TaskRepeatRule::Monthly => shift_date_by_months(date, 1),
+        TaskRepeatRule::EveryDays(days) => date + Duration::days(days as i64),
+        TaskRepeatRule::EveryWeeks(weeks) => date + Duration::days((weeks as i64) * 7),
+        TaskRepeatRule::EveryMonths(months) => shift_date_by_months(date, months),
+    }
+}
+
+fn shift_date_by_months(date: NaiveDate, months: u32) -> NaiveDate {
+    if months == 0 {
+        return date;
+    }
+    let month_index = date.month0() as i64 + months as i64;
+    let target_year = date.year() + (month_index / 12) as i32;
+    let target_month = (month_index % 12) as u32 + 1;
+    let target_day = date.day().min(last_day_of_month(target_year, target_month));
+    NaiveDate::from_ymd_opt(target_year, target_month, target_day).unwrap_or(date)
+}
+
+fn last_day_of_month(year: i32, month: u32) -> u32 {
+    let mut day = 31u32;
+    while day > 0 {
+        if NaiveDate::from_ymd_opt(year, month, day).is_some() {
+            return day;
+        }
+        day -= 1;
+    }
+    28
+}
+
+fn build_recurring_follow_up_line(
+    prefix: &str,
+    task_text: &str,
+    file_date: Option<NaiveDate>,
+) -> Option<String> {
+    let repeat_rule = parse_task_repeat_rule(task_text)?;
+    let (mut next_schedule, _) = parse_task_metadata(task_text);
+    let has_date_anchor = next_schedule.scheduled.is_some()
+        || next_schedule.due.is_some()
+        || next_schedule.start.is_some();
+
+    if !has_date_anchor {
+        let base = file_date?;
+        next_schedule.scheduled = Some(shift_date_by_repeat_rule(base, repeat_rule));
+    } else {
+        next_schedule.scheduled = next_schedule
+            .scheduled
+            .map(|d| shift_date_by_repeat_rule(d, repeat_rule));
+        next_schedule.due = next_schedule
+            .due
+            .map(|d| shift_date_by_repeat_rule(d, repeat_rule));
+        next_schedule.start = next_schedule
+            .start
+            .map(|d| shift_date_by_repeat_rule(d, repeat_rule));
+    }
+
+    let follow_up_text = apply_schedule_tokens(task_text, &next_schedule);
+    Some(format!("{prefix}- [ ] {follow_up_text}"))
+}
+
+fn complete_task_line_with_recurrence(
+    line: &str,
+    file_date: Option<NaiveDate>,
+) -> Option<TaskCompletionMutation> {
+    let parsed = parse_task_checkbox_line(line)?;
+    if parsed.is_done {
+        return None;
+    }
+
+    let completed_line = format!("{}- [x] {}", parsed.prefix, parsed.task_text);
+    let follow_up_line = build_recurring_follow_up_line(parsed.prefix, parsed.task_text, file_date);
+    Some(TaskCompletionMutation {
+        completed_line,
+        follow_up_line,
+    })
+}
+
 fn mark_task_completed_line(line: &str) -> Option<String> {
     if line.contains("- [ ]") {
         Some(line.replacen("- [ ]", "- [x]", 1))
@@ -1619,8 +1751,14 @@ fn mark_task_completed_at_line(file_path: &str, line_number: usize) -> io::Resul
         return Ok(false);
     }
 
-    let updated = if let Some(new_line) = mark_task_completed_line(&lines[line_number]) {
-        lines[line_number] = new_line;
+    let file_date = extract_date_from_path(file_path);
+    let updated = if let Some(mutation) =
+        complete_task_line_with_recurrence(&lines[line_number], file_date)
+    {
+        lines[line_number] = mutation.completed_line;
+        if let Some(follow_up_line) = mutation.follow_up_line {
+            lines.insert(line_number + 1, follow_up_line);
+        }
         true
     } else {
         false
@@ -1646,18 +1784,21 @@ pub fn toggle_task_status(file_path: &str, line_number: usize) -> io::Result<()>
     let mut changed = false;
 
     if line_number < lines.len() {
-        let line = &lines[line_number];
-        let new_line = if line.contains("- [ ]") {
-            line.replacen("- [ ]", "- [x]", 1)
-        } else if line.contains("- [x]") {
-            line.replacen("- [x]", "- [ ]", 1)
-        } else if line.contains("- [X]") {
-            line.replacen("- [X]", "- [ ]", 1)
-        } else {
-            line.clone()
-        };
-        changed = new_line != *line;
-        lines[line_number] = new_line;
+        let line = lines[line_number].clone();
+        if let Some(parsed) = parse_task_checkbox_line(&line) {
+            if parsed.is_done {
+                lines[line_number] = format!("{}- [ ] {}", parsed.prefix, parsed.task_text);
+                changed = true;
+            } else if let Some(mutation) =
+                complete_task_line_with_recurrence(&line, extract_date_from_path(file_path))
+            {
+                lines[line_number] = mutation.completed_line;
+                if let Some(follow_up_line) = mutation.follow_up_line {
+                    lines.insert(line_number + 1, follow_up_line);
+                }
+                changed = true;
+            }
+        }
     }
 
     if !changed {
@@ -1988,13 +2129,22 @@ pub fn complete_entry_tasks(entry: &LogEntry) -> io::Result<usize> {
         return Ok(0);
     }
 
-    let end_line = entry.end_line.min(lines.len().saturating_sub(1));
+    let mut end_line = entry.end_line.min(lines.len().saturating_sub(1));
+    let file_date = extract_date_from_path(&entry.file_path);
     let mut updated = 0usize;
-    for line in lines.iter_mut().take(end_line + 1).skip(entry.line_number) {
-        if let Some(new_line) = mark_task_completed_line(line) {
-            *line = new_line;
+    let mut i = entry.line_number;
+    while i <= end_line && i < lines.len() {
+        let line = lines[i].clone();
+        if let Some(mutation) = complete_task_line_with_recurrence(&line, file_date) {
+            lines[i] = mutation.completed_line;
+            if let Some(follow_up_line) = mutation.follow_up_line {
+                lines.insert(i + 1, follow_up_line);
+                end_line = end_line.saturating_add(1);
+                i = i.saturating_add(1);
+            }
             updated += 1;
         }
+        i = i.saturating_add(1);
     }
 
     if updated > 0 {
@@ -2685,6 +2835,135 @@ mod tests {
         let line = content.lines().next().unwrap_or("");
         assert!(line.starts_with("- [ ] [#A] Review PR ⟦2023-12-31⟧ #work"));
         assert!(line.contains("@sched(2024-01-02)"));
+    }
+
+    #[test]
+    fn toggle_task_status_creates_daily_follow_up() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-01");
+        fs::write(&path, "- [ ] Standup @sched(2024-01-01) @repeat(daily)\n").expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        toggle_task_status(&path_str, 0).expect("toggle task");
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines[0], "- [x] Standup @sched(2024-01-01) @repeat(daily)");
+        assert_eq!(lines[1], "- [ ] Standup @repeat(daily) @sched(2024-01-02)");
+    }
+
+    #[test]
+    fn toggle_task_status_weekdays_skips_weekend() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-05");
+        fs::write(&path, "- [ ] Plan @sched(2024-01-05) @repeat(weekdays)\n").expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        toggle_task_status(&path_str, 0).expect("toggle task");
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines[1], "- [ ] Plan @repeat(weekdays) @sched(2024-01-08)");
+    }
+
+    #[test]
+    fn toggle_task_status_unscheduled_uses_file_date() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-10");
+        fs::write(&path, "- [ ] Journal @repeat(2d)\n").expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        toggle_task_status(&path_str, 0).expect("toggle task");
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines[1], "- [ ] Journal @repeat(2d) @sched(2024-01-12)");
+    }
+
+    #[test]
+    fn toggle_task_status_without_date_anchor_uses_file_date() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-10");
+        fs::write(&path, "- [ ] Journal @time(09:00) @repeat(2d)\n").expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        toggle_task_status(&path_str, 0).expect("toggle task");
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(
+            lines[1],
+            "- [ ] Journal @repeat(2d) @sched(2024-01-12) @time(09:00)"
+        );
+    }
+
+    #[test]
+    fn toggle_task_status_reopen_does_not_create_follow_up() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-01");
+        fs::write(&path, "- [x] Standup @sched(2024-01-01) @repeat(daily)\n").expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        toggle_task_status(&path_str, 0).expect("toggle task");
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], "- [ ] Standup @sched(2024-01-01) @repeat(daily)");
+    }
+
+    #[test]
+    fn toggle_task_status_monthly_clamps_to_last_day() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-31");
+        fs::write(
+            &path,
+            "- [ ] Month close @sched(2024-01-31) @repeat(monthly)\n",
+        )
+        .expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        toggle_task_status(&path_str, 0).expect("toggle task");
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(
+            lines[1],
+            "- [ ] Month close @repeat(monthly) @sched(2024-02-29)"
+        );
+    }
+
+    #[test]
+    fn complete_entry_tasks_creates_follow_up_for_recurring_task() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2024-01-01");
+        fs::write(
+            &path,
+            "- [ ] Daily note @sched(2024-01-01) @repeat(daily)\n- [ ] One-off task\n",
+        )
+        .expect("write log");
+        let path_str = path.to_string_lossy().to_string();
+
+        let entry = LogEntry {
+            content: String::new(),
+            file_path: path_str,
+            line_number: 0,
+            end_line: 1,
+        };
+        let completed = complete_entry_tasks(&entry).expect("complete entry");
+        assert_eq!(completed, 2);
+
+        let content = fs::read_to_string(&path).expect("read log");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(
+            lines[0],
+            "- [x] Daily note @sched(2024-01-01) @repeat(daily)"
+        );
+        assert_eq!(
+            lines[1],
+            "- [ ] Daily note @repeat(daily) @sched(2024-01-02)"
+        );
+        assert_eq!(lines[2], "- [x] One-off task");
     }
 
     fn write_log(dir: &Path, date: &str, content: &str) {

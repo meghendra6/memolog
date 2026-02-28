@@ -1191,6 +1191,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
             fmt_keys(&kb.tasks.filter_done),
             fmt_keys(&kb.tasks.filter_all),
             fmt_keys(&kb.tasks.filter_priority),
+            fmt_keys(&kb.tasks.filter_overdue),
         ],
         " / ",
     );
@@ -1533,7 +1534,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 fmt_keys(&kb.tasks.filter_toggle),
             ),
             (
-                "Filter: open/done/all".to_string(),
+                "Filter: open/done/all/priority/overdue".to_string(),
                 tasks_filter_keys.clone(),
             ),
         ]

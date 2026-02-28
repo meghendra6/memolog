@@ -2,6 +2,17 @@ use crate::models::TaskSchedule;
 use chrono::{NaiveDate, NaiveTime};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TaskRepeatRule {
+    Daily,
+    Weekdays,
+    Weekly,
+    Monthly,
+    EveryDays(u32),
+    EveryWeeks(u32),
+    EveryMonths(u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskMetadataKey {
     Scheduled,
     Due,
@@ -111,6 +122,14 @@ pub fn remove_task_metadata_token(text: &str, key: TaskMetadataKey) -> String {
     remove_tokens_by_key(text, key)
 }
 
+pub(crate) fn parse_task_repeat_rule(text: &str) -> Option<TaskRepeatRule> {
+    let value = extract_at_token_value(text, "repeat")
+        .or_else(|| extract_dataview_value(text, "repeat"))
+        .or_else(|| extract_at_token_value(text, "every"))
+        .or_else(|| extract_dataview_value(text, "every"))?;
+    parse_repeat_rule_value(&value)
+}
+
 fn scan_tokens(text: &str) -> Vec<TokenMatch> {
     let mut tokens = scan_at_tokens(text);
     tokens.extend(scan_dataview_tokens(text));
@@ -206,6 +225,114 @@ fn scan_dataview_tokens(text: &str) -> Vec<TokenMatch> {
     }
 
     tokens
+}
+
+fn extract_at_token_value(text: &str, token_name: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] != b'@' {
+            i += 1;
+            continue;
+        }
+        let key_start = i + 1;
+        i = key_start;
+        while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+        if key_start == i || i >= bytes.len() || bytes[i] != b'(' {
+            continue;
+        }
+        let key = text[key_start..i].trim().to_ascii_lowercase();
+        i += 1;
+        let value_start = i;
+        while i < bytes.len() && bytes[i] != b')' {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        let value = text[value_start..i].trim().to_string();
+        if key == token_name {
+            return Some(value);
+        }
+        i += 1;
+    }
+
+    None
+}
+
+fn extract_dataview_value(text: &str, token_name: &str) -> Option<String> {
+    let needle = format!("{token_name}::");
+    let bytes = text.as_bytes();
+    let mut offset = 0usize;
+
+    while let Some(pos) = text[offset..].find(&needle) {
+        let start = offset + pos;
+        if start > 0 && bytes[start - 1].is_ascii_alphanumeric() {
+            offset = start + needle.len();
+            continue;
+        }
+        let mut i = start + needle.len();
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let value_start = i;
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if value_start == i {
+            offset = i;
+            continue;
+        }
+        return Some(text[value_start..i].trim().to_string());
+    }
+
+    None
+}
+
+fn parse_repeat_rule_value(value: &str) -> Option<TaskRepeatRule> {
+    let mut normalized = value.trim().to_ascii_lowercase();
+    if let Some(rest) = normalized.strip_prefix("every ") {
+        normalized = rest.trim().to_string();
+    }
+
+    match normalized.as_str() {
+        "daily" | "day" | "everyday" => Some(TaskRepeatRule::Daily),
+        "weekdays" | "weekday" | "business-days" => Some(TaskRepeatRule::Weekdays),
+        "weekly" | "week" => Some(TaskRepeatRule::Weekly),
+        "monthly" | "month" => Some(TaskRepeatRule::Monthly),
+        "biweekly" => Some(TaskRepeatRule::EveryWeeks(2)),
+        _ => parse_compact_interval_rule(&normalized),
+    }
+}
+
+fn parse_compact_interval_rule(value: &str) -> Option<TaskRepeatRule> {
+    let mut digits = String::new();
+    let mut chars = value.chars();
+    for ch in chars.by_ref() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+        } else {
+            let unit = ch;
+            let rest: String = chars.collect();
+            if !rest.trim().is_empty() {
+                return None;
+            }
+            let interval: u32 = digits.parse().ok()?;
+            if interval == 0 {
+                return None;
+            }
+            return match unit {
+                'd' => Some(TaskRepeatRule::EveryDays(interval)),
+                'w' => Some(TaskRepeatRule::EveryWeeks(interval)),
+                'm' => Some(TaskRepeatRule::EveryMonths(interval)),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 fn strip_tokens(text: &str, tokens: &[TokenMatch]) -> String {
@@ -446,5 +573,52 @@ mod tests {
             parse_duration_minutes("1w2d3h30m"),
             Some(7 * 24 * 60 + 2 * 24 * 60 + 3 * 60 + 30)
         );
+    }
+
+    #[test]
+    fn parses_repeat_rule_values() {
+        assert_eq!(
+            parse_task_repeat_rule("- [ ] Daily standup @repeat(daily)"),
+            Some(TaskRepeatRule::Daily)
+        );
+        assert_eq!(
+            parse_task_repeat_rule("- [ ] Review @repeat(weekdays)"),
+            Some(TaskRepeatRule::Weekdays)
+        );
+        assert_eq!(
+            parse_task_repeat_rule("- [ ] Weekly sync @repeat(weekly)"),
+            Some(TaskRepeatRule::Weekly)
+        );
+        assert_eq!(
+            parse_task_repeat_rule("- [ ] Report @repeat(monthly)"),
+            Some(TaskRepeatRule::Monthly)
+        );
+        assert_eq!(
+            parse_task_repeat_rule("- [ ] Habit @repeat(3d)"),
+            Some(TaskRepeatRule::EveryDays(3))
+        );
+        assert_eq!(
+            parse_task_repeat_rule("- [ ] Retro @repeat(2w)"),
+            Some(TaskRepeatRule::EveryWeeks(2))
+        );
+        assert_eq!(
+            parse_task_repeat_rule("- [ ] Budget @repeat(2m)"),
+            Some(TaskRepeatRule::EveryMonths(2))
+        );
+    }
+
+    #[test]
+    fn parses_repeat_rule_dataview_alias() {
+        assert_eq!(
+            parse_task_repeat_rule("- [ ] Daily standup repeat:: weekdays"),
+            Some(TaskRepeatRule::Weekdays)
+        );
+    }
+
+    #[test]
+    fn repeat_token_remains_visible_in_display_text() {
+        let input = "- [ ] Standup @sched(2026-03-01) @repeat(daily)";
+        let (_schedule, text) = parse_task_metadata(input);
+        assert_eq!(text, "- [ ] Standup @repeat(daily)");
     }
 }

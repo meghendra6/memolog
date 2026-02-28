@@ -607,6 +607,7 @@ pub struct TasksBindings {
     pub filter_done: Vec<String>,
     pub filter_all: Vec<String>,
     pub filter_priority: Vec<String>,
+    pub filter_overdue: Vec<String>,
 }
 
 impl Default for TasksBindings {
@@ -626,6 +627,7 @@ impl Default for TasksBindings {
             filter_done: vec!["2".to_string()],
             filter_all: vec!["3".to_string()],
             filter_priority: vec!["4".to_string()],
+            filter_overdue: vec!["5".to_string()],
         }
     }
 }

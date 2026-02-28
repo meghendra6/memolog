@@ -11,7 +11,7 @@ use crate::app::{App, PLACEHOLDER_COMPOSE};
 use crate::config::{Theme, ThemePreset, ThemeToastOverrides, ThemeUiOverrides};
 use crate::models::{
     AgendaItemKind, EditorMode, InputMode, NavigateFocus, VisualKind, is_heading_timestamp_line,
-    is_timestamped_line, split_timestamp_line,
+    is_task_overdue, is_timestamped_line, split_timestamp_line,
 };
 use ratatui::style::Stylize;
 use regex::Regex;
@@ -813,11 +813,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 }
                 line.push_str(&task.text);
 
-                // Show overdue indicator for tasks with past due dates
-                if !task.is_done
-                    && let Some(due_date) = task.schedule.due
-                    && due_date < today
-                {
+                // Show overdue indicator using the same rule as Task/Agenda filters.
+                if !task.is_done && is_task_overdue(&task.schedule, today) {
                     line.push_str(" ⚠️OVERDUE");
                 }
 
@@ -920,9 +917,10 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         }
 
         let (open_count, done_count) = app.task_counts();
+        let overdue_count = app.overdue_task_count();
         let tasks_summary = format!(
-            "Open {} · Done {} · 🍅 {}",
-            open_count, done_count, app.today_tomatoes
+            "Open {} · Overdue {} · Done {} · 🍅 {}",
+            open_count, overdue_count, done_count, app.today_tomatoes
         );
         let filter_label = app.task_filter_label();
         let filter_summary = format!("{filter_label}: {}", app.tasks.len());
@@ -933,7 +931,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             ""
         };
         let tasks_hint = if is_tasks_focused {
-            " · Space toggle · Shift+P priority · p pomodoro"
+            " · Space toggle · Shift+P priority · 5 overdue · p pomodoro"
         } else {
             ""
         };
