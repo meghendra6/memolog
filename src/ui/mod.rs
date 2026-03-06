@@ -91,10 +91,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             }
         } else if is_timeline_focused {
             (78, 22)
-        } else if is_tasks_focused {
-            (62, 38)
-        } else if is_agenda_focused {
-            (64, 36)
+        } else if is_tasks_focused || is_agenda_focused {
+            (50, 50)
         } else {
             (70, 30)
         };
@@ -1868,7 +1866,7 @@ fn compose_wrapped_line(
     });
     if selection_covers_segment {
         rendered.style = Style::default().bg(tokens.ui_selection_bg);
-    } else if is_cursor {
+    } else if is_cursor && selection.is_none() {
         rendered.style = Style::default().bg(tokens.ui_cursorline_bg);
     }
     rendered
@@ -2891,6 +2889,7 @@ fn file_date(file_path: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::SelectionRange;
     use super::collect_code_block_info;
     use super::compose_prefix_width;
     use super::compose_wrapped_line;
@@ -2934,6 +2933,26 @@ mod tests {
         let tokens = ThemeTokens::from_theme(&Theme::default());
         let line = compose_wrapped_line("plain text", &tokens, false, 9, true, true, None, 0, None);
         assert_eq!(line_to_string(&line), " 10 | plain text");
+    }
+
+    #[test]
+    fn visual_selection_suppresses_cursorline_background() {
+        let tokens = ThemeTokens::from_theme(&Theme::default());
+        let line = compose_wrapped_line(
+            "plain text",
+            &tokens,
+            true,
+            0,
+            false,
+            true,
+            Some(SelectionRange { start: 0, end: 5 }),
+            0,
+            None,
+        );
+
+        assert_ne!(line.style.bg, Some(tokens.ui_cursorline_bg));
+        assert_eq!(line.spans[1].style.bg, Some(tokens.ui_selection_bg));
+        assert_eq!(line.spans[2].style.bg, None);
     }
 
     #[test]

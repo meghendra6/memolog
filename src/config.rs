@@ -13,6 +13,9 @@ pub fn key_match(key: &KeyEvent, bindings: &[String]) -> bool {
 pub fn key_code_for_shortcuts(key: &KeyEvent) -> KeyCode {
     match key.code {
         KeyCode::Char(c) => {
+            if let Some(symbol) = shifted_symbol_char(c, key.modifiers) {
+                return KeyCode::Char(symbol);
+            }
             if let Some(mapped) = map_korean_2set_char(c) {
                 let mapped = if key.modifiers.contains(KeyModifiers::SHIFT)
                     && mapped.is_ascii_alphabetic()
@@ -28,6 +31,37 @@ pub fn key_code_for_shortcuts(key: &KeyEvent) -> KeyCode {
         }
         _ => key.code,
     }
+}
+
+fn shifted_symbol_char(c: char, modifiers: KeyModifiers) -> Option<char> {
+    if !modifiers.contains(KeyModifiers::SHIFT) {
+        return None;
+    }
+
+    Some(match c {
+        '`' => '~',
+        '1' => '!',
+        '2' => '@',
+        '3' => '#',
+        '4' => '$',
+        '5' => '%',
+        '6' => '^',
+        '7' => '&',
+        '8' => '*',
+        '9' => '(',
+        '0' => ')',
+        '-' => '_',
+        '=' => '+',
+        '[' => '{',
+        ']' => '}',
+        '\\' => '|',
+        ';' => ':',
+        '\'' => '"',
+        ',' => '<',
+        '.' => '>',
+        '/' => '?',
+        _ => return None,
+    })
 }
 
 fn map_korean_2set_char(c: char) -> Option<char> {
@@ -887,7 +921,7 @@ impl Theme {
                     bg: Some("40,42,54".to_string()),
                     muted: Some("98,114,164".to_string()),
                     accent: Some("189,147,249".to_string()),
-                    selection_bg: Some("68,71,90".to_string()),
+                    selection_bg: Some("82,94,124".to_string()),
                     cursorline_bg: Some("68,71,90".to_string()),
                     toast: Some(ThemeToastOverrides {
                         info: Some("139,233,253".to_string()),
@@ -912,7 +946,7 @@ impl Theme {
                     bg: Some("0,43,54".to_string()),
                     muted: Some("88,110,117".to_string()),
                     accent: Some("38,139,210".to_string()),
-                    selection_bg: Some("7,54,66".to_string()),
+                    selection_bg: Some("20,76,86".to_string()),
                     cursorline_bg: Some("7,54,66".to_string()),
                     toast: Some(ThemeToastOverrides {
                         info: Some("42,161,152".to_string()),
@@ -937,7 +971,7 @@ impl Theme {
                     bg: Some("253,246,227".to_string()),
                     muted: Some("147,161,161".to_string()),
                     accent: Some("38,139,210".to_string()),
-                    selection_bg: Some("238,232,213".to_string()),
+                    selection_bg: Some("225,218,195".to_string()),
                     cursorline_bg: Some("238,232,213".to_string()),
                     toast: Some(ThemeToastOverrides {
                         info: Some("42,161,152".to_string()),
@@ -962,7 +996,7 @@ impl Theme {
                     bg: Some("46,52,64".to_string()),
                     muted: Some("94,129,172".to_string()),
                     accent: Some("136,192,208".to_string()),
-                    selection_bg: Some("59,66,82".to_string()),
+                    selection_bg: Some("76,86,106".to_string()),
                     cursorline_bg: Some("59,66,82".to_string()),
                     toast: Some(ThemeToastOverrides {
                         info: Some("143,188,187".to_string()),
@@ -987,7 +1021,7 @@ impl Theme {
                     bg: Some("16,16,16".to_string()),
                     muted: Some("128,128,128".to_string()),
                     accent: Some("224,192,64".to_string()),
-                    selection_bg: Some("42,42,42".to_string()),
+                    selection_bg: Some("72,72,72".to_string()),
                     cursorline_bg: Some("42,42,42".to_string()),
                     toast: Some(ThemeToastOverrides {
                         info: Some("224,192,64".to_string()),
@@ -1608,7 +1642,7 @@ fn replace_keybinding(list: &mut Vec<String>, old: &str, new: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, Theme, ThemePreset, key_match};
+    use super::{Config, Theme, ThemePreset, key_code_for_shortcuts, key_match};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -1648,6 +1682,12 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Char('\u{314E}'), KeyModifiers::SHIFT);
         assert!(key_match(&key, &[String::from("shift+g")]));
         assert!(!key_match(&key, &[String::from("g")]));
+    }
+
+    #[test]
+    fn shortcut_key_code_normalizes_shifted_symbols() {
+        let key = KeyEvent::new(KeyCode::Char('`'), KeyModifiers::SHIFT);
+        assert_eq!(key_code_for_shortcuts(&key), KeyCode::Char('~'));
     }
 
     #[test]
