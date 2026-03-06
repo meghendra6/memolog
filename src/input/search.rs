@@ -38,3 +38,11 @@ pub fn handle_search_mode(app: &mut App, key: KeyEvent) {
         app.textarea.input(key);
     }
 }
+
+pub fn handle_paste(app: &mut App, text: &str) {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    if normalized.is_empty() {
+        return;
+    }
+    app.textarea.insert_str(&normalized);
+}

@@ -23,6 +23,11 @@ pub fn handle_event(app: &mut App, event: Event) {
                 InputMode::Search => search::handle_search_mode(app, key),
             }
         }
+        Event::Paste(text) => match app.input_mode {
+            InputMode::Editing => editing::handle_paste(app, &text),
+            InputMode::Search => search::handle_paste(app, &text),
+            InputMode::Navigate => {}
+        },
         _ => {}
     }
 }

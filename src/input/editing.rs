@@ -9,6 +9,12 @@ use chrono::{Duration, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
+    if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app.commit_insert_group();
+        save_composer_in_place(app);
+        return;
+    }
+
     if key_match(&key, &app.config.keybindings.composer.submit) {
         app.commit_insert_group();
         submit_composer(app);
@@ -16,8 +22,8 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
     }
 
     let in_vim_normal = app.is_vim_mode() && matches!(app.editor_mode, EditorMode::Normal);
-    let allow_composer_shortcuts = !app.is_vim_mode()
-        || matches!(app.editor_mode, EditorMode::Insert | EditorMode::Normal);
+    let allow_composer_shortcuts =
+        !app.is_vim_mode() || matches!(app.editor_mode, EditorMode::Insert | EditorMode::Normal);
 
     if allow_composer_shortcuts && key_match(&key, &app.config.keybindings.composer.task_toggle) {
         let changed = if in_vim_normal {
@@ -40,8 +46,7 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    if allow_composer_shortcuts
-        && key_match(&key, &app.config.keybindings.composer.priority_cycle)
+    if allow_composer_shortcuts && key_match(&key, &app.config.keybindings.composer.priority_cycle)
     {
         let changed = if in_vim_normal {
             let snapshot = app.editor_snapshot();
@@ -164,6 +169,12 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
             return;
         }
 
+        if key.code == KeyCode::Char('`') && key.modifiers.contains(KeyModifiers::SHIFT) {
+            app.textarea.insert_char('~');
+            app.composer_dirty = true;
+            return;
+        }
+
         // Forward all other keys to textarea
         if app.textarea.input(key) {
             app.composer_dirty = true;
@@ -195,12 +206,12 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    if key_match(&key, &app.config.keybindings.composer.cancel)
-        && matches!(app.editor_mode, EditorMode::Normal)
-    {
-        app.commit_insert_group();
-        request_exit_composer(app);
-        return;
+    if key_match(&key, &app.config.keybindings.composer.cancel) {
+        if matches!(app.editor_mode, EditorMode::Normal) {
+            app.pending_command = None;
+            app.pending_count = 0;
+            return;
+        }
     }
 
     match app.editor_mode {
@@ -225,90 +236,186 @@ pub(crate) fn discard_composer(app: &mut App) {
     app.transition_to(InputMode::Navigate);
 }
 
+pub(crate) fn save_composer_in_place(app: &mut App) {
+    save_composer(app, true);
+}
+
 pub(crate) fn submit_composer(app: &mut App) {
+    save_composer(app, false);
+}
+
+pub fn handle_paste(app: &mut App, text: &str) {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    if normalized.is_empty() {
+        return;
+    }
+
+    if app.is_vim_mode() && matches!(app.editor_mode, EditorMode::Normal) {
+        return;
+    }
+
+    if app.is_vim_mode() && matches!(app.editor_mode, EditorMode::Visual(_)) {
+        crate::editor::vim::exit_visual_mode(app);
+    }
+
+    app.textarea.insert_str(&normalized);
+    app.mark_insert_modified();
+    app.composer_dirty = true;
+}
+
+fn save_composer(app: &mut App, stay_in_editor: bool) {
     let lines = app.textarea.lines().to_vec();
     let is_empty = lines.iter().all(|l| l.trim().is_empty());
 
-    if let Some(editing) = app.editing_entry.take() {
+    if let Some(mut editing) = app.editing_entry.clone() {
         if editing.is_raw {
-            let lines = app.textarea.lines().to_vec();
             if let Err(e) = storage::write_file_lines(&editing.file_path, &lines) {
                 app.toast(format!("Error saving file: {}", e));
+                return;
             } else {
-                app.toast("Config saved. Restart to apply changes.");
+                editing.end_line = lines.len().saturating_sub(1);
+                app.toast(if stay_in_editor {
+                    "Saved. Continue editing."
+                } else {
+                    "Config saved. Restart to apply changes."
+                });
             }
         } else {
-        let selection_hint = (editing.file_path.clone(), editing.start_line);
-        let mut new_lines: Vec<String> = Vec::new();
-        if !is_empty {
-            let heading_time = if editing.timestamp_prefix.is_empty() {
-                Local::now().format("%H:%M:%S").to_string()
-            } else if let Some((prefix, _)) =
-                crate::models::split_timestamp_line(&editing.timestamp_prefix)
-            {
-                prefix
-                    .trim()
-                    .trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .to_string()
-            } else {
-                Local::now().format("%H:%M:%S").to_string()
-            };
+            let selection_hint = (editing.file_path.clone(), editing.start_line);
+            let mut new_lines: Vec<String> = Vec::new();
+            if !is_empty {
+                let heading_time = if editing.timestamp_prefix.is_empty() {
+                    Local::now().format("%H:%M:%S").to_string()
+                } else if let Some((prefix, _)) =
+                    crate::models::split_timestamp_line(&editing.timestamp_prefix)
+                {
+                    prefix
+                        .trim()
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .to_string()
+                } else {
+                    Local::now().format("%H:%M:%S").to_string()
+                };
 
-            new_lines.push(format!("## [{heading_time}]"));
-            new_lines.extend(lines);
-        }
+                new_lines.push(format!("## [{heading_time}]"));
+                new_lines.extend(lines);
+            }
 
-        if let Err(e) = storage::replace_entry_lines(
-            &editing.file_path,
-            editing.start_line,
-            editing.end_line,
-            &new_lines,
-        ) {
-            app.toast(format!("Error updating entry: {}", e));
-        }
-        if let Some(state) = app
-            .fold_overrides
-            .get(&EntryIdentity {
-                file_path: editing.file_path.clone(),
-                line_number: editing.start_line,
-            })
-            .copied()
-        {
-            let _ = storage::update_fold_marker(
+            if let Err(e) = storage::replace_entry_lines(
                 &editing.file_path,
                 editing.start_line,
-                state,
-            );
-        }
-        if editing.from_search {
-            if let Some(query) = editing.search_query.as_deref() {
-                app.last_search_query = Some(query.to_string());
-                refresh_search_results(app, query);
-                if let Some(i) = app.logs.iter().position(|e| {
-                    e.file_path == selection_hint.0 && e.line_number == selection_hint.1
-                }) {
-                    app.logs_state.select(Some(i));
+                editing.end_line,
+                &new_lines,
+            ) {
+                app.toast(format!("Error updating entry: {}", e));
+                return;
+            }
+            if let Some(state) = app
+                .fold_overrides
+                .get(&EntryIdentity {
+                    file_path: editing.file_path.clone(),
+                    line_number: editing.start_line,
+                })
+                .copied()
+            {
+                let _ = storage::update_fold_marker(&editing.file_path, editing.start_line, state);
+            }
+            if editing.from_search {
+                if let Some(query) = editing.search_query.as_deref() {
+                    app.last_search_query = Some(query.to_string());
+                    refresh_search_results(app, query);
+                    if let Some(i) = app.logs.iter().position(|e| {
+                        e.file_path == selection_hint.0 && e.line_number == selection_hint.1
+                    }) {
+                        app.logs_state.select(Some(i));
+                    }
+                } else {
+                    app.last_search_query = None;
+                    app.update_logs();
                 }
             } else {
-                app.last_search_query = None;
                 app.update_logs();
             }
-        } else {
-            app.update_logs();
+
+            if new_lines.is_empty() {
+                if stay_in_editor {
+                    app.toast("Entry deleted.");
+                    app.editing_entry = None;
+                    app.textarea = tui_textarea::TextArea::default();
+                    app.composer_dirty = false;
+                    app.transition_to(InputMode::Navigate);
+                    return;
+                }
+            } else {
+                editing.end_line = editing
+                    .start_line
+                    .saturating_add(new_lines.len().saturating_sub(1));
+                if let Some(saved_entry) = app
+                    .all_logs
+                    .iter()
+                    .find(|entry| {
+                        entry.file_path == editing.file_path
+                            && entry.line_number == editing.start_line
+                    })
+                    .cloned()
+                {
+                    editing.end_line = saved_entry.end_line;
+                    editing.timestamp_prefix = saved_entry
+                        .content
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .trim_end()
+                        .to_string();
+                }
+            }
+
+            if stay_in_editor {
+                app.toast("Saved. Continue editing.");
+            }
         }
+        if stay_in_editor {
+            app.editing_entry = Some(editing);
+            app.composer_dirty = false;
+            return;
         }
     } else {
         let input = lines.join("\n");
         if !input.trim().is_empty() {
             if let Err(e) = storage::append_entry(&app.config.data.log_path, &input) {
                 app.toast(format!("Error saving: {}", e));
+                return;
             }
             app.update_logs();
+            if stay_in_editor {
+                if let Some(saved_entry) = app.all_logs.last().cloned() {
+                    app.editing_entry = Some(crate::app::EditingEntry {
+                        file_path: saved_entry.file_path.clone(),
+                        start_line: saved_entry.line_number,
+                        end_line: saved_entry.end_line,
+                        timestamp_prefix: saved_entry
+                            .content
+                            .lines()
+                            .next()
+                            .unwrap_or_default()
+                            .trim_end()
+                            .to_string(),
+                        from_search: false,
+                        search_query: None,
+                        is_raw: false,
+                    });
+                    app.composer_dirty = false;
+                    app.toast("Saved. Continue editing.");
+                    return;
+                }
+            }
+        } else if stay_in_editor {
+            return;
         }
     }
 
-    // Reset textarea
+    app.editing_entry = None;
     app.textarea = tui_textarea::TextArea::default();
     app.composer_dirty = false;
     app.transition_to(InputMode::Navigate);

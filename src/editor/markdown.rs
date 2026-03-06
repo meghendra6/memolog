@@ -17,9 +17,10 @@ pub(crate) fn insert_newline_with_auto_indent(textarea: &mut TextArea) {
 
 pub(crate) fn indent_or_outdent_list_line(textarea: &mut TextArea, indent: bool) -> bool {
     let (row, col) = textarea.cursor();
-    let current_line = textarea.lines().get(row).map(|s| s.as_str()).unwrap_or("");
+    let current_line = textarea.lines().get(row).cloned().unwrap_or_default();
+    let (leading, rest) = split_indent(&current_line);
 
-    if !is_list_line(current_line) {
+    if !is_list_line(&current_line) {
         return false;
     }
 
@@ -29,8 +30,16 @@ pub(crate) fn indent_or_outdent_list_line(textarea: &mut TextArea, indent: bool)
         textarea.move_cursor(CursorMove::Jump(row as u16, (col + 2) as u16));
         true
     } else {
-        let remove = leading_outdent_chars(current_line);
+        let remove = leading_outdent_chars(&current_line);
         if remove == 0 {
+            let Some(content) = strip_list_marker(rest) else {
+                return false;
+            };
+            let new_line = format!("{leading}{content}");
+            replace_current_line(textarea, row, &new_line);
+            let change_start = leading.chars().count();
+            let new_col = adjust_cursor_for_line_edit(col, &current_line, &new_line, change_start);
+            textarea.move_cursor(CursorMove::Jump(row as u16, new_col as u16));
             return true;
         }
 
@@ -145,31 +154,45 @@ pub(crate) fn remove_task_metadata(textarea: &mut TextArea, key: TaskMetadataKey
 
 pub(crate) fn list_continuation_prefix(line: &str) -> String {
     let (indent_level, rest) = parse_indent_level(line);
-    let indent = "  ".repeat(indent_level);
 
     if let Some((_marker, content)) = checkbox_marker(rest) {
         if content.trim().is_empty() {
-            return indent;
+            return outdented_list_prefix(indent_level, "- [ ] ");
         }
         // Always continue checklists as unchecked by default.
-        return format!("{indent}- [ ] ");
+        return format!("{}- [ ] ", "  ".repeat(indent_level));
     }
 
     if let Some((marker, content)) = bullet_marker(rest) {
         if content.trim().is_empty() {
-            return indent;
+            return outdented_list_prefix(indent_level, marker);
         }
-        return format!("{indent}{marker}");
+        return format!("{}{}", "  ".repeat(indent_level), marker);
+    }
+
+    if let Some((next_marker, content)) = ordered_checkbox_next_marker(rest) {
+        if content.trim().is_empty() {
+            return "  ".repeat(indent_level);
+        }
+        return format!("{}{}", "  ".repeat(indent_level), next_marker);
     }
 
     if let Some((next_marker, content)) = ordered_list_next_marker(rest) {
         if content.trim().is_empty() {
-            return indent;
+            return "  ".repeat(indent_level);
         }
-        return format!("{indent}{next_marker}");
+        return format!("{}{}", "  ".repeat(indent_level), next_marker);
     }
 
     String::new()
+}
+
+fn outdented_list_prefix(indent_level: usize, marker: &str) -> String {
+    if indent_level == 0 {
+        String::new()
+    } else {
+        format!("{}{}", "  ".repeat(indent_level.saturating_sub(1)), marker)
+    }
 }
 
 fn replace_current_line(textarea: &mut TextArea, row: usize, new_line: &str) {
@@ -286,6 +309,19 @@ fn bullet_marker(rest: &str) -> Option<(&'static str, &str)> {
     None
 }
 
+fn checkbox_content(rest: &str) -> Option<&str> {
+    if let Some(content) = rest.strip_prefix("[ ] ") {
+        return Some(content);
+    }
+    if let Some(content) = rest.strip_prefix("[x] ") {
+        return Some(content);
+    }
+    if let Some(content) = rest.strip_prefix("[X] ") {
+        return Some(content);
+    }
+    None
+}
+
 fn split_priority_marker(text: &str) -> (Option<Priority>, String) {
     let trimmed = text.trim_start();
     let Some(rest) = trimmed.strip_prefix("[#") else {
@@ -314,6 +350,21 @@ fn next_priority(current: Option<Priority>) -> Option<Priority> {
 }
 
 fn ordered_list_next_marker(rest: &str) -> Option<(String, &str)> {
+    let (n, punct_char, content) = ordered_list_marker(rest)?;
+    let next = n.saturating_add(1);
+    let next_marker = format!("{}{punct_char} ", next);
+    Some((next_marker, content))
+}
+
+fn ordered_checkbox_next_marker(rest: &str) -> Option<(String, &str)> {
+    let (n, punct_char, content) = ordered_list_marker(rest)?;
+    let content = checkbox_content(content)?;
+    let next = n.saturating_add(1);
+    let next_marker = format!("{}{punct_char} [ ] ", next);
+    Some((next_marker, content))
+}
+
+fn ordered_list_marker(rest: &str) -> Option<(usize, char, &str)> {
     let bytes = rest.as_bytes();
     let mut i = 0;
     while i < bytes.len() && bytes[i].is_ascii_digit() {
@@ -329,9 +380,76 @@ fn ordered_list_next_marker(rest: &str) -> Option<(String, &str)> {
     }
 
     let n: usize = rest[..i].parse().ok()?;
-    let next = n.saturating_add(1);
-    let punct_char = punct as char;
-    let next_marker = format!("{}{punct_char} ", next);
     let content = &rest[i + 2..];
-    Some((next_marker, content))
+    Some((n, punct as char, content))
+}
+
+fn strip_list_marker(rest: &str) -> Option<&str> {
+    if let Some((_marker, content)) = checkbox_marker(rest) {
+        return Some(content);
+    }
+    if let Some((_marker, content)) = bullet_marker(rest) {
+        return Some(content);
+    }
+    if let Some((_n, _punct, content)) = ordered_list_marker(rest) {
+        return Some(checkbox_content(content).unwrap_or(content));
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tui_textarea::{CursorMove, TextArea};
+
+    #[test]
+    fn outdent_top_level_bullet_removes_marker() {
+        let mut textarea = TextArea::from(["- item"]);
+        textarea.move_cursor(CursorMove::End);
+
+        assert!(indent_or_outdent_list_line(&mut textarea, false));
+        assert_eq!(textarea.lines(), ["item"]);
+        assert_eq!(textarea.cursor(), (0, 4));
+    }
+
+    #[test]
+    fn outdent_nested_bullet_removes_one_indent_level() {
+        let mut textarea = TextArea::from(["  - item"]);
+        textarea.move_cursor(CursorMove::End);
+
+        assert!(indent_or_outdent_list_line(&mut textarea, false));
+        assert_eq!(textarea.lines(), ["- item"]);
+        assert_eq!(textarea.cursor(), (0, 6));
+    }
+
+    #[test]
+    fn ordered_checklists_continue_as_unchecked_items() {
+        let mut textarea = TextArea::from(["  7. [x] shipped"]);
+        textarea.move_cursor(CursorMove::End);
+
+        insert_newline_with_auto_indent(&mut textarea);
+
+        assert_eq!(textarea.lines(), ["  7. [x] shipped", "  8. [ ] "]);
+    }
+
+    #[test]
+    fn empty_ordered_items_exit_the_list() {
+        assert_eq!(list_continuation_prefix("  3. "), "  ");
+        assert_eq!(list_continuation_prefix("  3. [ ] "), "  ");
+    }
+
+    #[test]
+    fn continuation_normalizes_odd_indentation_from_pasted_lists() {
+        assert_eq!(list_continuation_prefix("   9. [ ] pasted"), "  10. [ ] ");
+    }
+
+    #[test]
+    fn empty_nested_bullet_outdents_on_enter() {
+        assert_eq!(list_continuation_prefix("  - "), "- ");
+    }
+
+    #[test]
+    fn empty_top_level_bullet_exits_list_on_enter() {
+        assert_eq!(list_continuation_prefix("- "), "");
+    }
 }
