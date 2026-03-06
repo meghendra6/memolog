@@ -197,9 +197,6 @@ pub(crate) fn handle_editor_normal(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('g') => {
             app.pending_command = Some(PendingEditCommand::GoToTop);
         }
-        KeyCode::Char(':') => {
-            app.pending_command = Some(PendingEditCommand::Command);
-        }
         KeyCode::Char('Z') => {
             app.pending_command = Some(PendingEditCommand::ZCommand);
         }
@@ -526,20 +523,6 @@ fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
                 return true;
             }
         }
-        PendingEditCommand::Command => match key_code {
-            KeyCode::Char('w') => {
-                app.pending_command = None;
-                app.pending_count = 0;
-                editing::save_composer_in_place(app);
-                return true;
-            }
-            KeyCode::Esc => {
-                app.pending_command = None;
-                app.pending_count = 0;
-                return true;
-            }
-            _ => {}
-        },
         PendingEditCommand::Replace => {
             if let KeyCode::Char(c) = key.code
                 && !key.modifiers.contains(KeyModifiers::CONTROL)

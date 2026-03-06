@@ -46,3 +46,21 @@ pub fn handle_paste(app: &mut App, text: &str) {
     }
     app.textarea.insert_str(&normalized);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::handle_paste;
+    use crate::app::App;
+
+    #[test]
+    fn paste_in_search_mode_preserves_plain_text_lines() {
+        let mut app = App::new();
+
+        handle_paste(&mut app, "\"quoted phrase\"\r\n-raw bullet");
+
+        assert_eq!(
+            app.textarea.lines(),
+            &["\"quoted phrase\"".to_string(), "-raw bullet".to_string()]
+        );
+    }
+}

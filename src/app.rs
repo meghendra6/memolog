@@ -176,7 +176,6 @@ pub enum PendingEditCommand {
     GoToTop,
     Replace,
     Change,
-    Command,
     ZCommand,
     DeleteInner,
     YankInner,

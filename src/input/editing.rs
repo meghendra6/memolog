@@ -7,6 +7,7 @@ use crate::{
 };
 use chrono::{Duration, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tui_textarea::CursorMove;
 
 pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
     if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -250,16 +251,34 @@ pub fn handle_paste(app: &mut App, text: &str) {
         return;
     }
 
-    if app.is_vim_mode() && matches!(app.editor_mode, EditorMode::Normal) {
-        return;
-    }
-
     if app.is_vim_mode() && matches!(app.editor_mode, EditorMode::Visual(_)) {
         crate::editor::vim::exit_visual_mode(app);
     }
 
+    let pasted_in_vim_normal = app.is_vim_mode() && matches!(app.editor_mode, EditorMode::Normal);
+    if pasted_in_vim_normal {
+        app.record_undo_snapshot();
+    }
+
     app.textarea.insert_str(&normalized);
-    app.mark_insert_modified();
+
+    if pasted_in_vim_normal {
+        let (row, col) = app.textarea.cursor();
+        let line_len = app
+            .textarea
+            .lines()
+            .get(row)
+            .map(|line| line.chars().count())
+            .unwrap_or(0);
+        if line_len > 0 && col >= line_len {
+            let new_col = line_len.saturating_sub(1);
+            app.textarea
+                .move_cursor(CursorMove::Jump(row as u16, new_col as u16));
+        }
+    } else {
+        app.mark_insert_modified();
+    }
+
     app.composer_dirty = true;
 }
 
@@ -452,5 +471,25 @@ fn refresh_search_results(app: &mut App, query: &str) {
         app.search_highlight_query = Some(query.to_string());
         app.search_highlight_ready_at = Some(Local::now() + Duration::milliseconds(150));
         app.apply_fold_markers();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_paste;
+    use crate::{app::App, models::InputMode};
+
+    #[test]
+    fn paste_in_vim_normal_mode_inserts_literal_text() {
+        let mut app = App::new();
+        app.transition_to(InputMode::Editing);
+
+        handle_paste(&mut app, "- [ ] parent\r\n  - child");
+
+        assert_eq!(
+            app.textarea.lines(),
+            &["- [ ] parent".to_string(), "  - child".to_string()]
+        );
+        assert!(app.composer_dirty);
     }
 }

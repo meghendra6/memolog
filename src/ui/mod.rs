@@ -1779,14 +1779,7 @@ fn compose_wrapped_line(
     content_override: Option<Vec<StyledSegment>>,
 ) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    let prefix_selected = selection.is_some();
-    let prefix_style = if prefix_selected {
-        Style::default()
-            .fg(tokens.ui_muted)
-            .bg(tokens.ui_selection_bg)
-    } else {
-        Style::default().fg(tokens.ui_muted)
-    };
+    let prefix_style = Style::default().fg(tokens.ui_muted);
 
     // Only show line number on first wrapped segment
     if show_line_numbers {
@@ -1860,13 +1853,7 @@ fn compose_wrapped_line(
     spans.extend(selection_spans);
 
     let mut rendered = Line::from(spans);
-    let segment_len = line.chars().count();
-    let selection_covers_segment = selection.is_some_and(|range| {
-        range.start <= wrap_start_col && range.end >= wrap_start_col.saturating_add(segment_len)
-    });
-    if selection_covers_segment {
-        rendered.style = Style::default().bg(tokens.ui_selection_bg);
-    } else if is_cursor && selection.is_none() {
+    if is_cursor && selection.is_none() {
         rendered.style = Style::default().bg(tokens.ui_cursorline_bg);
     }
     rendered
@@ -2953,6 +2940,25 @@ mod tests {
         assert_ne!(line.style.bg, Some(tokens.ui_cursorline_bg));
         assert_eq!(line.spans[1].style.bg, Some(tokens.ui_selection_bg));
         assert_eq!(line.spans[2].style.bg, None);
+    }
+
+    #[test]
+    fn partial_visual_selection_does_not_highlight_line_number_gutter() {
+        let tokens = ThemeTokens::from_theme(&Theme::default());
+        let line = compose_wrapped_line(
+            "plain text",
+            &tokens,
+            false,
+            2,
+            true,
+            true,
+            Some(SelectionRange { start: 3, end: 8 }),
+            0,
+            None,
+        );
+
+        assert_eq!(line.spans[0].style.bg, None);
+        assert_eq!(line.spans[1].style.bg, None);
     }
 
     #[test]
