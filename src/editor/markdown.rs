@@ -6,12 +6,17 @@ use tui_textarea::{CursorMove, TextArea};
 
 pub(crate) fn insert_newline_with_auto_indent(textarea: &mut TextArea) {
     let (row, _) = textarea.cursor();
-    let current_line = textarea.lines().get(row).map(|s| s.as_str()).unwrap_or("");
+    let current_line = textarea.lines().get(row).cloned().unwrap_or_default();
 
-    let prefix = list_continuation_prefix(current_line);
+    if is_empty_list_item(&current_line) {
+        let _ = indent_or_outdent_list_line(textarea, false);
+        return;
+    }
+
+    let prefix = list_continuation_prefix(&current_line);
     textarea.insert_newline();
     if !prefix.is_empty() {
-        textarea.insert_str(prefix);
+        textarea.insert_str(&prefix);
     }
 }
 
@@ -27,7 +32,7 @@ pub(crate) fn indent_or_outdent_list_line(textarea: &mut TextArea, indent: bool)
     if indent {
         textarea.move_cursor(CursorMove::Jump(row as u16, 0));
         textarea.insert_str("  ");
-        textarea.move_cursor(CursorMove::Jump(row as u16, (col + 2) as u16));
+        normalize_ordered_list_numbering(textarea, row, col + 2);
         true
     } else {
         let remove = leading_outdent_chars(&current_line);
@@ -39,7 +44,7 @@ pub(crate) fn indent_or_outdent_list_line(textarea: &mut TextArea, indent: bool)
             replace_current_line(textarea, row, &new_line);
             let change_start = leading.chars().count();
             let new_col = adjust_cursor_for_line_edit(col, &current_line, &new_line, change_start);
-            textarea.move_cursor(CursorMove::Jump(row as u16, new_col as u16));
+            normalize_ordered_list_numbering(textarea, row, new_col);
             return true;
         }
 
@@ -47,10 +52,7 @@ pub(crate) fn indent_or_outdent_list_line(textarea: &mut TextArea, indent: bool)
         for _ in 0..remove {
             let _ = textarea.delete_next_char();
         }
-        textarea.move_cursor(CursorMove::Jump(
-            row as u16,
-            col.saturating_sub(remove) as u16,
-        ));
+        normalize_ordered_list_numbering(textarea, row, col.saturating_sub(remove));
         true
     }
 }
@@ -309,6 +311,23 @@ fn bullet_marker(rest: &str) -> Option<(&'static str, &str)> {
     None
 }
 
+fn is_empty_list_item(line: &str) -> bool {
+    let (_, rest) = split_indent(line);
+
+    checkbox_marker(rest)
+        .map(|(_, content)| content.trim().is_empty())
+        .or_else(|| bullet_marker(rest).map(|(_, content)| content.trim().is_empty()))
+        .or_else(|| {
+            ordered_list_marker(rest).map(|(_, _, content)| {
+                checkbox_content(content)
+                    .unwrap_or(content)
+                    .trim()
+                    .is_empty()
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn checkbox_content(rest: &str) -> Option<&str> {
     if let Some(content) = rest.strip_prefix("[ ] ") {
         return Some(content);
@@ -397,6 +416,62 @@ fn strip_list_marker(rest: &str) -> Option<&str> {
     None
 }
 
+fn normalize_ordered_list_numbering(textarea: &mut TextArea, row: usize, col: usize) {
+    let current = textarea.lines().to_vec();
+    let updated = renumber_ordered_lines(&current);
+    if updated != current {
+        *textarea = TextArea::from(updated);
+    }
+
+    let row = row.min(textarea.lines().len().saturating_sub(1));
+    let col = col.min(
+        textarea
+            .lines()
+            .get(row)
+            .map(|line| line.chars().count())
+            .unwrap_or(0),
+    );
+    textarea.move_cursor(CursorMove::Jump(row as u16, col as u16));
+}
+
+fn renumber_ordered_lines(lines: &[String]) -> Vec<String> {
+    let mut counters: Vec<usize> = Vec::new();
+    let mut out = Vec::with_capacity(lines.len());
+
+    for line in lines {
+        let (indent_level, rest) = parse_indent_level(line);
+        let (indent, _) = split_indent(line);
+
+        if let Some((_n, punct, content)) = ordered_list_marker(rest) {
+            if counters.len() <= indent_level {
+                counters.resize(indent_level + 1, 0);
+            }
+            counters.truncate(indent_level + 1);
+            counters[indent_level] += 1;
+
+            let renumbered = if let Some(content) = content.strip_prefix("[ ] ") {
+                format!("{indent}{}{punct} [ ] {content}", counters[indent_level])
+            } else if let Some(content) = content.strip_prefix("[x] ") {
+                format!("{indent}{}{punct} [x] {content}", counters[indent_level])
+            } else if let Some(content) = content.strip_prefix("[X] ") {
+                format!("{indent}{}{punct} [X] {content}", counters[indent_level])
+            } else {
+                format!("{indent}{}{punct} {content}", counters[indent_level])
+            };
+            out.push(renumbered);
+            continue;
+        }
+
+        if bullet_marker(rest).is_some() || checkbox_marker(rest).is_some() {
+            counters.truncate(indent_level);
+        }
+
+        out.push(line.clone());
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,11 +520,44 @@ mod tests {
 
     #[test]
     fn empty_nested_bullet_outdents_on_enter() {
-        assert_eq!(list_continuation_prefix("  - "), "- ");
+        let mut textarea = TextArea::from(["  - "]);
+        textarea.move_cursor(CursorMove::End);
+
+        insert_newline_with_auto_indent(&mut textarea);
+
+        assert_eq!(textarea.lines(), ["- "]);
+        assert_eq!(textarea.cursor(), (0, 2));
+    }
+
+    #[test]
+    fn nested_ordered_numbering_restarts_per_depth() {
+        let mut textarea = TextArea::from(["1. parent", "2. child", "3. sibling"]);
+        textarea.move_cursor(CursorMove::Jump(1, 8));
+
+        assert!(indent_or_outdent_list_line(&mut textarea, true));
+
+        assert_eq!(textarea.lines(), ["1. parent", "  1. child", "2. sibling"]);
     }
 
     #[test]
     fn empty_top_level_bullet_exits_list_on_enter() {
-        assert_eq!(list_continuation_prefix("- "), "");
+        let mut textarea = TextArea::from(["- "]);
+        textarea.move_cursor(CursorMove::End);
+
+        insert_newline_with_auto_indent(&mut textarea);
+
+        assert_eq!(textarea.lines(), [""]);
+        assert_eq!(textarea.cursor(), (0, 0));
+    }
+
+    #[test]
+    fn empty_nested_checkbox_outdents_on_enter_without_new_line() {
+        let mut textarea = TextArea::from(["  - [ ] "]);
+        textarea.move_cursor(CursorMove::End);
+
+        insert_newline_with_auto_indent(&mut textarea);
+
+        assert_eq!(textarea.lines(), ["- [ ] "]);
+        assert_eq!(textarea.cursor(), (0, 6));
     }
 }
