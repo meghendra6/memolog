@@ -229,7 +229,7 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
     let meta_area = sections[0];
     let content_area = sections[1];
     let footer_area = sections[2];
-    let prose_width = content_area.width.saturating_sub(6).clamp(24, 88);
+    let prose_width = content_area.width.saturating_sub(4).clamp(32, 112);
     let meta_column = centered_column(meta_area, prose_width);
     let prose_area = centered_column(content_area, prose_width);
 

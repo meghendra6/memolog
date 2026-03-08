@@ -1371,7 +1371,7 @@ fn render_editing_mode(
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    "Glow-inspired reading mode",
+                    "Markdown reading mode",
                     Style::default().fg(tokens.ui_muted),
                 ),
             ]));
