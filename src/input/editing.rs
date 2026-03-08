@@ -207,12 +207,12 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    if key_match(&key, &app.config.keybindings.composer.cancel) {
-        if matches!(app.editor_mode, EditorMode::Normal) {
-            app.pending_command = None;
-            app.pending_count = 0;
-            return;
-        }
+    if key_match(&key, &app.config.keybindings.composer.cancel)
+        && matches!(app.editor_mode, EditorMode::Normal)
+    {
+        app.pending_command = None;
+        app.pending_count = 0;
+        return;
     }
 
     match app.editor_mode {
@@ -407,27 +407,25 @@ fn save_composer(app: &mut App, stay_in_editor: bool) {
                 return;
             }
             app.update_logs();
-            if stay_in_editor {
-                if let Some(saved_entry) = app.all_logs.last().cloned() {
-                    app.editing_entry = Some(crate::app::EditingEntry {
-                        file_path: saved_entry.file_path.clone(),
-                        start_line: saved_entry.line_number,
-                        end_line: saved_entry.end_line,
-                        timestamp_prefix: saved_entry
-                            .content
-                            .lines()
-                            .next()
-                            .unwrap_or_default()
-                            .trim_end()
-                            .to_string(),
-                        from_search: false,
-                        search_query: None,
-                        is_raw: false,
-                    });
-                    app.composer_dirty = false;
-                    app.toast("Saved. Continue editing.");
-                    return;
-                }
+            if stay_in_editor && let Some(saved_entry) = app.all_logs.last().cloned() {
+                app.editing_entry = Some(crate::app::EditingEntry {
+                    file_path: saved_entry.file_path.clone(),
+                    start_line: saved_entry.line_number,
+                    end_line: saved_entry.end_line,
+                    timestamp_prefix: saved_entry
+                        .content
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .trim_end()
+                        .to_string(),
+                    from_search: false,
+                    search_query: None,
+                    is_raw: false,
+                });
+                app.composer_dirty = false;
+                app.toast("Saved. Continue editing.");
+                return;
             }
         } else if stay_in_editor {
             return;

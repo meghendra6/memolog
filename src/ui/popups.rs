@@ -1,10 +1,12 @@
 use super::components::{
-    centered_rect, markdown_prefix_width, parse_markdown_spans, wrap_markdown_line,
+    centered_column, centered_rect, markdown_prefix_width, parse_markdown_spans, wrap_markdown_line,
 };
 use crate::app::App;
 use crate::config::{EditorStyle, ThemePreset};
 use crate::date_input::parse_relative_date_input;
-use crate::models::{DatePickerField, EditorMode, InputMode, Mood, VisualKind};
+use crate::models::{
+    DatePickerField, EditorMode, InputMode, LogEntry, Mood, VisualKind, split_timestamp_line,
+};
 use crate::ui::color_parser::parse_color;
 use crate::ui::theme::ThemeTokens;
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, Timelike};
@@ -15,6 +17,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
+use std::path::Path;
 use syntect::easy::HighlightLines;
 
 // Popup size constants (width%, height%)
@@ -203,118 +206,162 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
         return;
     };
 
+    let preview = memo_preview_doc(entry);
     let tokens = ThemeTokens::from_theme(&app.config.theme);
     let block = Block::default()
-        .title(" Memo Preview ")
+        .title(" Open Memo ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(tokens.ui_border_default));
-    let area = centered_rect(90, 80, f.area());
+    let area = centered_rect(94, 88, f.area());
     let inner = block.inner(area);
     f.render_widget(Clear, area);
     f.render_widget(block, area);
 
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(inner);
 
-    let content_area = sections[0];
-    let footer_area = sections[1];
+    let meta_area = sections[0];
+    let content_area = sections[1];
+    let footer_area = sections[2];
+    let prose_width = content_area.width.saturating_sub(6).clamp(24, 88);
+    let meta_column = centered_column(meta_area, prose_width);
+    let prose_area = centered_column(content_area, prose_width);
 
-    let width = content_area.width.saturating_sub(2).max(1) as usize;
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    let meta_rule = "─".repeat(meta_column.width.max(1) as usize);
+    let meta = Paragraph::new(vec![
+        Line::from(Span::styled(
+            preview.meta_line.clone(),
+            Style::default().fg(tokens.ui_muted),
+        )),
+        Line::from(Span::styled(
+            meta_rule,
+            Style::default().fg(tokens.ui_border_default),
+        )),
+    ]);
+    f.render_widget(meta, meta_column);
+
+    let width = prose_area.width.max(1) as usize;
     let theme_preset = super::resolve_theme_preset(&app.config);
     let syntax_set = super::syntax_set();
     let syntax_theme = super::select_syntax_theme(super::syntax_theme_set(), &tokens, theme_preset);
     let code_bg = super::code_block_background(&tokens);
-    let fence_style = super::code_fallback_style(code_bg).fg(tokens.ui_muted);
-    let mut in_code_block = false;
-    let mut code_highlighter: Option<HighlightLines> = None;
+    let preview_source = preview.body_lines.join("\n");
+    let lines = super::render_markdown_view(
+        &preview_source,
+        width,
+        &app.config.theme,
+        &tokens,
+        syntax_set,
+        syntax_theme,
+        code_bg,
+    )
+    .lines;
 
-    for raw_line in entry.content.lines() {
-        let trimmed = raw_line.trim_start();
-        let is_fence = trimmed.starts_with("```");
-        let opening_fence = is_fence && !in_code_block;
-        let closing_fence = is_fence && in_code_block;
-        if opening_fence {
-            let language = super::parse_fence_language(trimmed);
-            let syntax = super::syntax_for_language(syntax_set, language.as_deref());
-            code_highlighter = Some(HighlightLines::new(syntax, syntax_theme));
-        }
-
-        let line_in_code_block = in_code_block || is_fence;
-        let wrapped = wrap_markdown_line(raw_line, width);
-        let code_segments = if line_in_code_block {
-            if is_fence {
-                Some(vec![super::StyledSegment {
-                    text: raw_line.to_string(),
-                    style: fence_style,
-                }])
-            } else if let Some(highlighter) = code_highlighter.as_mut() {
-                Some(super::highlight_code_line(
-                    raw_line,
-                    highlighter,
-                    syntax_set,
-                    code_bg,
-                ))
-            } else {
-                Some(vec![super::StyledSegment {
-                    text: raw_line.to_string(),
-                    style: super::code_fallback_style(code_bg),
-                }])
-            }
-        } else {
-            None
-        };
-        let prefix_width = if code_segments.is_some() {
-            markdown_prefix_width(raw_line)
-        } else {
-            0
-        };
-        let mut segment_start_col = 0usize;
-        for (wrap_idx, line) in wrapped.iter().enumerate() {
-            if let Some(segments) = code_segments.as_ref() {
-                let segment_len = line.chars().count();
-                let (code_spans, consumed_len) = super::code_spans_for_wrapped_line(
-                    segments,
-                    wrap_idx,
-                    segment_start_col,
-                    segment_len,
-                    prefix_width,
-                    code_bg,
-                );
-                lines.push(Line::from(code_spans));
-                segment_start_col = segment_start_col.saturating_add(consumed_len);
-            } else {
-                lines.push(Line::from(parse_markdown_spans(
-                    line,
-                    &app.config.theme,
-                    line_in_code_block,
-                    None,
-                    Style::default(),
-                )));
-            }
-        }
-
-        if closing_fence {
-            in_code_block = false;
-            code_highlighter = None;
-        } else if opening_fence {
-            in_code_block = true;
-        }
-    }
-
-    let max_scroll = lines.len().saturating_sub(content_area.height as usize);
+    let max_scroll = lines.len().saturating_sub(prose_area.height as usize);
     let scroll = app.memo_preview_scroll.min(max_scroll);
 
     let paragraph = Paragraph::new(Text::from(lines))
+        .style(Style::default().fg(tokens.ui_fg))
         .wrap(Wrap { trim: false })
         .scroll((scroll as u16, 0));
-    f.render_widget(paragraph, content_area);
+    f.render_widget(paragraph, prose_area);
 
-    let footer = Paragraph::new("Esc close · E edit · J/K scroll")
+    let footer = Paragraph::new(memo_preview_footer(app, scroll, max_scroll))
         .style(Style::default().fg(tokens.ui_muted));
     f.render_widget(footer, footer_area);
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MemoPreviewDoc {
+    meta_line: String,
+    body_lines: Vec<String>,
+}
+
+fn memo_preview_doc(entry: &LogEntry) -> MemoPreviewDoc {
+    let source = Path::new(&entry.file_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(entry.file_path.as_str());
+    let mut meta = vec![format!(
+        "{source}:{}-{}",
+        entry.line_number + 1,
+        entry.end_line + 1
+    )];
+
+    let mut body_lines = Vec::new();
+    let mut first = true;
+    for line in entry.content.lines() {
+        if first {
+            first = false;
+            if let Some((prefix, rest)) = split_timestamp_line(line) {
+                meta.push(prefix.to_string());
+                if !rest.is_empty() {
+                    body_lines.push(rest.to_string());
+                }
+                continue;
+            }
+        }
+        body_lines.push(line.to_string());
+    }
+
+    let line_count = body_lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+    meta.push(match line_count {
+        0 | 1 => "1 line".to_string(),
+        n => format!("{n} lines"),
+    });
+
+    MemoPreviewDoc {
+        meta_line: meta.join(" · "),
+        body_lines,
+    }
+}
+
+fn memo_preview_footer(app: &App, scroll: usize, max_scroll: usize) -> String {
+    let scroll_keys = format!(
+        "{} / {}",
+        fmt_keys(&app.config.keybindings.popup.up),
+        fmt_keys(&app.config.keybindings.popup.down)
+    );
+    let status = if max_scroll == 0 {
+        "full".to_string()
+    } else {
+        format!("{}/{}", scroll + 1, max_scroll + 1)
+    };
+    format!(
+        "{} close · E edit · {} scroll · PgUp/PgDn jump · {}",
+        fmt_keys(&app.config.keybindings.popup.cancel),
+        scroll_keys,
+        status
+    )
+}
+
+#[cfg(test)]
+fn is_thematic_break(line: &str) -> bool {
+    let trimmed = line.trim();
+    let mut chars = trimmed.chars().filter(|c| !c.is_whitespace());
+    let Some(marker) = chars.next() else {
+        return false;
+    };
+    if !matches!(marker, '-' | '*' | '_') {
+        return false;
+    }
+    let mut count = 1usize;
+    for ch in chars {
+        if ch != marker {
+            return false;
+        }
+        count += 1;
+    }
+    count >= 3
 }
 
 pub fn render_ai_response_popup(f: &mut Frame, app: &App) {
@@ -2351,9 +2398,9 @@ fn fmt_keys(keys: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::visual_help_lines;
+    use super::{is_thematic_break, memo_preview_doc, visual_help_lines};
     use crate::config::Theme;
-    use crate::models::VisualKind;
+    use crate::models::{LogEntry, VisualKind};
     use crate::ui::theme::ThemeTokens;
 
     fn line_to_string(line: &ratatui::text::Line<'_>) -> String {
@@ -2380,5 +2427,36 @@ mod tests {
         assert!(combined.contains("y yank"));
         assert!(combined.contains("d/x delete"));
         assert!(combined.contains("Esc normal"));
+    }
+
+    #[test]
+    fn memo_preview_doc_moves_timestamp_into_meta() {
+        let entry = LogEntry {
+            content: "## [15:41:08]\nNOTE: 환경 정리 #maintenance\n- 문서 정리".to_string(),
+            file_path: "/tmp/2025-12-16.md".to_string(),
+            line_number: 10,
+            end_line: 12,
+        };
+
+        let preview = memo_preview_doc(&entry);
+
+        assert!(preview.meta_line.contains("2025-12-16.md:11-13"));
+        assert!(preview.meta_line.contains("[15:41:08]"));
+        assert_eq!(
+            preview.body_lines,
+            vec![
+                "NOTE: 환경 정리 #maintenance".to_string(),
+                "- 문서 정리".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn thematic_break_detects_common_markdown_rules() {
+        assert!(is_thematic_break("---"));
+        assert!(is_thematic_break("* * *"));
+        assert!(is_thematic_break("___"));
+        assert!(!is_thematic_break("--"));
+        assert!(!is_thematic_break("- - x"));
     }
 }

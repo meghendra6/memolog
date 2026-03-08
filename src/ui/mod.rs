@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 
 use crate::app::{App, PLACEHOLDER_COMPOSE};
@@ -701,7 +701,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             ""
         };
         let timeline_hint = if is_timeline_focused {
-            " · j/k move · Enter preview · e edit · i compose"
+            " · j/k move · Enter viewer · e edit · i compose"
         } else {
             ""
         };
@@ -975,162 +975,15 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
     match app.input_mode {
         InputMode::Editing => {
-            let editor_width = app.config.editor.column_width;
-            let editor_area = centered_column(main_area, editor_width);
-            let input_block = Block::default().borders(Borders::NONE);
-            let input_inner = input_block.inner(editor_area);
-            app.textarea.set_block(input_block);
-            app.textarea.set_cursor_style(Style::default().reversed());
-
-            let show_line_numbers = app.config.ui.line_numbers;
-            let prefix_width = compose_prefix_width(show_line_numbers) as usize;
-            let content_width = (input_inner.width as usize)
-                .saturating_sub(prefix_width)
-                .max(1);
-
-            let lines = app.textarea.lines();
-            let is_empty = lines.iter().all(|line| line.trim().is_empty());
-            let visible_height = input_inner.height as usize;
-            let (cursor_row, cursor_col) = app.textarea.cursor();
-            app.textarea_viewport_height = visible_height;
-
-            // Build visual lines with wrapping and track cursor position
-            let mut visual_lines: Vec<Line<'static>> = Vec::new();
-            let mut cursor_visual_row: usize = 0;
-            let mut cursor_visual_col: usize = 0;
-
-            if is_empty {
-                visual_lines.push(compose_placeholder_line(
-                    PLACEHOLDER_COMPOSE,
-                    &tokens,
-                    show_line_numbers,
-                    true,
-                ));
-            } else {
-                let (code_block_info, cursor_block_id) = collect_code_block_info(lines, cursor_row);
-                let mut active_block_id: Option<usize> = None;
-                let mut highlighter: Option<HighlightLines> = None;
-
-                for (logical_idx, line) in lines.iter().enumerate() {
-                    let line_info = &code_block_info[logical_idx];
-                    if line_info.block_id != active_block_id {
-                        active_block_id = line_info.block_id;
-                        highlighter = None;
-                        if active_block_id.is_some() {
-                            let syntax =
-                                syntax_for_language(syntax_set, line_info.language.as_deref());
-                            highlighter = Some(HighlightLines::new(syntax, syntax_theme));
-                        }
-                    }
-
-                    let show_fence = line_info.block_id.is_some()
-                        && cursor_block_id.is_some()
-                        && line_info.block_id == cursor_block_id;
-                    let (display_line, styled_segments) = if line_info.is_fence {
-                        let display = if show_fence {
-                            line.to_string()
-                        } else {
-                            hide_fence_marker(line)
-                        };
-                        let mut style = if show_fence {
-                            Style::default()
-                                .fg(tokens.ui_accent)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                                .fg(tokens.ui_muted)
-                                .add_modifier(Modifier::DIM)
-                        };
-                        if let Some(bg) = code_bg {
-                            style = style.bg(bg);
-                        }
-                        let segments = vec![StyledSegment {
-                            text: display.clone(),
-                            style,
-                        }];
-                        (display, Some(segments))
-                    } else if line_info.block_id.is_some() {
-                        let display = line.to_string();
-                        let segments = if let Some(highlighter) = highlighter.as_mut() {
-                            highlight_code_line(&display, highlighter, syntax_set, code_bg)
-                        } else {
-                            vec![StyledSegment {
-                                text: display.clone(),
-                                style: code_fallback_style(code_bg),
-                            }]
-                        };
-                        (display, Some(segments))
-                    } else {
-                        (line.to_string(), None)
-                    };
-
-                    let is_cursor_line = logical_idx == cursor_row;
-                    let selection =
-                        selection_range_for_line(app, logical_idx, display_line.chars().count());
-                    let wrapped = wrap_line_for_editor(&display_line, content_width);
-                    let mut segment_start_col = 0usize;
-
-                    if is_cursor_line {
-                        // Calculate cursor position within wrapped lines
-                        cursor_visual_row = visual_lines.len();
-                        let (wrap_row, wrap_col) =
-                            find_cursor_in_wrapped_lines(&wrapped, cursor_col);
-                        cursor_visual_row += wrap_row;
-                        cursor_visual_col = wrap_col;
-                    }
-
-                    for (wrap_idx, wline) in wrapped.iter().enumerate() {
-                        let segment_len = wline.chars().count();
-                        let is_first_wrap = wrap_idx == 0;
-                        let is_cursor_wrap =
-                            is_cursor_line && (visual_lines.len() + wrap_idx == cursor_visual_row);
-                        let content_override = styled_segments.as_ref().map(|segments| {
-                            slice_segments(
-                                segments,
-                                segment_start_col,
-                                segment_start_col.saturating_add(segment_len),
-                            )
-                        });
-                        visual_lines.push(compose_wrapped_line(
-                            wline,
-                            &tokens,
-                            is_cursor_wrap,
-                            logical_idx,
-                            show_line_numbers,
-                            is_first_wrap,
-                            selection,
-                            segment_start_col,
-                            content_override,
-                        ));
-                        segment_start_col = segment_start_col.saturating_add(segment_len);
-                    }
-                }
-            }
-
-            // Update viewport to follow cursor (using visual row now)
-            let cursor_visual_row_u16 = (cursor_visual_row.min(u16::MAX as usize)) as u16;
-            if input_inner.height > 0 {
-                app.textarea_viewport_row = next_scroll_top(
-                    app.textarea_viewport_row,
-                    cursor_visual_row_u16,
-                    input_inner.height,
-                );
-            }
-
-            // Render only visible visual lines
-            let visible_start = app.textarea_viewport_row as usize;
-            let rendered: Vec<Line<'static>> = visual_lines
-                .into_iter()
-                .skip(visible_start)
-                .take(visible_height)
-                .collect();
-
-            // Store visual cursor position for later use
-            app.textarea_viewport_col = cursor_visual_col as u16;
-
-            let paragraph = Paragraph::new(rendered).style(Style::default().fg(tokens.ui_fg));
-            f.render_widget(paragraph, editor_area);
-            cursor_area = Some(input_inner);
+            cursor_area = render_editing_mode(
+                f,
+                app,
+                main_area,
+                &tokens,
+                syntax_set,
+                syntax_theme,
+                code_bg,
+            );
         }
         InputMode::Search => {
             if let Some(search_area) = search_area {
@@ -1301,6 +1154,599 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     if app.show_onboarding_popup {
         render_onboarding_popup(f, app);
     }
+}
+
+#[derive(Default)]
+pub(super) struct RenderedMarkdown {
+    pub lines: Vec<Line<'static>>,
+    pub source_line_offsets: Vec<usize>,
+}
+
+fn render_editing_mode(
+    f: &mut Frame,
+    app: &mut App,
+    main_area: Rect,
+    tokens: &theme::ThemeTokens,
+    syntax_set: &SyntaxSet,
+    syntax_theme: &syntect::highlighting::Theme,
+    code_bg: Option<Color>,
+) -> Option<Rect> {
+    let editing_entry = app.editing_entry.clone();
+    let show_live_preview = editing_entry
+        .as_ref()
+        .map(|entry| !entry.is_raw)
+        .unwrap_or(true)
+        && main_area.width >= 120;
+
+    let horizontal: Vec<Rect> = if show_live_preview {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(54), Constraint::Percentage(46)])
+            .split(main_area)
+            .to_vec()
+    } else {
+        vec![centered_column(main_area, app.config.editor.column_width)]
+    };
+
+    let editor_area = horizontal[0];
+    let editor_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_border_editing))
+        .title(Line::from(vec![
+            Span::styled(
+                " Editor ",
+                Style::default()
+                    .fg(tokens.ui_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "Markdown-aware compose",
+                Style::default().fg(tokens.ui_muted),
+            ),
+        ]));
+    let input_inner = editor_block.inner(editor_area);
+    f.render_widget(editor_block, editor_area);
+
+    app.textarea
+        .set_block(Block::default().borders(Borders::NONE));
+    app.textarea.set_cursor_style(Style::default().reversed());
+
+    let show_line_numbers = app.config.ui.line_numbers;
+    let prefix_width = compose_prefix_width(show_line_numbers) as usize;
+    let content_width = (input_inner.width as usize)
+        .saturating_sub(prefix_width)
+        .max(1);
+
+    let lines = app.textarea.lines();
+    let is_empty = lines.iter().all(|line| line.trim().is_empty());
+    let visible_height = input_inner.height as usize;
+    let (cursor_row, cursor_col) = app.textarea.cursor();
+    app.textarea_viewport_height = visible_height;
+
+    let mut visual_lines: Vec<Line<'static>> = Vec::new();
+    let mut cursor_visual_row: usize = 0;
+    let mut cursor_visual_col: usize = 0;
+
+    if is_empty {
+        visual_lines.push(compose_placeholder_line(
+            PLACEHOLDER_COMPOSE,
+            tokens,
+            show_line_numbers,
+            true,
+        ));
+    } else {
+        let (code_block_info, cursor_block_id) = collect_code_block_info(lines, cursor_row);
+        let mut active_block_id: Option<usize> = None;
+        let mut highlighter: Option<HighlightLines> = None;
+
+        for (logical_idx, line) in lines.iter().enumerate() {
+            let line_info = &code_block_info[logical_idx];
+            if line_info.block_id != active_block_id {
+                active_block_id = line_info.block_id;
+                highlighter = None;
+                if active_block_id.is_some() {
+                    let syntax = syntax_for_language(syntax_set, line_info.language.as_deref());
+                    highlighter = Some(HighlightLines::new(syntax, syntax_theme));
+                }
+            }
+
+            let show_fence = line_info.block_id.is_some()
+                && cursor_block_id.is_some()
+                && line_info.block_id == cursor_block_id;
+            let (display_line, styled_segments) = if line_info.is_fence {
+                let display = if show_fence {
+                    line.to_string()
+                } else {
+                    hide_fence_marker(line)
+                };
+                let mut style = if show_fence {
+                    Style::default()
+                        .fg(tokens.ui_accent)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                        .fg(tokens.ui_muted)
+                        .add_modifier(Modifier::DIM)
+                };
+                if let Some(bg) = code_bg {
+                    style = style.bg(bg);
+                }
+                let segments = vec![StyledSegment {
+                    text: display.clone(),
+                    style,
+                }];
+                (display, Some(segments))
+            } else if line_info.block_id.is_some() {
+                let display = line.to_string();
+                let segments = if let Some(highlighter) = highlighter.as_mut() {
+                    highlight_code_line(&display, highlighter, syntax_set, code_bg)
+                } else {
+                    vec![StyledSegment {
+                        text: display.clone(),
+                        style: code_fallback_style(code_bg),
+                    }]
+                };
+                (display, Some(segments))
+            } else {
+                (line.to_string(), None)
+            };
+
+            let is_cursor_line = logical_idx == cursor_row;
+            let selection =
+                selection_range_for_line(app, logical_idx, display_line.chars().count());
+            let wrapped = wrap_line_for_editor(&display_line, content_width);
+            let mut segment_start_col = 0usize;
+
+            if is_cursor_line {
+                cursor_visual_row = visual_lines.len();
+                let (wrap_row, wrap_col) = find_cursor_in_wrapped_lines(&wrapped, cursor_col);
+                cursor_visual_row += wrap_row;
+                cursor_visual_col = wrap_col;
+            }
+
+            for (wrap_idx, wline) in wrapped.iter().enumerate() {
+                let segment_len = wline.chars().count();
+                let is_first_wrap = wrap_idx == 0;
+                let is_cursor_wrap =
+                    is_cursor_line && (visual_lines.len() + wrap_idx == cursor_visual_row);
+                let content_override = styled_segments.as_ref().map(|segments| {
+                    slice_segments(
+                        segments,
+                        segment_start_col,
+                        segment_start_col.saturating_add(segment_len),
+                    )
+                });
+                visual_lines.push(compose_wrapped_line(
+                    wline,
+                    tokens,
+                    is_cursor_wrap,
+                    logical_idx,
+                    show_line_numbers,
+                    is_first_wrap,
+                    selection,
+                    segment_start_col,
+                    content_override,
+                ));
+                segment_start_col = segment_start_col.saturating_add(segment_len);
+            }
+        }
+    }
+
+    let cursor_visual_row_u16 = (cursor_visual_row.min(u16::MAX as usize)) as u16;
+    if input_inner.height > 0 {
+        app.textarea_viewport_row = next_scroll_top(
+            app.textarea_viewport_row,
+            cursor_visual_row_u16,
+            input_inner.height,
+        );
+    }
+
+    let visible_start = app.textarea_viewport_row as usize;
+    let rendered: Vec<Line<'static>> = visual_lines
+        .into_iter()
+        .skip(visible_start)
+        .take(visible_height)
+        .collect();
+    app.textarea_viewport_col = cursor_visual_col as u16;
+
+    let paragraph = Paragraph::new(rendered).style(Style::default().fg(tokens.ui_fg));
+    f.render_widget(paragraph, input_inner);
+
+    if show_live_preview {
+        let preview_area = horizontal[1];
+        let preview_title_suffix = editing_entry
+            .as_ref()
+            .map(|entry| entry.timestamp_prefix.trim())
+            .filter(|prefix| !prefix.is_empty())
+            .map(|prefix| format!(" · {prefix}"))
+            .unwrap_or_default();
+        let preview_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(tokens.ui_border_default))
+            .title(Line::from(vec![
+                Span::styled(
+                    format!(" Live Preview{preview_title_suffix} "),
+                    Style::default()
+                        .fg(tokens.ui_accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Glow-inspired reading mode",
+                    Style::default().fg(tokens.ui_muted),
+                ),
+            ]));
+        let preview_inner = preview_block.inner(preview_area);
+        f.render_widget(preview_block, preview_area);
+
+        let preview_source = lines.join("\n");
+        let preview_rendered = render_markdown_view(
+            &preview_source,
+            preview_inner.width.max(1) as usize,
+            &app.config.theme,
+            tokens,
+            syntax_set,
+            syntax_theme,
+            code_bg,
+        );
+
+        let target_scroll = preview_rendered
+            .source_line_offsets
+            .get(cursor_row)
+            .copied()
+            .unwrap_or(0);
+        let max_scroll = preview_rendered
+            .lines
+            .len()
+            .saturating_sub(preview_inner.height as usize);
+        let preview_scroll = target_scroll.min(max_scroll);
+
+        let preview_paragraph = Paragraph::new(Text::from(preview_rendered.lines))
+            .wrap(Wrap { trim: false })
+            .scroll((preview_scroll as u16, 0))
+            .style(Style::default().fg(tokens.ui_fg));
+        f.render_widget(preview_paragraph, preview_inner);
+    }
+
+    Some(input_inner)
+}
+
+pub(super) fn render_markdown_view(
+    text: &str,
+    width: usize,
+    theme: &Theme,
+    tokens: &theme::ThemeTokens,
+    syntax_set: &SyntaxSet,
+    syntax_theme: &syntect::highlighting::Theme,
+    code_bg: Option<Color>,
+) -> RenderedMarkdown {
+    let width = width.max(1);
+    let mut rendered = RenderedMarkdown::default();
+    let mut in_code_block = false;
+    let mut code_highlighter: Option<HighlightLines> = None;
+    let mut code_language: Option<String> = None;
+
+    for (idx, raw_line) in text.lines().enumerate() {
+        rendered.source_line_offsets.push(rendered.lines.len());
+        let trimmed = raw_line.trim();
+        let trimmed_start = raw_line.trim_start();
+        let is_fence = trimmed_start.starts_with("```");
+
+        if is_fence {
+            if !in_code_block {
+                code_language = parse_fence_language(trimmed_start);
+                push_markdown_blank_line(&mut rendered.lines);
+                rendered.lines.push(render_code_block_border(
+                    true,
+                    code_language.as_deref(),
+                    tokens,
+                    code_bg,
+                ));
+                let syntax = syntax_for_language(syntax_set, code_language.as_deref());
+                code_highlighter = Some(HighlightLines::new(syntax, syntax_theme));
+                in_code_block = true;
+            } else {
+                rendered.lines.push(render_code_block_border(
+                    false,
+                    code_language.as_deref(),
+                    tokens,
+                    code_bg,
+                ));
+                push_markdown_blank_line(&mut rendered.lines);
+                code_highlighter = None;
+                code_language = None;
+                in_code_block = false;
+            }
+            continue;
+        }
+
+        if idx == 0
+            && is_heading_timestamp_line(raw_line)
+            && split_timestamp_line(raw_line)
+                .map(|(_, rest)| rest.trim().is_empty())
+                .unwrap_or(false)
+        {
+            continue;
+        }
+
+        if in_code_block {
+            render_code_block_line(
+                &mut rendered.lines,
+                raw_line,
+                width,
+                code_highlighter.as_mut(),
+                syntax_set,
+                code_bg,
+            );
+            continue;
+        }
+
+        if trimmed.is_empty() {
+            push_markdown_blank_line(&mut rendered.lines);
+            continue;
+        }
+
+        if is_thematic_break(trimmed) {
+            push_markdown_blank_line(&mut rendered.lines);
+            rendered.lines.push(Line::from(Span::styled(
+                "─".repeat(width.clamp(12, 48)),
+                Style::default()
+                    .fg(tokens.ui_muted)
+                    .add_modifier(Modifier::DIM),
+            )));
+            push_markdown_blank_line(&mut rendered.lines);
+            continue;
+        }
+
+        if let Some((level, heading_text)) = markdown_heading(trimmed_start) {
+            if !rendered.lines.is_empty() {
+                push_markdown_blank_line(&mut rendered.lines);
+            }
+            render_heading_lines(&mut rendered.lines, heading_text, level, width, tokens);
+            push_markdown_blank_line(&mut rendered.lines);
+            continue;
+        }
+
+        if let Some((depth, body)) = split_blockquote(trimmed_start) {
+            render_blockquote_lines(&mut rendered.lines, body, depth, width, theme, tokens);
+            continue;
+        }
+
+        for line in wrap_markdown_line(raw_line, width) {
+            rendered.lines.push(Line::from(parse_markdown_spans(
+                &line,
+                theme,
+                false,
+                None,
+                Style::default(),
+            )));
+        }
+    }
+
+    if in_code_block {
+        rendered.lines.push(render_code_block_border(
+            false,
+            code_language.as_deref(),
+            tokens,
+            code_bg,
+        ));
+    }
+
+    trim_markdown_blank_lines(&mut rendered.lines);
+    if rendered.lines.is_empty() {
+        rendered.lines.push(Line::from(Span::styled(
+            "Empty memo.",
+            Style::default()
+                .fg(tokens.ui_muted)
+                .add_modifier(Modifier::DIM),
+        )));
+    }
+    rendered
+}
+
+fn markdown_heading(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim_start();
+    let level = trimmed.chars().take_while(|&c| c == '#').count();
+    if level == 0 {
+        return None;
+    }
+    let body = trimmed.get(level..)?;
+    let body = body.strip_prefix(' ')?;
+    Some((level, body.trim()))
+}
+
+fn render_heading_lines(
+    out: &mut Vec<Line<'static>>,
+    heading_text: &str,
+    level: usize,
+    width: usize,
+    tokens: &theme::ThemeTokens,
+) {
+    let marker = match level {
+        1 => "█ ",
+        2 => "▌ ",
+        3 => "◆ ",
+        _ => "• ",
+    };
+    let marker_width = UnicodeWidthStr::width(marker);
+    let available = width.saturating_sub(marker_width).max(1);
+    let wrapped = textwrap::wrap(heading_text, available);
+    let marker_style = Style::default()
+        .fg(tokens.ui_accent)
+        .add_modifier(Modifier::BOLD);
+    let text_style = if level <= 2 {
+        Style::default()
+            .fg(tokens.ui_fg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(tokens.ui_fg)
+            .add_modifier(Modifier::ITALIC)
+    };
+
+    for (idx, part) in wrapped.iter().enumerate() {
+        let prefix = if idx == 0 {
+            marker.to_string()
+        } else {
+            " ".repeat(marker_width)
+        };
+        out.push(Line::from(vec![
+            Span::styled(prefix, marker_style),
+            Span::styled(part.to_string(), text_style),
+        ]));
+    }
+
+    if level <= 2 {
+        out.push(Line::from(Span::styled(
+            "─".repeat(width.clamp(10, 36)),
+            Style::default()
+                .fg(tokens.ui_muted)
+                .add_modifier(Modifier::DIM),
+        )));
+    }
+}
+
+fn split_blockquote(line: &str) -> Option<(usize, &str)> {
+    let mut rest = line.trim_start();
+    let mut depth = 0usize;
+
+    while let Some(next) = rest.strip_prefix('>') {
+        depth = depth.saturating_add(1);
+        rest = next.strip_prefix(' ').unwrap_or(next);
+    }
+
+    if depth == 0 {
+        None
+    } else {
+        Some((depth, rest.trim_end()))
+    }
+}
+
+fn render_blockquote_lines(
+    out: &mut Vec<Line<'static>>,
+    body: &str,
+    depth: usize,
+    width: usize,
+    theme: &Theme,
+    tokens: &theme::ThemeTokens,
+) {
+    let prefix = format!("{} ", "▎".repeat(depth.min(3)));
+    let prefix_width = UnicodeWidthStr::width(prefix.as_str());
+    let available = width.saturating_sub(prefix_width).max(1);
+    let wrapped = if body.is_empty() {
+        vec!["".into()]
+    } else {
+        textwrap::wrap(body, available)
+    };
+
+    for part in wrapped {
+        let mut spans = vec![Span::styled(
+            prefix.clone(),
+            Style::default()
+                .fg(tokens.ui_accent)
+                .add_modifier(Modifier::DIM),
+        )];
+        spans.extend(parse_markdown_spans(
+            part.as_ref(),
+            theme,
+            false,
+            None,
+            Style::default(),
+        ));
+        out.push(Line::from(spans));
+    }
+}
+
+fn render_code_block_border(
+    opening: bool,
+    language: Option<&str>,
+    tokens: &theme::ThemeTokens,
+    code_bg: Option<Color>,
+) -> Line<'static> {
+    let corner = if opening { "╭" } else { "╰" };
+    let label = if opening {
+        language
+            .filter(|lang| !lang.is_empty())
+            .map(|lang| format!(" {lang} "))
+            .unwrap_or_else(|| " code ".to_string())
+    } else {
+        "────".to_string()
+    };
+    let mut style = Style::default()
+        .fg(tokens.ui_muted)
+        .add_modifier(Modifier::DIM);
+    if let Some(bg) = code_bg {
+        style = style.bg(bg);
+    }
+    Line::from(Span::styled(format!("{corner}─{label}"), style))
+}
+
+fn render_code_block_line(
+    out: &mut Vec<Line<'static>>,
+    raw_line: &str,
+    width: usize,
+    highlighter: Option<&mut HighlightLines>,
+    syntax_set: &SyntaxSet,
+    code_bg: Option<Color>,
+) {
+    let prefix = "│ ";
+    let prefix_width = UnicodeWidthStr::width(prefix);
+    let available = width.saturating_sub(prefix_width).max(1);
+    let wrapped = wrap_line_for_editor(raw_line, available);
+    let segments = if let Some(highlighter) = highlighter {
+        highlight_code_line(raw_line, highlighter, syntax_set, code_bg)
+    } else {
+        vec![StyledSegment {
+            text: raw_line.to_string(),
+            style: code_fallback_style(code_bg),
+        }]
+    };
+    let mut segment_start_col = 0usize;
+
+    for part in wrapped {
+        let segment_len = part.chars().count();
+        let mut spans = vec![Span::styled(prefix, code_fallback_style(code_bg))];
+        spans.extend(styled_segments_to_spans(slice_segments(
+            &segments,
+            segment_start_col,
+            segment_start_col.saturating_add(segment_len),
+        )));
+        out.push(Line::from(spans));
+        segment_start_col = segment_start_col.saturating_add(segment_len);
+    }
+}
+
+fn push_markdown_blank_line(out: &mut Vec<Line<'static>>) {
+    if out.last().is_none_or(is_blank_line) {
+        return;
+    }
+    out.push(Line::from(String::new()));
+}
+
+fn trim_markdown_blank_lines(out: &mut Vec<Line<'static>>) {
+    while out.first().is_some_and(is_blank_line) {
+        out.remove(0);
+    }
+    while out.last().is_some_and(is_blank_line) {
+        out.pop();
+    }
+}
+
+fn is_blank_line(line: &Line<'_>) -> bool {
+    line.spans
+        .iter()
+        .all(|span| span.content.as_ref().trim().is_empty())
+}
+
+fn is_thematic_break(line: &str) -> bool {
+    let stripped: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+    if stripped.len() < 3 {
+        return false;
+    }
+    let mut chars = stripped.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    matches!(first, '-' | '*' | '_') && chars.all(|ch| ch == first)
 }
 
 fn truncate(text: &str, max_chars: usize) -> String {
@@ -2736,7 +3182,7 @@ fn status_focus_hint(app: &App) -> String {
         InputMode::Navigate => match app.navigate_focus {
             NavigateFocus::Timeline => {
                 format!(
-                    "Timeline: j/k move · Enter preview · e edit · i compose · Tab fold · {focus_toggle} focus"
+                    "Timeline: j/k move · Enter viewer · e edit · i compose · Tab fold · {focus_toggle} focus"
                 )
             }
             NavigateFocus::Agenda => {
@@ -2754,7 +3200,8 @@ fn status_focus_hint(app: &App) -> String {
             "Search: Enter apply · Esc close · Ctrl+P/N recent · Ctrl+S save".to_string()
         }
         InputMode::Editing => {
-            "Editor: Shift+Enter save · Esc confirm · Ctrl+; date · Ctrl+T task".to_string()
+            "Editor: Shift+Enter save · Esc confirm · Ctrl+; date · Ctrl+T task · wide screens show live preview"
+                .to_string()
         }
     }
 }
@@ -2881,6 +3328,7 @@ mod tests {
     use super::compose_prefix_width;
     use super::compose_wrapped_line;
     use super::hide_fence_marker;
+    use super::status_focus_hint;
     use crate::config::Theme;
     use crate::ui::theme::ThemeTokens;
 
@@ -3106,5 +3554,24 @@ mod tests {
             .trim()
             .to_string();
         assert_eq!(single_title, "Meeting");
+    }
+
+    #[test]
+    fn status_focus_hint_uses_viewer_wording_for_timeline() {
+        let app = crate::app::App::new();
+        let hint = status_focus_hint(&app);
+        assert!(hint.contains("Enter viewer"));
+        assert!(!hint.contains("Enter preview"));
+    }
+
+    #[test]
+    fn status_focus_hint_keeps_editor_shortcuts() {
+        let mut app = crate::app::App::new();
+        app.transition_to(crate::models::InputMode::Editing);
+        let hint = status_focus_hint(&app);
+        assert_eq!(
+            hint,
+            "Editor: Shift+Enter save · Esc confirm · Ctrl+; date · Ctrl+T task · wide screens show live preview"
+        );
     }
 }
