@@ -9,6 +9,12 @@ use crate::{
 use chrono::{Duration, Local};
 use std::fs;
 
+fn show_memo_preview(app: &mut App, entry: models::LogEntry) {
+    app.memo_preview_entry = Some(entry);
+    app.memo_preview_scroll = 0;
+    app.show_memo_preview_popup = true;
+}
+
 pub fn open_tag_popup(app: &mut App) {
     if let Ok(tags) = storage::get_all_tags(&app.config.data.log_path) {
         app.tags = tags;
@@ -177,11 +183,7 @@ pub fn open_agenda_preview(app: &mut App) {
     };
 
     match storage::read_entry_containing_line(&item.file_path, item.line_number) {
-        Ok(Some(entry)) => {
-            app.memo_preview_entry = Some(entry);
-            app.memo_preview_scroll = 0;
-            app.show_memo_preview_popup = true;
-        }
+        Ok(Some(entry)) => show_memo_preview(app, entry),
         Ok(None) => app.toast("Memo not found."),
         Err(_) => app.toast("Failed to load memo."),
     }
@@ -198,11 +200,7 @@ pub fn open_task_preview(app: &mut App) {
     };
 
     match storage::read_entry_containing_line(&task.file_path, task.line_number) {
-        Ok(Some(entry)) => {
-            app.memo_preview_entry = Some(entry);
-            app.memo_preview_scroll = 0;
-            app.show_memo_preview_popup = true;
-        }
+        Ok(Some(entry)) => show_memo_preview(app, entry),
         Ok(None) => app.toast("Memo not found."),
         Err(_) => app.toast("Failed to load memo."),
     }
@@ -218,9 +216,7 @@ pub fn open_timeline_preview(app: &mut App) {
         return;
     };
 
-    app.memo_preview_entry = Some(entry);
-    app.memo_preview_scroll = 0;
-    app.show_memo_preview_popup = true;
+    show_memo_preview(app, entry);
 }
 
 pub fn toggle_agenda_task(app: &mut App) {
@@ -493,4 +489,115 @@ fn submit_ai_search(app: &mut App, question: &str) {
     );
     app.ai_search_receiver = Some(receiver);
     app.toast("AI search started...");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{open_agenda_preview, open_task_preview, open_timeline_preview};
+    use crate::{
+        app::App,
+        models::{AgendaItem, AgendaItemKind, LogEntry, TaskItem, TaskSchedule},
+    };
+    use chrono::NaiveDate;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_log_file(name: &str, content: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("memolog-actions-{unique}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join(name);
+        fs::write(&path, content).expect("write log file");
+        path
+    }
+
+    #[test]
+    fn timeline_preview_opens_selected_entry() {
+        let mut app = App::new();
+        app.logs = vec![LogEntry {
+            content: "## [09:05:10]\nNOTE: 오늘의 목표\n- 중요한 일 2개 처리".to_string(),
+            file_path: "2025-12-16.md".to_string(),
+            line_number: 0,
+            end_line: 2,
+        }];
+        app.logs_state.select(Some(0));
+        app.memo_preview_scroll = 7;
+
+        open_timeline_preview(&mut app);
+
+        assert!(app.show_memo_preview_popup);
+        assert_eq!(app.memo_preview_scroll, 0);
+        assert_eq!(
+            app.memo_preview_entry
+                .as_ref()
+                .map(|entry| entry.line_number),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn task_preview_loads_full_source_entry() {
+        let path = temp_log_file(
+            "2025-12-16.md",
+            "## [12:03:20]\nTODO: [ ] 점심 메뉴 정하기 #food\n- 결정 장애 발생 시: 김밥\n",
+        );
+        let mut app = App::new();
+        app.tasks = vec![TaskItem {
+            text: "점심 메뉴 정하기".to_string(),
+            indent: 0,
+            tomato_count: 0,
+            file_path: path.to_string_lossy().to_string(),
+            line_number: 1,
+            is_done: false,
+            priority: None,
+            schedule: TaskSchedule::default(),
+            task_identity: "task-1".to_string(),
+            carryover_from: None,
+        }];
+        app.tasks_state.select(Some(0));
+
+        open_task_preview(&mut app);
+
+        let preview = app.memo_preview_entry.expect("preview entry");
+        assert!(app.show_memo_preview_popup);
+        assert_eq!(app.memo_preview_scroll, 0);
+        assert!(preview.content.contains("## [12:03:20]"));
+        assert!(preview.content.contains("TODO: [ ] 점심 메뉴 정하기 #food"));
+    }
+
+    #[test]
+    fn agenda_preview_loads_source_entry_for_selected_item() {
+        let path = temp_log_file(
+            "2025-12-17.md",
+            "## [10:12:44]\nMEETING: 프로젝트 점검 #work\n- 다음 액션 정리\n",
+        );
+        let mut app = App::new();
+        app.agenda_items = vec![AgendaItem {
+            kind: AgendaItemKind::Note,
+            date: NaiveDate::from_ymd_opt(2025, 12, 17).expect("date"),
+            time: None,
+            duration_minutes: None,
+            text: "프로젝트 점검".to_string(),
+            indent: 0,
+            is_done: false,
+            priority: None,
+            schedule: TaskSchedule::default(),
+            file_path: path.to_string_lossy().to_string(),
+            line_number: 1,
+        }];
+        app.agenda_state.select(Some(0));
+
+        open_agenda_preview(&mut app);
+
+        let preview = app.memo_preview_entry.expect("preview entry");
+        assert!(app.show_memo_preview_popup);
+        assert!(preview.content.contains("MEETING: 프로젝트 점검 #work"));
+        assert_eq!(preview.line_number, 0);
+    }
 }

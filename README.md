@@ -58,7 +58,7 @@ The status bar always shows mode, focus, date, context, and active search query.
 ## Timeline
 
 - Navigate with `j/k`, edit entry with `e`.
-- Press `Enter` to open memo preview.
+- Press `Enter` to open the memo viewer.
 - `Ctrl+U/D` page up/down (10 entries).
 - Context shortcuts: `Ctrl+W` work / `Ctrl+E` personal / `Ctrl+R` clear.
 - Toggle task checkbox with `Space`.
@@ -77,7 +77,7 @@ Agenda is built from schedule metadata embedded in tasks and notes:
 Agenda controls (when focused):
 
 - `j/k` move selection
-- `Enter` open memo preview
+- `Enter` open memo viewer
 - `Space` toggle task checkbox (tasks only)
 - `h/l` day navigation, `PgUp/PgDn` week navigation
 - `f` filter (Open -> Overdue -> Done -> All -> Priority A)
@@ -93,6 +93,7 @@ Agenda controls (when focused):
 - `]` snooze selected task by +1 day
 - `}` snooze selected task by +1 week
 - `p` start/stop pomodoro
+- In the memo viewer: `j/k` scroll, `PgUp/PgDn` jump, `e` edit, `Esc` close
 - `e` open source entry
 
 ## Composer (editing)
@@ -112,6 +113,7 @@ Insert mode shortcuts:
 - `Ctrl+P` cycle priority
 - `Ctrl+;` open date/time picker
 - `Tab`/`Shift+Tab` indent/outdent
+- Wide terminals show a live markdown preview beside the editor
 
 Normal/Visual mode:
 
@@ -357,14 +359,14 @@ Timeline
 - `Shift+P` jump to pinned
 - `Tab` fold entry
 - `Shift+Tab` cycle fold mode
-- `Enter` memo preview
+- `Enter` memo viewer
 - `Ctrl+W/E/R` set context (work/personal/clear)
 - `e` edit entry
 - `Space` complete tasks
 
 Agenda
 - `j/k` move
-- `Enter` memo preview
+- `Enter` memo viewer
 - `Space` toggle task
 - `h/l` day navigation
 - `PgUp/PgDn` week navigation
@@ -374,7 +376,7 @@ Agenda
 Tasks
 - `j/k` move
 - `Space` toggle checkbox
-- `Enter` memo preview
+- `Enter` memo viewer
 - `Shift+P` cycle priority
 - `f` cycle filter
 - `1/2/3/4/5` set filter (Open/Done/All/Priority A/Overdue)
@@ -382,6 +384,12 @@ Tasks
 - `}` snooze +1 week
 - `p` pomodoro
 - `e` edit source
+
+Popup / memo viewer
+- `j/k` scroll
+- `PgUp/PgDn` jump
+- `e` edit source entry
+- `Esc` close
 
 Composer
 - `Enter` newline
