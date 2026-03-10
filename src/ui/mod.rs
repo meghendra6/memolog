@@ -3716,6 +3716,7 @@ fn file_date(file_path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::SelectionRange;
+    use super::build_inline_image_raster;
     use super::collect_code_block_info;
     use super::compose_prefix_width;
     use super::compose_wrapped_line;
@@ -3725,6 +3726,9 @@ mod tests {
     use super::status_focus_hint;
     use crate::config::{EditorConfig, Theme};
     use crate::ui::theme::ThemeTokens;
+    use image::{Rgba, RgbaImage};
+    use std::fs;
+    use std::path::PathBuf;
     use syntect::highlighting::ThemeSet;
     use syntect::parsing::SyntaxSet;
 
@@ -4015,5 +4019,35 @@ mod tests {
             .join("\n");
         assert!(joined.contains("🖼 Image"));
         assert!(joined.contains("photo.png"));
+    }
+
+    fn write_temp_png(name: &str, width: u32, height: u32) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("memolog-ui-test-{}-{}", std::process::id(), name));
+        let image = RgbaImage::from_pixel(width, height, Rgba([255, 0, 0, 255]));
+        image.save(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn inline_image_raster_fits_within_allocated_area() {
+        let path = write_temp_png("fit.png", 200, 100);
+        let raster = build_inline_image_raster(&path, "fit.png", 40, Some(20)).unwrap();
+
+        assert!(raster.rows.len() <= 16);
+        assert!(raster.rows.iter().all(|row| row.len() <= 40));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn inline_image_raster_does_not_upscale_small_images() {
+        let path = write_temp_png("small.png", 8, 8);
+        let raster = build_inline_image_raster(&path, "small.png", 80, Some(40)).unwrap();
+
+        assert_eq!(raster.rows.len(), 4);
+        assert!(raster.rows.iter().all(|row| row.len() == 8));
+
+        let _ = fs::remove_file(path);
     }
 }
