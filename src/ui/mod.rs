@@ -1750,9 +1750,7 @@ fn render_image_embed_lines(
             tokens,
         )
     {
-        push_markdown_blank_line(out);
         out.append(&mut inline_lines);
-        push_markdown_blank_line(out);
         return;
     }
 
@@ -1926,8 +1924,6 @@ fn build_inline_image_raster(
     max_width_cols: usize,
     image_max_rows: Option<usize>,
 ) -> Option<InlineImageRaster> {
-    const IMAGE_BLOCK_OVERHEAD_ROWS: usize = 4; // blank + title + path + blank
-
     let image = ImageReader::open(image_path).ok()?.decode().ok()?;
     let original = image.to_rgba8();
     let (orig_w, orig_h) = original.dimensions();
@@ -1937,7 +1933,7 @@ fn build_inline_image_raster(
 
     let max_w = max_width_cols.max(1) as f32;
     let max_h = image_max_rows
-        .map(|rows| rows.saturating_sub(IMAGE_BLOCK_OVERHEAD_ROWS).max(1) as f32 * 2.0)
+        .map(|rows| rows.max(1) as f32 * 2.0)
         .unwrap_or(orig_h as f32);
     let scale = (max_w / orig_w as f32).min(max_h / orig_h as f32).min(1.0);
     let target_w = ((orig_w as f32 * scale).round() as u32).max(1);
@@ -1984,20 +1980,10 @@ fn build_inline_image_raster(
 
 fn render_cached_inline_image_lines(
     raster: &InlineImageRaster,
-    width: usize,
-    tokens: &theme::ThemeTokens,
+    _width: usize,
+    _tokens: &theme::ThemeTokens,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    lines.push(Line::from(vec![
-        Span::styled("🖼 ", Style::default().fg(tokens.ui_accent)),
-        Span::styled(
-            truncate(&raster.title, width.saturating_sub(2).max(1)),
-            Style::default()
-                .fg(tokens.ui_fg)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
-
     for row in &raster.rows {
         let spans = row
             .iter()
@@ -2012,11 +1998,6 @@ fn render_cached_inline_image_lines(
             .collect::<Vec<_>>();
         lines.push(Line::from(spans));
     }
-
-    lines.push(Line::from(Span::styled(
-        truncate(&raster.image_src, width.saturating_sub(2).max(1)),
-        Style::default().fg(tokens.ui_muted),
-    )));
     lines
 }
 
