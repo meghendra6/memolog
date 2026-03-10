@@ -8,15 +8,19 @@ use ratatui::{
 };
 
 use crate::app::{App, PLACEHOLDER_COMPOSE};
-use crate::config::{Theme, ThemePreset, ThemeToastOverrides, ThemeUiOverrides};
+use crate::config::{EditorConfig, Theme, ThemePreset, ThemeToastOverrides, ThemeUiOverrides};
 use crate::models::{
     AgendaItemKind, EditorMode, InputMode, NavigateFocus, VisualKind, is_heading_timestamp_line,
     is_task_overdue, is_timestamped_line, split_timestamp_line,
 };
+use image::{ImageReader, imageops::FilterType};
 use ratatui::style::Stylize;
 use regex::Regex;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle as SyntectFontStyle, ThemeSet};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
@@ -1162,6 +1166,37 @@ pub(super) struct RenderedMarkdown {
     pub source_line_offsets: Vec<usize>,
 }
 
+#[derive(Clone)]
+struct InlineImageRaster {
+    title: String,
+    image_src: String,
+    rows: Vec<Vec<([u8; 4], [u8; 4])>>,
+}
+
+#[derive(Clone)]
+enum CachedInlineImageState {
+    Pending,
+    Ready(InlineImageRaster),
+    Failed,
+}
+
+#[derive(Clone)]
+struct CachedInlineImage {
+    modified_key: String,
+    last_access: u64,
+    state: CachedInlineImageState,
+}
+
+fn inline_image_cache() -> &'static Mutex<HashMap<String, CachedInlineImage>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedInlineImage>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn next_inline_image_access() -> u64 {
+    static ACCESS_COUNTER: AtomicU64 = AtomicU64::new(1);
+    ACCESS_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
 fn render_editing_mode(
     f: &mut Frame,
     app: &mut App,
@@ -1176,6 +1211,7 @@ fn render_editing_mode(
         .as_ref()
         .map(|entry| !entry.is_raw)
         .unwrap_or(true)
+        && !app.composer_zen_mode
         && main_area.width >= 120;
 
     let horizontal: Vec<Rect> = if show_live_preview {
@@ -1200,7 +1236,11 @@ fn render_editing_mode(
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                "Markdown-aware compose",
+                if app.composer_zen_mode {
+                    "Markdown-aware compose · Zen"
+                } else {
+                    "Markdown-aware compose"
+                },
                 Style::default().fg(tokens.ui_muted),
             ),
         ]));
@@ -1379,14 +1419,23 @@ fn render_editing_mode(
         f.render_widget(preview_block, preview_area);
 
         let preview_source = lines.join("\n");
+        let mut preview_editor_config = app.config.editor.clone();
+        preview_editor_config.image_preview_enabled =
+            preview_editor_config.image_preview_enabled && app.composer_image_preview_enabled;
+        let preview_base_dir = editing_entry
+            .as_ref()
+            .and_then(|entry| Path::new(&entry.file_path).parent())
+            .unwrap_or(Path::new(&app.config.data.log_path));
         let preview_rendered = render_markdown_view(
             &preview_source,
             preview_inner.width.max(1) as usize,
             &app.config.theme,
+            &preview_editor_config,
             tokens,
             syntax_set,
             syntax_theme,
             code_bg,
+            Some(preview_base_dir),
         );
 
         let target_scroll = preview_rendered
@@ -1414,10 +1463,12 @@ pub(super) fn render_markdown_view(
     text: &str,
     width: usize,
     theme: &Theme,
+    editor_config: &EditorConfig,
     tokens: &theme::ThemeTokens,
     syntax_set: &SyntaxSet,
     syntax_theme: &syntect::highlighting::Theme,
     code_bg: Option<Color>,
+    image_base_dir: Option<&Path>,
 ) -> RenderedMarkdown {
     let width = width.max(1);
     let mut rendered = RenderedMarkdown::default();
@@ -1508,6 +1559,18 @@ pub(super) fn render_markdown_view(
 
         if let Some((depth, body)) = split_blockquote(trimmed_start) {
             render_blockquote_lines(&mut rendered.lines, body, depth, width, theme, tokens);
+            continue;
+        }
+
+        if let Some(image_src) = obsidian_image_embed(trimmed_start) {
+            render_image_embed_lines(
+                &mut rendered.lines,
+                image_src,
+                width,
+                editor_config,
+                tokens,
+                image_base_dir,
+            );
             continue;
         }
 
@@ -1654,6 +1717,312 @@ fn render_blockquote_lines(
         ));
         out.push(Line::from(spans));
     }
+}
+
+fn obsidian_image_embed(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix("![[")?.strip_suffix("]]")?;
+    let src = inner.split('|').next().unwrap_or(inner).trim();
+    if src.is_empty() { None } else { Some(src) }
+}
+
+fn render_image_embed_lines(
+    out: &mut Vec<Line<'static>>,
+    image_src: &str,
+    width: usize,
+    editor_config: &EditorConfig,
+    tokens: &theme::ThemeTokens,
+    image_base_dir: Option<&Path>,
+) {
+    if let Some(image_path) = resolve_embedded_image_path(image_src, image_base_dir)
+        && let Some(mut inline_lines) =
+            render_inline_image_lines(&image_path, image_src, width, editor_config, tokens)
+    {
+        push_markdown_blank_line(out);
+        out.append(&mut inline_lines);
+        push_markdown_blank_line(out);
+        return;
+    }
+
+    render_image_fallback_card(out, image_src, width, tokens);
+}
+
+fn render_image_fallback_card(
+    out: &mut Vec<Line<'static>>,
+    image_src: &str,
+    width: usize,
+    tokens: &theme::ThemeTokens,
+) {
+    let label = Path::new(image_src)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(image_src);
+    let border_style = Style::default()
+        .fg(tokens.ui_accent)
+        .add_modifier(Modifier::DIM);
+    let title_style = Style::default()
+        .fg(tokens.ui_fg)
+        .add_modifier(Modifier::BOLD);
+    let path_style = Style::default().fg(tokens.ui_muted);
+    let summary_width = width.saturating_sub(4).max(1);
+
+    push_markdown_blank_line(out);
+    out.push(Line::from(vec![
+        Span::styled("╭─ ", border_style),
+        Span::styled("🖼 Image", title_style),
+    ]));
+    out.push(Line::from(vec![
+        Span::styled("│ ", border_style),
+        Span::styled(truncate(label, summary_width), title_style),
+    ]));
+    out.push(Line::from(vec![
+        Span::styled("│ ", border_style),
+        Span::styled(truncate(image_src, summary_width), path_style),
+    ]));
+    out.push(Line::from(Span::styled("╰────", border_style)));
+    push_markdown_blank_line(out);
+}
+
+fn resolve_embedded_image_path(
+    image_src: &str,
+    image_base_dir: Option<&Path>,
+) -> Option<std::path::PathBuf> {
+    let candidate = Path::new(image_src);
+    if candidate.is_absolute() && candidate.exists() {
+        return Some(candidate.to_path_buf());
+    }
+
+    let joined = image_base_dir?.join(candidate);
+    joined.exists().then_some(joined)
+}
+
+fn render_inline_image_lines(
+    image_path: &Path,
+    image_src: &str,
+    width: usize,
+    editor_config: &EditorConfig,
+    tokens: &theme::ThemeTokens,
+) -> Option<Vec<Line<'static>>> {
+    if !editor_config.image_preview_enabled {
+        return None;
+    }
+
+    let max_width_chars = editor_config.image_preview_max_width_chars.max(4) as u32;
+    let max_height_rows = editor_config.image_preview_max_height_rows.max(1) as u32;
+    let cache_key = format!(
+        "{}:{}:{}:{}",
+        image_path.display(),
+        width,
+        max_width_chars,
+        max_height_rows
+    );
+    let modified_key = image_path
+        .metadata()
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos()
+        .to_string();
+    let access_tick = next_inline_image_access();
+
+    if let Ok(mut cache) = inline_image_cache().lock()
+        && let Some(cached) = cache.get_mut(&cache_key)
+        && cached.modified_key == modified_key
+    {
+        cached.last_access = access_tick;
+        return match &cached.state {
+            CachedInlineImageState::Ready(raster) => {
+                Some(render_cached_inline_image_lines(raster, width, tokens))
+            }
+            CachedInlineImageState::Pending => {
+                Some(render_loading_image_lines(image_src, width, tokens))
+            }
+            CachedInlineImageState::Failed => None,
+        };
+    }
+
+    if let Ok(mut cache) = inline_image_cache().lock() {
+        let max_entries = editor_config.image_cache_entries;
+        if max_entries > 0 {
+            cache.insert(
+                cache_key.clone(),
+                CachedInlineImage {
+                    modified_key: modified_key.clone(),
+                    last_access: access_tick,
+                    state: CachedInlineImageState::Pending,
+                },
+            );
+            trim_inline_image_cache(&mut cache, max_entries);
+        }
+    }
+
+    if editor_config.image_cache_entries == 0 {
+        let raster = build_inline_image_raster(
+            image_path,
+            image_src,
+            width,
+            max_width_chars,
+            max_height_rows,
+        )?;
+        return Some(render_cached_inline_image_lines(&raster, width, tokens));
+    }
+
+    let image_path = image_path.to_path_buf();
+    let image_src = image_src.to_string();
+    let loading_image_src = image_src.clone();
+    let cache_key_for_thread = cache_key.clone();
+    let modified_key_for_thread = modified_key.clone();
+
+    std::thread::spawn(move || {
+        let state = match build_inline_image_raster(
+            &image_path,
+            &image_src,
+            width,
+            max_width_chars,
+            max_height_rows,
+        ) {
+            Some(raster) => CachedInlineImageState::Ready(raster),
+            None => CachedInlineImageState::Failed,
+        };
+
+        if let Ok(mut cache) = inline_image_cache().lock()
+            && let Some(existing) = cache.get_mut(&cache_key_for_thread)
+            && existing.modified_key == modified_key_for_thread
+        {
+            existing.state = state;
+        }
+    });
+
+    Some(render_loading_image_lines(
+        &loading_image_src,
+        width,
+        tokens,
+    ))
+}
+
+fn rgba_to_terminal_color(pixel: [u8; 4]) -> Color {
+    let alpha = pixel[3] as u16;
+    let blend = |channel: u8| -> u8 { ((channel as u16 * alpha) / 255) as u8 };
+    Color::Rgb(blend(pixel[0]), blend(pixel[1]), blend(pixel[2]))
+}
+
+fn trim_inline_image_cache(cache: &mut HashMap<String, CachedInlineImage>, max_entries: usize) {
+    while cache.len() > max_entries {
+        let Some(old_key) = cache
+            .iter()
+            .min_by_key(|(_, value)| value.last_access)
+            .map(|(key, _)| key.clone())
+        else {
+            break;
+        };
+        cache.remove(&old_key);
+    }
+}
+
+fn build_inline_image_raster(
+    image_path: &Path,
+    image_src: &str,
+    width: usize,
+    max_width_chars: u32,
+    max_height_rows: u32,
+) -> Option<InlineImageRaster> {
+    let image = ImageReader::open(image_path).ok()?.decode().ok()?;
+    let max_char_width = width.saturating_sub(2).clamp(4, max_width_chars as usize) as u32;
+    let max_pixel_height = max_height_rows.saturating_mul(2);
+    let thumbnail = image.resize(max_char_width, max_pixel_height, FilterType::Triangle);
+    let rgba = thumbnail.to_rgba8();
+    let (thumb_w, thumb_h) = rgba.dimensions();
+    if thumb_w == 0 || thumb_h == 0 {
+        return None;
+    }
+
+    let title = image_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(image_src)
+        .to_string();
+    let mut rows = Vec::new();
+    for y in (0..thumb_h).step_by(2) {
+        let mut row = Vec::with_capacity(thumb_w as usize);
+        for x in 0..thumb_w {
+            let upper = rgba.get_pixel(x, y).0;
+            let lower = if y + 1 < thumb_h {
+                rgba.get_pixel(x, y + 1).0
+            } else {
+                [0, 0, 0, 0]
+            };
+            row.push((upper, lower));
+        }
+        rows.push(row);
+    }
+
+    Some(InlineImageRaster {
+        title,
+        image_src: image_src.to_string(),
+        rows,
+    })
+}
+
+fn render_cached_inline_image_lines(
+    raster: &InlineImageRaster,
+    width: usize,
+    tokens: &theme::ThemeTokens,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled("🖼 ", Style::default().fg(tokens.ui_accent)),
+        Span::styled(
+            truncate(&raster.title, width.saturating_sub(2).max(1)),
+            Style::default()
+                .fg(tokens.ui_fg)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    for row in &raster.rows {
+        let spans = row
+            .iter()
+            .map(|(upper, lower)| {
+                Span::styled(
+                    "▀",
+                    Style::default()
+                        .fg(rgba_to_terminal_color(*upper))
+                        .bg(rgba_to_terminal_color(*lower)),
+                )
+            })
+            .collect::<Vec<_>>();
+        lines.push(Line::from(spans));
+    }
+
+    lines.push(Line::from(Span::styled(
+        truncate(&raster.image_src, width.saturating_sub(2).max(1)),
+        Style::default().fg(tokens.ui_muted),
+    )));
+    lines
+}
+
+fn render_loading_image_lines(
+    image_src: &str,
+    width: usize,
+    tokens: &theme::ThemeTokens,
+) -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::styled("🖼 ", Style::default().fg(tokens.ui_accent)),
+            Span::styled(
+                "Loading image preview…",
+                Style::default()
+                    .fg(tokens.ui_fg)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]),
+        Line::from(Span::styled(
+            truncate(image_src, width.saturating_sub(2).max(1)),
+            Style::default().fg(tokens.ui_muted),
+        )),
+    ]
 }
 
 fn render_code_block_border(
@@ -3200,8 +3569,14 @@ fn status_focus_hint(app: &App) -> String {
             "Search: Enter apply · Esc close · Ctrl+P/N recent · Ctrl+S save".to_string()
         }
         InputMode::Editing => {
-            "Editor: Shift+Enter save · Esc confirm · Ctrl+; date · Ctrl+T task · wide screens show live preview"
-                .to_string()
+            let image_label = if app.composer_image_preview_enabled {
+                "Ctrl+B image on"
+            } else {
+                "Ctrl+B image off"
+            };
+            format!(
+                "Editor: Shift+Enter save · Ctrl+V clipboard · Ctrl+Y zen · {image_label} · Ctrl+; date · Ctrl+T task"
+            )
         }
     }
 }
@@ -3328,9 +3703,13 @@ mod tests {
     use super::compose_prefix_width;
     use super::compose_wrapped_line;
     use super::hide_fence_marker;
+    use super::obsidian_image_embed;
+    use super::render_markdown_view;
     use super::status_focus_hint;
-    use crate::config::Theme;
+    use crate::config::{EditorConfig, Theme};
     use crate::ui::theme::ThemeTokens;
+    use syntect::highlighting::ThemeSet;
+    use syntect::parsing::SyntaxSet;
 
     fn line_to_string(line: &ratatui::text::Line<'_>) -> String {
         line.spans
@@ -3571,7 +3950,52 @@ mod tests {
         let hint = status_focus_hint(&app);
         assert_eq!(
             hint,
-            "Editor: Shift+Enter save · Esc confirm · Ctrl+; date · Ctrl+T task · wide screens show live preview"
+            "Editor: Shift+Enter save · Ctrl+V clipboard · Ctrl+Y zen · Ctrl+B image on · Ctrl+; date · Ctrl+T task"
         );
+    }
+
+    #[test]
+    fn obsidian_image_embed_extracts_source() {
+        assert_eq!(
+            obsidian_image_embed("![[media/photo.bmp]]"),
+            Some("media/photo.bmp")
+        );
+        assert_eq!(
+            obsidian_image_embed(" ![[media/photo.bmp|320]] "),
+            Some("media/photo.bmp")
+        );
+        assert_eq!(obsidian_image_embed("plain text"), None);
+    }
+
+    #[test]
+    fn render_markdown_view_replaces_obsidian_image_syntax_with_preview_card() {
+        let tokens = ThemeTokens::from_theme(&Theme::default());
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let syntax_theme = ThemeSet::load_defaults()
+            .themes
+            .get("base16-ocean.dark")
+            .cloned()
+            .unwrap_or_default();
+
+        let rendered = render_markdown_view(
+            "![[media/photo.png]]",
+            40,
+            &Theme::default(),
+            &EditorConfig::default(),
+            &tokens,
+            &syntax_set,
+            &syntax_theme,
+            None,
+            None,
+        );
+
+        let joined = rendered
+            .lines
+            .iter()
+            .map(line_to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("🖼 Image"));
+        assert!(joined.contains("photo.png"));
     }
 }

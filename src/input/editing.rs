@@ -5,9 +5,18 @@ use crate::{
     models::{EditorMode, EntryIdentity, InputMode, TimelineFilter},
     storage,
 };
+use arboard::{Clipboard, ImageData};
 use chrono::{Duration, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use image::{
+    ColorType, DynamicImage, ImageBuffer, ImageEncoder, codecs::jpeg::JpegEncoder,
+    codecs::png::PngEncoder,
+};
+use std::fs;
+use std::io::Cursor;
+use std::path::{Path, PathBuf};
 use tui_textarea::CursorMove;
+use webp::Encoder as WebpEncoder;
 
 pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
     if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -25,6 +34,35 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
     let in_vim_normal = app.is_vim_mode() && matches!(app.editor_mode, EditorMode::Normal);
     let allow_composer_shortcuts =
         !app.is_vim_mode() || matches!(app.editor_mode, EditorMode::Insert | EditorMode::Normal);
+
+    if allow_composer_shortcuts && key_match(&key, &app.config.keybindings.composer.toggle_zen) {
+        app.composer_zen_mode = !app.composer_zen_mode;
+        app.toast(if app.composer_zen_mode {
+            "Editor zen mode enabled."
+        } else {
+            "Editor zen mode disabled."
+        });
+        return;
+    }
+
+    if allow_composer_shortcuts
+        && key_match(&key, &app.config.keybindings.composer.toggle_image_preview)
+    {
+        app.composer_image_preview_enabled = !app.composer_image_preview_enabled;
+        app.toast(if app.composer_image_preview_enabled {
+            "Inline image preview enabled."
+        } else {
+            "Inline image preview disabled."
+        });
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.composer.paste_clipboard)
+        && (!app.is_vim_mode() || matches!(app.editor_mode, EditorMode::Insert))
+    {
+        paste_from_system_clipboard(app);
+        return;
+    }
 
     if allow_composer_shortcuts && key_match(&key, &app.config.keybindings.composer.task_toggle) {
         let changed = if in_vim_normal {
@@ -178,6 +216,7 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
 
         // Forward all other keys to textarea
         if app.textarea.input(key) {
+            markdown::replace_recent_arrow_sequence(&mut app.textarea);
             app.composer_dirty = true;
         }
         return;
@@ -261,6 +300,7 @@ pub fn handle_paste(app: &mut App, text: &str) {
     }
 
     app.textarea.insert_str(&normalized);
+    markdown::replace_recent_arrow_sequence(&mut app.textarea);
 
     if pasted_in_vim_normal {
         let (row, col) = app.textarea.cursor();
@@ -280,6 +320,135 @@ pub fn handle_paste(app: &mut App, text: &str) {
     }
 
     app.composer_dirty = true;
+}
+
+fn paste_from_system_clipboard(app: &mut App) {
+    let mut clipboard = match Clipboard::new() {
+        Ok(clipboard) => clipboard,
+        Err(err) => {
+            app.toast(format!("Clipboard unavailable: {err}"));
+            return;
+        }
+    };
+
+    if let Ok(image) = clipboard.get_image() {
+        match paste_clipboard_image(app, image) {
+            Ok(embed) => app.toast(format!("Pasted image as {embed}")),
+            Err(err) => app.toast(format!("Image paste failed: {err}")),
+        }
+        return;
+    }
+
+    match clipboard.get_text() {
+        Ok(text) => handle_paste(app, &text),
+        Err(err) => app.toast(format!("Clipboard has no readable text/image: {err}")),
+    }
+}
+
+fn paste_clipboard_image(app: &mut App, image: ImageData<'_>) -> Result<String, String> {
+    let base_dir = current_edit_base_dir(app);
+    let media_dir = base_dir.join("media");
+    fs::create_dir_all(&media_dir).map_err(|err| err.to_string())?;
+
+    let stem = format!("Pasted image {}", Local::now().format("%Y%m%d%H%M%S"));
+    let format = app.config.editor.image_paste_format;
+    let image_path = next_available_image_path(&media_dir, &stem, format.extension());
+    write_clipboard_image(&image_path, &image, format, &app.config.editor)?;
+
+    let file_name = image_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "invalid image filename".to_string())?;
+    let embed = format!("![[media/{file_name}]]");
+    app.textarea.insert_str(&embed);
+    app.mark_insert_modified();
+    app.composer_dirty = true;
+    Ok(embed)
+}
+
+fn current_edit_base_dir(app: &App) -> PathBuf {
+    if let Some(editing) = app.editing_entry.as_ref()
+        && let Some(parent) = Path::new(&editing.file_path).parent()
+    {
+        return parent.to_path_buf();
+    }
+    PathBuf::from(&app.config.data.log_path)
+}
+
+fn next_available_image_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let first = dir.join(format!("{stem}.{ext}"));
+    if !first.exists() {
+        return first;
+    }
+
+    for index in 1..1000 {
+        let candidate = dir.join(format!("{stem}-{index}.{ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    dir.join(format!("{stem}-overflow.{ext}"))
+}
+
+fn write_clipboard_image(
+    path: &Path,
+    image: &ImageData<'_>,
+    format: crate::config::ClipboardImageFormat,
+    editor_config: &crate::config::EditorConfig,
+) -> Result<(), String> {
+    let width = u32::try_from(image.width).map_err(|_| "image width overflow".to_string())?;
+    let height = u32::try_from(image.height).map_err(|_| "image height overflow".to_string())?;
+    let rgba = image.bytes.as_ref();
+    let expected_len = image
+        .width
+        .checked_mul(image.height)
+        .and_then(|px| px.checked_mul(4))
+        .ok_or_else(|| "image dimensions overflow".to_string())?;
+    if rgba.len() != expected_len {
+        return Err("unexpected clipboard image byte length".to_string());
+    }
+
+    let encoded = encode_image_bytes(rgba, width, height, format, editor_config)?;
+    fs::write(path, encoded).map_err(|err| err.to_string())
+}
+
+fn encode_image_bytes(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    format: crate::config::ClipboardImageFormat,
+    editor_config: &crate::config::EditorConfig,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    match format {
+        crate::config::ClipboardImageFormat::Png => {
+            let encoder = PngEncoder::new(&mut bytes);
+            encoder
+                .write_image(rgba, width, height, ColorType::Rgba8.into())
+                .map_err(|err| err.to_string())?;
+        }
+        crate::config::ClipboardImageFormat::Jpeg => {
+            let rgba_image = ImageBuffer::from_raw(width, height, rgba.to_vec())
+                .ok_or_else(|| "invalid RGBA buffer".to_string())?;
+            let rgb = DynamicImage::ImageRgba8(rgba_image).to_rgb8();
+            let mut cursor = Cursor::new(Vec::new());
+            let mut encoder = JpegEncoder::new_with_quality(
+                &mut cursor,
+                editor_config.image_jpeg_quality.clamp(1, 100),
+            );
+            encoder
+                .encode(&rgb, width, height, ColorType::Rgb8.into())
+                .map_err(|err| err.to_string())?;
+            bytes = cursor.into_inner();
+        }
+        crate::config::ClipboardImageFormat::Webp => {
+            bytes = WebpEncoder::from_rgba(rgba, width, height)
+                .encode(editor_config.image_webp_quality.clamp(0.0, 100.0))
+                .to_vec();
+        }
+    }
+    Ok(bytes)
 }
 
 fn save_composer(app: &mut App, stay_in_editor: bool) {
@@ -474,8 +643,16 @@ fn refresh_search_results(app: &mut App, query: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::handle_paste;
-    use crate::{app::App, models::InputMode};
+    use super::{
+        encode_image_bytes, handle_paste, next_available_image_path, write_clipboard_image,
+    };
+    use crate::{
+        app::App,
+        config::{ClipboardImageFormat, EditorConfig},
+        models::InputMode,
+    };
+    use arboard::ImageData;
+    use std::{borrow::Cow, fs};
 
     #[test]
     fn paste_in_vim_normal_mode_inserts_literal_text() {
@@ -489,5 +666,53 @@ mod tests {
             &["- [ ] parent".to_string(), "  - child".to_string()]
         );
         assert!(app.composer_dirty);
+    }
+
+    #[test]
+    fn next_available_image_path_adds_numeric_suffix() {
+        let dir = std::env::temp_dir().join(format!("memolog-paste-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Pasted image 1.png"), b"png").unwrap();
+
+        let candidate = next_available_image_path(&dir, "Pasted image 1", "png");
+        assert!(candidate.ends_with("Pasted image 1-1.png"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_png_image_emits_png_header() {
+        let path = std::env::temp_dir().join(format!("memolog-image-{}.png", std::process::id()));
+        let image = ImageData {
+            width: 1,
+            height: 1,
+            bytes: Cow::Owned(vec![255, 0, 0, 255]),
+        };
+
+        write_clipboard_image(
+            &path,
+            &image,
+            ClipboardImageFormat::Png,
+            &EditorConfig::default(),
+        )
+        .unwrap();
+        let data = fs::read(&path).unwrap();
+        assert_eq!(&data[..8], b"\x89PNG\r\n\x1a\n");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn encode_jpeg_and_webp_images() {
+        let rgba = vec![255, 0, 0, 255];
+
+        let config = EditorConfig::default();
+        let jpeg = encode_image_bytes(&rgba, 1, 1, ClipboardImageFormat::Jpeg, &config).unwrap();
+        assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
+
+        let webp = encode_image_bytes(&rgba, 1, 1, ClipboardImageFormat::Webp, &config).unwrap();
+        assert_eq!(&webp[..4], b"RIFF");
+        assert_eq!(&webp[8..12], b"WEBP");
     }
 }

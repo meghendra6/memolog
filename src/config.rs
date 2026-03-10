@@ -445,11 +445,46 @@ impl Default for GeminiConfig {
 #[serde(default)]
 pub struct EditorConfig {
     pub column_width: u16,
+    pub image_paste_format: ClipboardImageFormat,
+    pub image_jpeg_quality: u8,
+    pub image_webp_quality: f32,
+    pub image_preview_enabled: bool,
+    pub image_preview_max_width_chars: u16,
+    pub image_preview_max_height_rows: u16,
+    pub image_cache_entries: usize,
 }
 
 impl Default for EditorConfig {
     fn default() -> Self {
-        Self { column_width: 120 }
+        Self {
+            column_width: 120,
+            image_paste_format: ClipboardImageFormat::Png,
+            image_jpeg_quality: 92,
+            image_webp_quality: 80.0,
+            image_preview_enabled: true,
+            image_preview_max_width_chars: 36,
+            image_preview_max_height_rows: 9,
+            image_cache_entries: 128,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipboardImageFormat {
+    #[default]
+    Png,
+    Jpeg,
+    Webp,
+}
+
+impl ClipboardImageFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpg",
+            Self::Webp => "webp",
+        }
     }
 }
 
@@ -673,6 +708,9 @@ pub struct ComposerBindings {
     pub newline: Vec<String>,
     pub cancel: Vec<String>,
     pub clear: Vec<String>,
+    pub paste_clipboard: Vec<String>,
+    pub toggle_zen: Vec<String>,
+    pub toggle_image_preview: Vec<String>,
     pub indent: Vec<String>,
     pub outdent: Vec<String>,
     pub task_toggle: Vec<String>,
@@ -690,6 +728,9 @@ impl Default for ComposerBindings {
             newline: vec!["enter".to_string()],
             submit: vec!["shift+enter".to_string()],
             clear: Vec::new(),
+            paste_clipboard: vec!["ctrl+v".to_string()],
+            toggle_zen: vec!["ctrl+y".to_string()],
+            toggle_image_preview: vec!["ctrl+b".to_string()],
             indent: vec!["tab".to_string()],
             outdent: vec!["backtab".to_string()],
             task_toggle: vec!["ctrl+t".to_string()],
@@ -1441,6 +1482,21 @@ impl Config {
                 scope: BindingScope::Composer,
                 action: "composer.cancel",
                 keys: &kb.composer.cancel,
+            },
+            BindingSpec {
+                scope: BindingScope::Composer,
+                action: "composer.paste_clipboard",
+                keys: &kb.composer.paste_clipboard,
+            },
+            BindingSpec {
+                scope: BindingScope::Composer,
+                action: "composer.toggle_zen",
+                keys: &kb.composer.toggle_zen,
+            },
+            BindingSpec {
+                scope: BindingScope::Composer,
+                action: "composer.toggle_image_preview",
+                keys: &kb.composer.toggle_image_preview,
             },
             BindingSpec {
                 scope: BindingScope::Composer,
