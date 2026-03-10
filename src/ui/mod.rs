@@ -1220,6 +1220,8 @@ fn render_editing_mode(
             .constraints([Constraint::Percentage(54), Constraint::Percentage(46)])
             .split(main_area)
             .to_vec()
+    } else if app.composer_zen_mode {
+        vec![main_area]
     } else {
         vec![centered_column(main_area, app.config.editor.column_width)]
     };
