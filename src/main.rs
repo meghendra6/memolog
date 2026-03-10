@@ -30,8 +30,6 @@ mod ui;
 use app::App;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut app = App::new();
-
     // Initialize terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -46,6 +44,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    let mut app = App::new();
+    app.init_image_picker();
 
     let res = run_app(&mut terminal, &mut app);
 

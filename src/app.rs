@@ -11,6 +11,7 @@ use crate::storage;
 use arboard::Clipboard;
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime, Timelike};
 use ratatui::widgets::ListState;
+use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -328,6 +329,8 @@ pub struct App<'a> {
 
     // Configuration
     pub config: Config,
+    pub preview_image_picker: Option<Picker>,
+    pub preview_image_protocols: HashMap<String, StatefulProtocol>,
 }
 
 impl<'a> App<'a> {
@@ -550,12 +553,20 @@ impl<'a> App<'a> {
             selected_entry_line_count: 0,
             timeline_viewport_height: 0,
             config,
+            preview_image_picker: None,
+            preview_image_protocols: HashMap::new(),
         };
 
         app.apply_timeline_filter(true);
         app.apply_task_filter(true);
         app.refresh_agenda();
         app
+    }
+
+    pub fn init_image_picker(&mut self) {
+        if self.preview_image_picker.is_none() {
+            self.preview_image_picker = Picker::from_query_stdio().ok();
+        }
     }
 
     pub fn start_edit_entry(&mut self, entry: &LogEntry) {

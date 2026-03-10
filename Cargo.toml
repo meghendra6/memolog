@@ -29,3 +29,4 @@ rand = "0.8.5"
 arboard = "3.4.1"
 image = { version = "0.25.8", default-features = false, features = ["png", "bmp", "jpeg", "gif", "webp"] }
 webp = "0.3.1"
+ratatui-image = { version = "8.0.1", default-features = false, features = ["crossterm", "image-defaults"] }

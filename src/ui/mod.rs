@@ -15,6 +15,7 @@ use crate::models::{
 };
 use image::ImageReader;
 use ratatui::style::Stylize;
+use ratatui_image::{Resize, StatefulImage};
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
@@ -1168,9 +1169,13 @@ pub(super) struct RenderedMarkdown {
 
 #[derive(Clone)]
 struct InlineImageRaster {
-    title: String,
-    image_src: String,
     rows: Vec<Vec<([u8; 4], [u8; 4])>>,
+}
+
+struct PreviewImageBlock {
+    cache_key: String,
+    top_row: usize,
+    height_rows: usize,
 }
 
 #[derive(Clone)]
@@ -1424,42 +1429,309 @@ fn render_editing_mode(
         let mut preview_editor_config = app.config.editor.clone();
         preview_editor_config.image_preview_enabled =
             preview_editor_config.image_preview_enabled && app.composer_image_preview_enabled;
+        let preview_theme = app.config.theme.clone();
         let preview_base_dir = editing_entry
             .as_ref()
             .and_then(|entry| Path::new(&entry.file_path).parent())
-            .unwrap_or(Path::new(&app.config.data.log_path));
-        let preview_rendered = render_markdown_view(
-            &preview_source,
-            preview_inner.width.max(1) as usize,
-            Some(preview_inner.height.max(1) as usize),
-            &app.config.theme,
-            &preview_editor_config,
-            tokens,
-            syntax_set,
-            syntax_theme,
-            code_bg,
-            Some(preview_base_dir),
-        );
+            .map(|path| path.to_path_buf())
+            .unwrap_or_else(|| app.config.data.log_path.clone());
 
-        let target_scroll = preview_rendered
-            .source_line_offsets
-            .get(cursor_row)
-            .copied()
-            .unwrap_or(0);
-        let max_scroll = preview_rendered
-            .lines
-            .len()
-            .saturating_sub(preview_inner.height as usize);
-        let preview_scroll = target_scroll.min(max_scroll);
+        if app.preview_image_picker.is_some() && preview_editor_config.image_preview_enabled {
+            render_markdown_preview_with_kitty_images(
+                f,
+                app,
+                preview_inner,
+                &preview_source,
+                cursor_row,
+                &preview_theme,
+                &preview_editor_config,
+                tokens,
+                syntax_set,
+                syntax_theme,
+                code_bg,
+                Some(preview_base_dir.as_path()),
+            );
+        } else {
+            let preview_rendered = render_markdown_view(
+                &preview_source,
+                preview_inner.width.max(1) as usize,
+                Some(preview_inner.height.max(1) as usize),
+                &preview_theme,
+                &preview_editor_config,
+                tokens,
+                syntax_set,
+                syntax_theme,
+                code_bg,
+                Some(preview_base_dir.as_path()),
+            );
 
-        let preview_paragraph = Paragraph::new(Text::from(preview_rendered.lines))
-            .wrap(Wrap { trim: false })
-            .scroll((preview_scroll as u16, 0))
-            .style(Style::default().fg(tokens.ui_fg));
-        f.render_widget(preview_paragraph, preview_inner);
+            let target_scroll = preview_rendered
+                .source_line_offsets
+                .get(cursor_row)
+                .copied()
+                .unwrap_or(0);
+            let max_scroll = preview_rendered
+                .lines
+                .len()
+                .saturating_sub(preview_inner.height as usize);
+            let preview_scroll = target_scroll.min(max_scroll);
+
+            let preview_paragraph = Paragraph::new(Text::from(preview_rendered.lines))
+                .wrap(Wrap { trim: false })
+                .scroll((preview_scroll as u16, 0))
+                .style(Style::default().fg(tokens.ui_fg));
+            f.render_widget(preview_paragraph, preview_inner);
+        }
     }
 
     Some(input_inner)
+}
+
+struct ProtocolRenderedMarkdown {
+    lines: Vec<Line<'static>>,
+    source_line_offsets: Vec<usize>,
+    image_blocks: Vec<PreviewImageBlock>,
+}
+
+fn render_markdown_preview_with_kitty_images(
+    f: &mut Frame,
+    app: &mut App,
+    preview_inner: Rect,
+    text: &str,
+    cursor_row: usize,
+    theme: &Theme,
+    _editor_config: &EditorConfig,
+    tokens: &theme::ThemeTokens,
+    syntax_set: &SyntaxSet,
+    syntax_theme: &syntect::highlighting::Theme,
+    code_bg: Option<Color>,
+    image_base_dir: Option<&Path>,
+) {
+    let rendered = build_protocol_preview_layout(
+        app,
+        text,
+        preview_inner,
+        theme,
+        tokens,
+        syntax_set,
+        syntax_theme,
+        code_bg,
+        image_base_dir,
+    );
+
+    let target_scroll = rendered
+        .source_line_offsets
+        .get(cursor_row)
+        .copied()
+        .unwrap_or(0);
+    let max_scroll = rendered
+        .lines
+        .len()
+        .saturating_sub(preview_inner.height as usize);
+    let preview_scroll = target_scroll.min(max_scroll);
+
+    let preview_paragraph = Paragraph::new(Text::from(rendered.lines))
+        .wrap(Wrap { trim: false })
+        .scroll((preview_scroll as u16, 0))
+        .style(Style::default().fg(tokens.ui_fg));
+    f.render_widget(preview_paragraph, preview_inner);
+
+    for block in rendered.image_blocks {
+        if block.top_row < preview_scroll {
+            continue;
+        }
+        let rel_y = block.top_row - preview_scroll;
+        if rel_y >= preview_inner.height as usize {
+            continue;
+        }
+        let available_height = (preview_inner.height as usize).saturating_sub(rel_y);
+        let render_height = block.height_rows.min(available_height).max(1) as u16;
+        let area = Rect::new(
+            preview_inner.x,
+            preview_inner.y + rel_y as u16,
+            preview_inner.width,
+            render_height,
+        );
+        if let Some(protocol) = app.preview_image_protocols.get_mut(&block.cache_key) {
+            let image = StatefulImage::default().resize(Resize::Fit(None));
+            f.render_stateful_widget(image, area, protocol);
+            let _ = protocol.last_encoding_result();
+        }
+    }
+}
+
+fn build_protocol_preview_layout(
+    app: &mut App,
+    text: &str,
+    preview_area: Rect,
+    theme: &Theme,
+    tokens: &theme::ThemeTokens,
+    syntax_set: &SyntaxSet,
+    syntax_theme: &syntect::highlighting::Theme,
+    code_bg: Option<Color>,
+    image_base_dir: Option<&Path>,
+) -> ProtocolRenderedMarkdown {
+    let width = preview_area.width.max(1) as usize;
+    let mut rendered = ProtocolRenderedMarkdown {
+        lines: Vec::new(),
+        source_line_offsets: Vec::new(),
+        image_blocks: Vec::new(),
+    };
+    let mut in_code_block = false;
+    let mut code_highlighter: Option<HighlightLines> = None;
+    let mut code_language: Option<String> = None;
+
+    for (idx, raw_line) in text.lines().enumerate() {
+        rendered.source_line_offsets.push(rendered.lines.len());
+        let trimmed = raw_line.trim();
+        let trimmed_start = raw_line.trim_start();
+        let is_fence = trimmed_start.starts_with("```");
+
+        if is_fence {
+            if !in_code_block {
+                code_language = parse_fence_language(trimmed_start);
+                push_markdown_blank_line(&mut rendered.lines);
+                rendered.lines.push(render_code_block_border(
+                    true,
+                    code_language.as_deref(),
+                    tokens,
+                    code_bg,
+                ));
+                let syntax = syntax_for_language(syntax_set, code_language.as_deref());
+                code_highlighter = Some(HighlightLines::new(syntax, syntax_theme));
+                in_code_block = true;
+            } else {
+                rendered.lines.push(render_code_block_border(
+                    false,
+                    code_language.as_deref(),
+                    tokens,
+                    code_bg,
+                ));
+                push_markdown_blank_line(&mut rendered.lines);
+                code_highlighter = None;
+                code_language = None;
+                in_code_block = false;
+            }
+            continue;
+        }
+
+        if idx == 0
+            && is_heading_timestamp_line(raw_line)
+            && split_timestamp_line(raw_line)
+                .map(|(_, rest)| rest.trim().is_empty())
+                .unwrap_or(false)
+        {
+            continue;
+        }
+
+        if in_code_block {
+            render_code_block_line(
+                &mut rendered.lines,
+                raw_line,
+                width,
+                code_highlighter.as_mut(),
+                syntax_set,
+                code_bg,
+            );
+            continue;
+        }
+
+        if trimmed.is_empty() {
+            push_markdown_blank_line(&mut rendered.lines);
+            continue;
+        }
+
+        if is_thematic_break(trimmed) {
+            push_markdown_blank_line(&mut rendered.lines);
+            rendered.lines.push(Line::from(Span::styled(
+                "─".repeat(width.clamp(12, 48)),
+                Style::default()
+                    .fg(tokens.ui_muted)
+                    .add_modifier(Modifier::DIM),
+            )));
+            push_markdown_blank_line(&mut rendered.lines);
+            continue;
+        }
+
+        if let Some((level, heading_text)) = markdown_heading(trimmed_start) {
+            if !rendered.lines.is_empty() {
+                push_markdown_blank_line(&mut rendered.lines);
+            }
+            render_heading_lines(&mut rendered.lines, heading_text, level, width, tokens);
+            push_markdown_blank_line(&mut rendered.lines);
+            continue;
+        }
+
+        if let Some((depth, body)) = split_blockquote(trimmed_start) {
+            render_blockquote_lines(&mut rendered.lines, body, depth, width, theme, tokens);
+            continue;
+        }
+
+        if let Some(image_src) = obsidian_image_embed(trimmed_start) {
+            if let Some(image_path) = resolve_embedded_image_path(image_src, image_base_dir)
+                && let Some(cache_key) = ensure_preview_image_protocol(app, &image_path)
+                && let Some(protocol) = app.preview_image_protocols.get(&cache_key)
+            {
+                let rect = protocol.size_for(Resize::Fit(None), preview_area);
+                let height_rows = rect.height.max(1) as usize;
+                rendered.image_blocks.push(PreviewImageBlock {
+                    cache_key,
+                    top_row: rendered.lines.len(),
+                    height_rows,
+                });
+                rendered
+                    .lines
+                    .extend((0..height_rows).map(|_| Line::from(String::new())));
+                continue;
+            }
+
+            render_image_fallback_card(&mut rendered.lines, image_src, width, tokens);
+            continue;
+        }
+
+        for line in wrap_markdown_line(raw_line, width) {
+            rendered.lines.push(Line::from(parse_markdown_spans(
+                &line,
+                theme,
+                false,
+                None,
+                Style::default(),
+            )));
+        }
+    }
+
+    if in_code_block {
+        rendered.lines.push(render_code_block_border(
+            false,
+            code_language.as_deref(),
+            tokens,
+            code_bg,
+        ));
+    }
+
+    trim_markdown_blank_lines(&mut rendered.lines);
+    if rendered.lines.is_empty() {
+        rendered.lines.push(Line::from(Span::styled(
+            "Empty memo.",
+            Style::default()
+                .fg(tokens.ui_muted)
+                .add_modifier(Modifier::DIM),
+        )));
+    }
+    rendered
+}
+
+fn ensure_preview_image_protocol(app: &mut App, image_path: &Path) -> Option<String> {
+    let key = image_path.display().to_string();
+    if app.preview_image_protocols.contains_key(&key) {
+        return Some(key);
+    }
+
+    let picker = app.preview_image_picker.as_ref()?;
+    let image = ImageReader::open(image_path).ok()?.decode().ok()?;
+    let protocol = picker.new_resize_protocol(image);
+    app.preview_image_protocols.insert(key.clone(), protocol);
+    Some(key)
 }
 
 pub(super) fn render_markdown_view(
@@ -1951,11 +2223,6 @@ fn build_inline_image_raster(
         return None;
     }
 
-    let title = image_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(image_src)
-        .to_string();
     let mut rows = Vec::new();
     for y in (0..thumb_h).step_by(2) {
         let mut row = Vec::with_capacity(thumb_w as usize);
@@ -1971,11 +2238,8 @@ fn build_inline_image_raster(
         rows.push(row);
     }
 
-    Some(InlineImageRaster {
-        title,
-        image_src: image_src.to_string(),
-        rows,
-    })
+    let _ = image_src;
+    Some(InlineImageRaster { rows })
 }
 
 fn render_cached_inline_image_lines(
