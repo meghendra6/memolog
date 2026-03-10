@@ -13,7 +13,7 @@ use crate::models::{
     AgendaItemKind, EditorMode, InputMode, NavigateFocus, VisualKind, is_heading_timestamp_line,
     is_task_overdue, is_timestamped_line, split_timestamp_line,
 };
-use image::{ImageReader, imageops::FilterType};
+use image::ImageReader;
 use ratatui::style::Stylize;
 use regex::Regex;
 use std::collections::HashMap;
@@ -1809,15 +1809,7 @@ fn render_inline_image_lines(
         return None;
     }
 
-    let max_width_chars = editor_config.image_preview_max_width_chars.max(4) as u32;
-    let max_height_rows = editor_config.image_preview_max_height_rows.max(1) as u32;
-    let cache_key = format!(
-        "{}:{}:{}:{}",
-        image_path.display(),
-        width,
-        max_width_chars,
-        max_height_rows
-    );
+    let cache_key = image_path.display().to_string();
     let modified_key = image_path
         .metadata()
         .ok()?
@@ -1861,13 +1853,7 @@ fn render_inline_image_lines(
     }
 
     if editor_config.image_cache_entries == 0 {
-        let raster = build_inline_image_raster(
-            image_path,
-            image_src,
-            width,
-            max_width_chars,
-            max_height_rows,
-        )?;
+        let raster = build_inline_image_raster(image_path, image_src)?;
         return Some(render_cached_inline_image_lines(&raster, width, tokens));
     }
 
@@ -1878,13 +1864,7 @@ fn render_inline_image_lines(
     let modified_key_for_thread = modified_key.clone();
 
     std::thread::spawn(move || {
-        let state = match build_inline_image_raster(
-            &image_path,
-            &image_src,
-            width,
-            max_width_chars,
-            max_height_rows,
-        ) {
+        let state = match build_inline_image_raster(&image_path, &image_src) {
             Some(raster) => CachedInlineImageState::Ready(raster),
             None => CachedInlineImageState::Failed,
         };
@@ -1923,18 +1903,9 @@ fn trim_inline_image_cache(cache: &mut HashMap<String, CachedInlineImage>, max_e
     }
 }
 
-fn build_inline_image_raster(
-    image_path: &Path,
-    image_src: &str,
-    width: usize,
-    max_width_chars: u32,
-    max_height_rows: u32,
-) -> Option<InlineImageRaster> {
+fn build_inline_image_raster(image_path: &Path, image_src: &str) -> Option<InlineImageRaster> {
     let image = ImageReader::open(image_path).ok()?.decode().ok()?;
-    let max_char_width = width.saturating_sub(2).clamp(4, max_width_chars as usize) as u32;
-    let max_pixel_height = max_height_rows.saturating_mul(2);
-    let thumbnail = image.resize(max_char_width, max_pixel_height, FilterType::Triangle);
-    let rgba = thumbnail.to_rgba8();
+    let rgba = image.to_rgba8();
     let (thumb_w, thumb_h) = rgba.dimensions();
     if thumb_w == 0 || thumb_h == 0 {
         return None;

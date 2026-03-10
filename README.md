@@ -341,8 +341,6 @@ image_paste_format = "png" # png | jpeg | webp
 image_jpeg_quality = 92
 image_webp_quality = 80.0
 image_preview_enabled = true
-image_preview_max_width_chars = 18
-image_preview_max_height_rows = 6
 image_cache_entries = 128
 ```
 

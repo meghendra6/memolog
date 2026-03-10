@@ -449,8 +449,6 @@ pub struct EditorConfig {
     pub image_jpeg_quality: u8,
     pub image_webp_quality: f32,
     pub image_preview_enabled: bool,
-    pub image_preview_max_width_chars: u16,
-    pub image_preview_max_height_rows: u16,
     pub image_cache_entries: usize,
 }
 
@@ -462,8 +460,6 @@ impl Default for EditorConfig {
             image_jpeg_quality: 92,
             image_webp_quality: 80.0,
             image_preview_enabled: true,
-            image_preview_max_width_chars: 18,
-            image_preview_max_height_rows: 6,
             image_cache_entries: 128,
         }
     }
