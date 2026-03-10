@@ -58,12 +58,14 @@ pub(crate) fn handle_editor_insert(app: &mut App, key: event::KeyEvent) {
 
     if key.code == KeyCode::Char('`') && key.modifiers.contains(KeyModifiers::SHIFT) {
         app.textarea.insert_char('~');
+        markdown::replace_recent_arrow_sequence(&mut app.textarea);
         app.mark_insert_modified();
         app.composer_dirty = true;
         return;
     }
 
     if app.textarea.input(key) {
+        markdown::replace_recent_arrow_sequence(&mut app.textarea);
         app.mark_insert_modified();
         app.composer_dirty = true;
     }

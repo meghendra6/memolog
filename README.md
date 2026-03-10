@@ -112,8 +112,11 @@ Insert mode shortcuts:
 - `Ctrl+T` toggle task checkbox
 - `Ctrl+P` cycle priority
 - `Ctrl+;` open date/time picker
+- `Ctrl+V` paste system clipboard text/image
+- `Ctrl+Y` toggle editor-only Zen mode
+- `Ctrl+B` toggle inline image preview
 - `Tab`/`Shift+Tab` indent/outdent
-- Wide terminals show a live markdown preview beside the editor
+- Wide terminals show a live markdown preview beside the editor (unless Zen mode is on)
 
 Normal/Visual mode:
 
@@ -329,6 +332,20 @@ Available presets:
 - Nord Calm
 - Mono Contrast
 
+Editor image options:
+
+```toml
+[editor]
+column_width = 120
+image_paste_format = "png" # png | jpeg | webp
+image_jpeg_quality = 92
+image_webp_quality = 80.0
+image_preview_enabled = true
+image_preview_max_width_chars = 36
+image_preview_max_height_rows = 9
+image_cache_entries = 128
+```
+
 ## Keybindings (defaults)
 
 All keybindings are configurable in `config.toml`.
@@ -397,6 +414,9 @@ Composer
 - `Ctrl+T` toggle task
 - `Ctrl+P` cycle priority
 - `Ctrl+;` date picker
+- `Ctrl+V` paste clipboard text/image
+- `Ctrl+Y` toggle editor-only Zen mode
+- `Ctrl+B` toggle inline image preview
 - `Tab/Shift+Tab` indent/outdent
 - `Esc` back
 

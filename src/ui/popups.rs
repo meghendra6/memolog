@@ -256,10 +256,14 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
         &preview_source,
         width,
         &app.config.theme,
+        &app.config.editor,
         &tokens,
         syntax_set,
         syntax_theme,
         code_bg,
+        app.memo_preview_entry
+            .as_ref()
+            .and_then(|entry| std::path::Path::new(&entry.file_path).parent()),
     )
     .lines;
 

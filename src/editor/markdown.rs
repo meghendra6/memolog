@@ -20,6 +20,33 @@ pub(crate) fn insert_newline_with_auto_indent(textarea: &mut TextArea) {
     }
 }
 
+pub(crate) fn replace_recent_arrow_sequence(textarea: &mut TextArea) -> bool {
+    const ARROW_RULES: [(&str, &str); 3] = [("<-->", "↔"), ("-->", "→"), ("<--", "←")];
+
+    let (row, col) = textarea.cursor();
+    let current_line = textarea.lines().get(row).cloned().unwrap_or_default();
+    let before_cursor = current_line.chars().take(col).collect::<String>();
+
+    for (from, to) in ARROW_RULES {
+        if !before_cursor.ends_with(from) {
+            continue;
+        }
+
+        let start_col = col.saturating_sub(from.chars().count());
+        let prefix = current_line.chars().take(start_col).collect::<String>();
+        let suffix = current_line.chars().skip(col).collect::<String>();
+        let new_line = format!("{prefix}{to}{suffix}");
+        replace_current_line(textarea, row, &new_line);
+        textarea.move_cursor(CursorMove::Jump(
+            row as u16,
+            (start_col + to.chars().count()) as u16,
+        ));
+        return true;
+    }
+
+    false
+}
+
 pub(crate) fn indent_or_outdent_list_line(textarea: &mut TextArea, indent: bool) -> bool {
     let (row, col) = textarea.cursor();
     let current_line = textarea.lines().get(row).cloned().unwrap_or_default();
@@ -559,5 +586,23 @@ mod tests {
 
         assert_eq!(textarea.lines(), ["- [ ] "]);
         assert_eq!(textarea.cursor(), (0, 6));
+    }
+
+    #[test]
+    fn arrow_sequences_convert_to_unicode_symbols() {
+        let mut textarea = TextArea::from(["alpha -->"]);
+        textarea.move_cursor(CursorMove::End);
+        assert!(replace_recent_arrow_sequence(&mut textarea));
+        assert_eq!(textarea.lines(), ["alpha →"]);
+
+        let mut textarea = TextArea::from(["<--"]);
+        textarea.move_cursor(CursorMove::End);
+        assert!(replace_recent_arrow_sequence(&mut textarea));
+        assert_eq!(textarea.lines(), ["←"]);
+
+        let mut textarea = TextArea::from(["<-->"]);
+        textarea.move_cursor(CursorMove::End);
+        assert!(replace_recent_arrow_sequence(&mut textarea));
+        assert_eq!(textarea.lines(), ["↔"]);
     }
 }
