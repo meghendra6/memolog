@@ -1431,6 +1431,7 @@ fn render_editing_mode(
         let preview_rendered = render_markdown_view(
             &preview_source,
             preview_inner.width.max(1) as usize,
+            Some(preview_inner.height.max(1) as usize),
             &app.config.theme,
             &preview_editor_config,
             tokens,
@@ -1464,6 +1465,7 @@ fn render_editing_mode(
 pub(super) fn render_markdown_view(
     text: &str,
     width: usize,
+    image_max_rows: Option<usize>,
     theme: &Theme,
     editor_config: &EditorConfig,
     tokens: &theme::ThemeTokens,
@@ -1569,6 +1571,7 @@ pub(super) fn render_markdown_view(
                 &mut rendered.lines,
                 image_src,
                 width,
+                image_max_rows,
                 editor_config,
                 tokens,
                 image_base_dir,
@@ -1732,13 +1735,20 @@ fn render_image_embed_lines(
     out: &mut Vec<Line<'static>>,
     image_src: &str,
     width: usize,
+    image_max_rows: Option<usize>,
     editor_config: &EditorConfig,
     tokens: &theme::ThemeTokens,
     image_base_dir: Option<&Path>,
 ) {
     if let Some(image_path) = resolve_embedded_image_path(image_src, image_base_dir)
-        && let Some(mut inline_lines) =
-            render_inline_image_lines(&image_path, image_src, width, editor_config, tokens)
+        && let Some(mut inline_lines) = render_inline_image_lines(
+            &image_path,
+            image_src,
+            width,
+            image_max_rows,
+            editor_config,
+            tokens,
+        )
     {
         push_markdown_blank_line(out);
         out.append(&mut inline_lines);
@@ -1802,6 +1812,7 @@ fn render_inline_image_lines(
     image_path: &Path,
     image_src: &str,
     width: usize,
+    image_max_rows: Option<usize>,
     editor_config: &EditorConfig,
     tokens: &theme::ThemeTokens,
 ) -> Option<Vec<Line<'static>>> {
@@ -1809,7 +1820,12 @@ fn render_inline_image_lines(
         return None;
     }
 
-    let cache_key = image_path.display().to_string();
+    let cache_key = format!(
+        "{}:{}:{}",
+        image_path.display(),
+        width,
+        image_max_rows.unwrap_or(0)
+    );
     let modified_key = image_path
         .metadata()
         .ok()?
@@ -1853,7 +1869,7 @@ fn render_inline_image_lines(
     }
 
     if editor_config.image_cache_entries == 0 {
-        let raster = build_inline_image_raster(image_path, image_src)?;
+        let raster = build_inline_image_raster(image_path, image_src, width, image_max_rows)?;
         return Some(render_cached_inline_image_lines(&raster, width, tokens));
     }
 
@@ -1864,7 +1880,8 @@ fn render_inline_image_lines(
     let modified_key_for_thread = modified_key.clone();
 
     std::thread::spawn(move || {
-        let state = match build_inline_image_raster(&image_path, &image_src) {
+        let state = match build_inline_image_raster(&image_path, &image_src, width, image_max_rows)
+        {
             Some(raster) => CachedInlineImageState::Ready(raster),
             None => CachedInlineImageState::Failed,
         };
@@ -1903,9 +1920,34 @@ fn trim_inline_image_cache(cache: &mut HashMap<String, CachedInlineImage>, max_e
     }
 }
 
-fn build_inline_image_raster(image_path: &Path, image_src: &str) -> Option<InlineImageRaster> {
+fn build_inline_image_raster(
+    image_path: &Path,
+    image_src: &str,
+    max_width_cols: usize,
+    image_max_rows: Option<usize>,
+) -> Option<InlineImageRaster> {
     let image = ImageReader::open(image_path).ok()?.decode().ok()?;
-    let rgba = image.to_rgba8();
+    let original = image.to_rgba8();
+    let (orig_w, orig_h) = original.dimensions();
+    if orig_w == 0 || orig_h == 0 {
+        return None;
+    }
+
+    let max_w = max_width_cols.max(1) as f32;
+    let max_h = image_max_rows
+        .map(|rows| rows.saturating_sub(2).max(1) as f32 * 2.0)
+        .unwrap_or(orig_h as f32);
+    let scale = (max_w / orig_w as f32).min(max_h / orig_h as f32).min(1.0);
+    let target_w = ((orig_w as f32 * scale).round() as u32).max(1);
+    let target_h = ((orig_h as f32 * scale).round() as u32).max(1);
+
+    let rgba = if scale < 1.0 {
+        image
+            .resize(target_w, target_h, image::imageops::FilterType::Triangle)
+            .to_rgba8()
+    } else {
+        original
+    };
     let (thumb_w, thumb_h) = rgba.dimensions();
     if thumb_w == 0 || thumb_h == 0 {
         return None;
@@ -3953,6 +3995,7 @@ mod tests {
         let rendered = render_markdown_view(
             "![[media/photo.png]]",
             40,
+            Some(20),
             &Theme::default(),
             &EditorConfig::default(),
             &tokens,

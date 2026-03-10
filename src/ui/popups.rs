@@ -255,6 +255,7 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
     let lines = super::render_markdown_view(
         &preview_source,
         width,
+        Some(prose_area.height.max(1) as usize),
         &app.config.theme,
         &app.config.editor,
         &tokens,
