@@ -37,11 +37,12 @@ use components::{
 };
 use popups::{
     render_activity_popup, render_ai_loading_popup, render_ai_response_popup,
-    render_date_picker_popup, render_delete_entry_popup, render_editor_style_popup,
-    render_exit_popup, render_google_auth_popup, render_goto_date_popup, render_help_popup,
-    render_memo_preview_popup, render_mood_popup, render_onboarding_popup, render_path_popup,
-    render_pomodoro_popup, render_quick_capture_popup, render_saved_search_popup,
-    render_siren_popup, render_tag_popup, render_theme_switcher_popup, render_todo_popup,
+    render_command_palette_popup, render_date_picker_popup, render_delete_entry_popup,
+    render_editor_style_popup, render_exit_popup, render_google_auth_popup, render_goto_date_popup,
+    render_help_popup, render_memo_preview_popup, render_mood_popup, render_onboarding_popup,
+    render_path_popup, render_pomodoro_popup, render_quick_capture_popup, render_save_view_popup,
+    render_saved_search_popup, render_saved_view_popup, render_siren_popup, render_tag_popup,
+    render_theme_switcher_popup, render_todo_popup,
 };
 
 pub fn ui(f: &mut Frame, app: &mut App) {
@@ -1100,6 +1101,15 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     }
     if app.show_saved_search_popup {
         render_saved_search_popup(f, app);
+    }
+    if app.show_saved_view_popup {
+        render_saved_view_popup(f, app);
+    }
+    if app.show_save_view_popup {
+        render_save_view_popup(f, app);
+    }
+    if app.show_command_palette_popup {
+        render_command_palette_popup(f, app);
     }
 
     if app.show_date_picker_popup {
@@ -3809,21 +3819,22 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
 
 fn status_focus_hint(app: &App) -> String {
     let focus_toggle = primary_binding(&app.config.keybindings.global.focus_mode_toggle);
+    let palette = primary_binding(&app.config.keybindings.global.command_palette);
     match app.input_mode {
         InputMode::Navigate => match app.navigate_focus {
             NavigateFocus::Timeline => {
                 format!(
-                    "Timeline: j/k move · Enter viewer · e edit · i compose · Tab fold · {focus_toggle} focus"
+                    "Timeline: j/k move · Enter viewer · e edit · {palette} palette · i compose · Tab fold · {focus_toggle} focus"
                 )
             }
             NavigateFocus::Agenda => {
                 format!(
-                    "Agenda: j/k move · h/l day · PgUp/PgDn week · f filter · u unsched · {focus_toggle} focus"
+                    "Agenda: j/k move · h/l day · PgUp/PgDn week · f filter · u unsched · {palette} palette · {focus_toggle} focus"
                 )
             }
             NavigateFocus::Tasks => {
                 format!(
-                    "Tasks: Space toggle · Shift+P priority · ]/}} snooze · p pomodoro · {focus_toggle} focus"
+                    "Tasks: Space toggle · Shift+P priority · ]/}} snooze · p pomodoro · {palette} palette · {focus_toggle} focus"
                 )
             }
         },

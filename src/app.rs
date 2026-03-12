@@ -7,6 +7,11 @@ use crate::models::{
     count_trailing_tomatoes, is_heading_timestamp_line, is_task_overdue, is_timestamped_line,
     split_timestamp_line, strip_timestamp_prefix, task_overdue_anchor_date,
 };
+use crate::saved_views::{
+    SavedView, empty_saved_view, load_saved_views, navigate_focus_name, parse_navigate_focus,
+    parse_task_filter, parse_timeline_filter, save_saved_views, task_filter_name,
+    timeline_filter_name,
+};
 use crate::storage;
 use arboard::Clipboard;
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime, Timelike};
@@ -171,6 +176,43 @@ pub struct EditorSnapshot {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum CommandPaletteAction {
+    GoToDate,
+    Search,
+    QuickCapture,
+    SavedSearches,
+    SavedViews,
+    SaveCurrentView,
+    ToggleFocusMode,
+    OpenAgenda,
+    OpenConfig,
+    OpenLogDir,
+    ThemeSwitcher,
+    EditorStyle,
+    Activity,
+    Pomodoro,
+    Tags,
+    SyncGoogle,
+}
+
+#[derive(Clone)]
+enum CommandPaletteTarget {
+    Action(CommandPaletteAction),
+    SavedView(usize),
+    SavedSearch(String),
+}
+
+#[derive(Clone)]
+pub(crate) struct CommandPaletteItem {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) hint: String,
+    pub(crate) aliases: Vec<String>,
+    pub(crate) disabled_reason: Option<String>,
+    target: CommandPaletteTarget,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PendingEditCommand {
     Delete,
     Yank,
@@ -290,8 +332,17 @@ pub struct App<'a> {
     // Quick capture popup
     pub show_quick_capture_popup: bool,
     pub quick_capture_input: String,
+    pub show_command_palette_popup: bool,
+    pub command_palette_input: String,
+    pub command_palette_list_state: ListState,
     pub show_goto_date_popup: bool,
     pub goto_date_input: String,
+    pub show_saved_view_popup: bool,
+    pub saved_views: Vec<SavedView>,
+    pub saved_view_list_state: ListState,
+    pub show_save_view_popup: bool,
+    pub save_view_input: String,
+    pub command_palette_recent_ids: Vec<String>,
 
     // Navigation key sequence (for gg, etc.)
     pub pending_nav_key: Option<char>,
@@ -411,6 +462,11 @@ impl<'a> App<'a> {
         if !saved_searches.is_empty() {
             saved_search_list_state.select(Some(0));
         }
+        let saved_views = load_saved_views();
+        let mut saved_view_list_state = ListState::default();
+        if !(saved_views.is_empty() && saved_searches.is_empty()) {
+            saved_view_list_state.select(Some(0));
+        }
 
         let keybinding_toast = if keybinding_conflicts.is_empty() {
             None
@@ -527,8 +583,17 @@ impl<'a> App<'a> {
             ai_loading_question: None,
             show_quick_capture_popup: false,
             quick_capture_input: String::new(),
+            show_command_palette_popup: false,
+            command_palette_input: String::new(),
+            command_palette_list_state: ListState::default(),
             show_goto_date_popup: false,
             goto_date_input: String::new(),
+            show_saved_view_popup: false,
+            saved_views,
+            saved_view_list_state,
+            show_save_view_popup: false,
+            save_view_input: String::new(),
+            command_palette_recent_ids: Vec::new(),
             pending_nav_key: None,
             pomodoro_alert_expiry: None,
             pomodoro_alert_message: None,
@@ -884,6 +949,486 @@ impl<'a> App<'a> {
         }
         save_saved_searches(&self.saved_searches)?;
         Ok(Some(removed))
+    }
+
+    pub fn open_command_palette(&mut self) {
+        if self.input_mode != InputMode::Navigate {
+            return;
+        }
+        self.show_command_palette_popup = true;
+        self.command_palette_input.clear();
+        self.sync_command_palette_selection();
+    }
+
+    pub fn close_command_palette(&mut self) {
+        self.show_command_palette_popup = false;
+        self.command_palette_input.clear();
+    }
+
+    fn command_palette_items(&self) -> Vec<CommandPaletteItem> {
+        let kb = &self.config.keybindings;
+        let mut items = vec![
+            CommandPaletteItem {
+                id: "action:goto-date".to_string(),
+                label: "Go to date".to_string(),
+                hint: primary_shortcut(&kb.global.goto_date),
+                aliases: vec![
+                    "jump".to_string(),
+                    "date".to_string(),
+                    "calendar".to_string(),
+                ],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::GoToDate),
+            },
+            CommandPaletteItem {
+                id: "action:search".to_string(),
+                label: "Search logs".to_string(),
+                hint: primary_shortcut(&kb.global.search),
+                aliases: vec!["find".to_string(), "query".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::Search),
+            },
+            CommandPaletteItem {
+                id: "action:quick-capture".to_string(),
+                label: "Quick capture".to_string(),
+                hint: primary_shortcut(&kb.global.quick_capture),
+                aliases: vec!["capture".to_string(), "note".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::QuickCapture),
+            },
+            CommandPaletteItem {
+                id: "action:saved-searches".to_string(),
+                label: "Open saved searches".to_string(),
+                hint: primary_shortcut(&self.config.keybindings.search.open_saved),
+                aliases: vec!["saved".to_string(), "queries".to_string()],
+                disabled_reason: self
+                    .saved_searches
+                    .is_empty()
+                    .then(|| "No saved searches yet".to_string()),
+                target: CommandPaletteTarget::Action(CommandPaletteAction::SavedSearches),
+            },
+            CommandPaletteItem {
+                id: "action:saved-views".to_string(),
+                label: "Open saved views".to_string(),
+                hint: primary_shortcut(&kb.global.command_palette),
+                aliases: vec![
+                    "views".to_string(),
+                    "workspace".to_string(),
+                    "preset".to_string(),
+                ],
+                disabled_reason: (self.saved_views.is_empty() && self.saved_searches.is_empty())
+                    .then(|| "No saved views or saved searches yet".to_string()),
+                target: CommandPaletteTarget::Action(CommandPaletteAction::SavedViews),
+            },
+            CommandPaletteItem {
+                id: "action:save-view".to_string(),
+                label: "Save current view".to_string(),
+                hint: "snapshot".to_string(),
+                aliases: vec![
+                    "save".to_string(),
+                    "view".to_string(),
+                    "workspace".to_string(),
+                ],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::SaveCurrentView),
+            },
+            CommandPaletteItem {
+                id: "action:focus-mode".to_string(),
+                label: "Toggle focus mode".to_string(),
+                hint: primary_shortcut(&kb.global.focus_mode_toggle),
+                aliases: vec!["focus".to_string(), "zen".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::ToggleFocusMode),
+            },
+            CommandPaletteItem {
+                id: "action:agenda".to_string(),
+                label: "Focus agenda".to_string(),
+                hint: primary_shortcut(&kb.global.agenda),
+                aliases: vec!["agenda".to_string(), "schedule".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::OpenAgenda),
+            },
+            CommandPaletteItem {
+                id: "action:config".to_string(),
+                label: "Open config".to_string(),
+                hint: primary_shortcut(&kb.global.edit_config),
+                aliases: vec!["config".to_string(), "settings".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::OpenConfig),
+            },
+            CommandPaletteItem {
+                id: "action:log-dir".to_string(),
+                label: "Show log directory".to_string(),
+                hint: primary_shortcut(&kb.global.log_dir),
+                aliases: vec!["path".to_string(), "folder".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::OpenLogDir),
+            },
+            CommandPaletteItem {
+                id: "action:theme".to_string(),
+                label: "Theme switcher".to_string(),
+                hint: primary_shortcut(&kb.global.theme_switcher),
+                aliases: vec!["theme".to_string(), "colors".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::ThemeSwitcher),
+            },
+            CommandPaletteItem {
+                id: "action:editor-style".to_string(),
+                label: "Editor style".to_string(),
+                hint: primary_shortcut(&kb.global.editor_style_switcher),
+                aliases: vec![
+                    "editor".to_string(),
+                    "vim".to_string(),
+                    "simple".to_string(),
+                ],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::EditorStyle),
+            },
+            CommandPaletteItem {
+                id: "action:activity".to_string(),
+                label: "Activity graph".to_string(),
+                hint: primary_shortcut(&kb.global.activity),
+                aliases: vec![
+                    "graph".to_string(),
+                    "stats".to_string(),
+                    "streak".to_string(),
+                ],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::Activity),
+            },
+            CommandPaletteItem {
+                id: "action:pomodoro".to_string(),
+                label: "Pomodoro".to_string(),
+                hint: primary_shortcut(&kb.global.pomodoro),
+                aliases: vec!["timer".to_string(), "focus".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::Pomodoro),
+            },
+            CommandPaletteItem {
+                id: "action:tags".to_string(),
+                label: "Browse tags".to_string(),
+                hint: primary_shortcut(&kb.global.tags),
+                aliases: vec!["tag".to_string(), "labels".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::Tags),
+            },
+            CommandPaletteItem {
+                id: "action:sync-google".to_string(),
+                label: "Google sync".to_string(),
+                hint: primary_shortcut(&kb.global.sync_google),
+                aliases: vec!["google".to_string(), "sync".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::SyncGoogle),
+            },
+        ];
+
+        for (index, view) in self.saved_views.iter().enumerate() {
+            items.push(CommandPaletteItem {
+                id: format!("view:{}", view.name.to_ascii_lowercase()),
+                label: format!("Load view: {}", view.name),
+                hint: "saved view".to_string(),
+                aliases: vec![
+                    view.name.to_ascii_lowercase(),
+                    view.search_query.to_ascii_lowercase(),
+                    "workspace".to_string(),
+                ],
+                disabled_reason: None,
+                target: CommandPaletteTarget::SavedView(index),
+            });
+        }
+
+        for query in &self.saved_searches {
+            items.push(CommandPaletteItem {
+                id: format!("search:{}", query.to_ascii_lowercase()),
+                label: format!("Run saved search: {}", query),
+                hint: "saved search".to_string(),
+                aliases: vec![
+                    query.to_ascii_lowercase(),
+                    "saved".to_string(),
+                    "search".to_string(),
+                ],
+                disabled_reason: None,
+                target: CommandPaletteTarget::SavedSearch(query.clone()),
+            });
+        }
+
+        items
+    }
+
+    pub fn filtered_command_palette_items(&self) -> Vec<CommandPaletteItem> {
+        let query = self.command_palette_input.trim().to_ascii_lowercase();
+        let mut scored = Vec::new();
+        for (order, item) in self.command_palette_items().into_iter().enumerate() {
+            if let Some(score) = score_command_palette_item(&item, &query) {
+                let recent_rank = self
+                    .command_palette_recent_ids
+                    .iter()
+                    .position(|id| id == &item.id)
+                    .unwrap_or(usize::MAX);
+                scored.push((score, recent_rank, order, item));
+            }
+        }
+        scored.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+        });
+        scored.into_iter().map(|(_, _, _, item)| item).collect()
+    }
+
+    pub fn sync_command_palette_selection(&mut self) {
+        let items = self.filtered_command_palette_items();
+        if items.is_empty() {
+            self.command_palette_list_state.select(None);
+            return;
+        }
+        let selected = self
+            .command_palette_list_state
+            .selected()
+            .unwrap_or(0)
+            .min(items.len() - 1);
+        self.command_palette_list_state.select(Some(selected));
+    }
+
+    pub fn move_command_palette_selection(&mut self, delta: i32) {
+        let items = self.filtered_command_palette_items();
+        if items.is_empty() {
+            self.command_palette_list_state.select(None);
+            return;
+        }
+        let current = self.command_palette_list_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).clamp(0, items.len() as i32 - 1) as usize;
+        self.command_palette_list_state.select(Some(next));
+    }
+
+    pub fn execute_selected_command_palette_item(&mut self) -> bool {
+        let items = self.filtered_command_palette_items();
+        let Some(selected) = self.command_palette_list_state.selected() else {
+            return false;
+        };
+        let Some(item) = items.get(selected).cloned() else {
+            return false;
+        };
+        if let Some(reason) = item.disabled_reason.as_deref() {
+            self.toast(reason);
+            return false;
+        }
+        self.record_command_palette_use(&item.id);
+        self.close_command_palette();
+        match item.target {
+            CommandPaletteTarget::Action(action) => self.execute_command_palette_action(action),
+            CommandPaletteTarget::SavedView(index) => {
+                let Some(view) = self.saved_views.get(index).cloned() else {
+                    self.toast("Saved view not found.");
+                    return false;
+                };
+                self.apply_saved_view(&view)
+            }
+            CommandPaletteTarget::SavedSearch(query) => {
+                self.run_search_query(&query);
+                self.toast("Loaded saved search.");
+                true
+            }
+        }
+    }
+
+    fn execute_command_palette_action(&mut self, action: CommandPaletteAction) -> bool {
+        match action {
+            CommandPaletteAction::GoToDate => self.open_goto_date_popup(),
+            CommandPaletteAction::Search => self.transition_to(InputMode::Search),
+            CommandPaletteAction::QuickCapture => {
+                self.show_quick_capture_popup = true;
+                self.quick_capture_input.clear();
+            }
+            CommandPaletteAction::SavedSearches => self.open_saved_search_popup(),
+            CommandPaletteAction::SavedViews => self.open_saved_view_popup(),
+            CommandPaletteAction::SaveCurrentView => self.open_save_view_popup(),
+            CommandPaletteAction::ToggleFocusMode => self.toggle_focus_mode(),
+            CommandPaletteAction::OpenAgenda => crate::actions::focus_agenda_panel(self),
+            CommandPaletteAction::OpenConfig => crate::actions::open_config_in_composer(self),
+            CommandPaletteAction::OpenLogDir => self.show_path_popup = true,
+            CommandPaletteAction::ThemeSwitcher => crate::actions::open_theme_switcher(self),
+            CommandPaletteAction::EditorStyle => crate::actions::open_editor_style_switcher(self),
+            CommandPaletteAction::Activity => crate::actions::open_activity_popup(self),
+            CommandPaletteAction::Pomodoro => {
+                crate::actions::open_or_toggle_pomodoro_for_selected_task(self)
+            }
+            CommandPaletteAction::Tags => crate::actions::open_tag_popup(self),
+            CommandPaletteAction::SyncGoogle => crate::actions::sync_google(self),
+        }
+        true
+    }
+
+    fn record_command_palette_use(&mut self, id: &str) {
+        self.command_palette_recent_ids
+            .retain(|existing| existing != id);
+        self.command_palette_recent_ids.insert(0, id.to_string());
+        if self.command_palette_recent_ids.len() > 20 {
+            self.command_palette_recent_ids.truncate(20);
+        }
+    }
+
+    pub fn open_saved_view_popup(&mut self) {
+        if self.saved_views.is_empty() && self.saved_searches.is_empty() {
+            self.toast("No saved views or saved searches yet.");
+            return;
+        }
+        self.show_saved_view_popup = true;
+        self.sync_saved_view_selection();
+    }
+
+    pub fn open_save_view_popup(&mut self) {
+        self.show_save_view_popup = true;
+        self.save_view_input = self.suggest_saved_view_name();
+    }
+
+    fn suggest_saved_view_name(&self) -> String {
+        let focus = self.navigate_focus_label().to_ascii_lowercase();
+        if let Some(query) = self.last_search_query.as_deref() {
+            let trimmed = query.trim();
+            if !trimmed.is_empty() {
+                return format!("{focus} {}", trimmed);
+            }
+        }
+        format!("{} {}", focus, self.agenda_selected_day.format("%Y-%m-%d"))
+    }
+
+    fn saved_view_popup_len(&self) -> usize {
+        self.saved_views.len() + self.saved_searches.len()
+    }
+
+    pub fn sync_saved_view_selection(&mut self) {
+        let len = self.saved_view_popup_len();
+        if len == 0 {
+            self.saved_view_list_state.select(None);
+            return;
+        }
+        let selected = self
+            .saved_view_list_state
+            .selected()
+            .unwrap_or(0)
+            .min(len - 1);
+        self.saved_view_list_state.select(Some(selected));
+    }
+
+    pub fn move_saved_view_selection(&mut self, delta: i32) {
+        let len = self.saved_view_popup_len();
+        if len == 0 {
+            self.saved_view_list_state.select(None);
+            return;
+        }
+        let current = self.saved_view_list_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).clamp(0, len as i32 - 1) as usize;
+        self.saved_view_list_state.select(Some(next));
+    }
+
+    pub fn saved_view_popup_labels(&self) -> Vec<String> {
+        let mut labels = Vec::with_capacity(self.saved_view_popup_len());
+        for view in &self.saved_views {
+            labels.push(format!(
+                "View · {} — {}",
+                view.name,
+                saved_view_summary(view)
+            ));
+        }
+        for query in &self.saved_searches {
+            labels.push(format!("Saved search · {}", truncate_chars(query, 56)));
+        }
+        labels
+    }
+
+    pub fn save_current_view(&mut self, name: &str) -> io::Result<bool> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Ok(false);
+        }
+        let mut view = empty_saved_view(trimmed.to_string(), self.agenda_selected_day);
+        view.search_query = self.last_search_query.clone().unwrap_or_default();
+        view.timeline_filter = timeline_filter_name(self.timeline_filter).to_string();
+        view.task_filter = task_filter_name(self.task_filter).to_string();
+        view.agenda_filter = task_filter_name(self.agenda_filter).to_string();
+        view.navigate_focus = navigate_focus_name(self.navigate_focus).to_string();
+        view.focus_mode = self.focus_mode;
+        view.agenda_show_unscheduled = self.agenda_show_unscheduled;
+
+        self.saved_views
+            .retain(|existing| !existing.name.eq_ignore_ascii_case(trimmed));
+        self.saved_views.insert(0, view);
+        save_saved_views(&self.saved_views)?;
+        self.sync_saved_view_selection();
+        Ok(true)
+    }
+
+    pub fn apply_saved_view(&mut self, view: &SavedView) -> bool {
+        self.timeline_filter = parse_timeline_filter(&view.timeline_filter);
+        self.task_filter = parse_task_filter(&view.task_filter);
+        self.agenda_filter = parse_task_filter(&view.agenda_filter);
+        self.navigate_focus = parse_navigate_focus(&view.navigate_focus);
+        self.focus_mode = view.focus_mode;
+        self.agenda_show_unscheduled = view.agenda_show_unscheduled;
+        if let Ok(date) = NaiveDate::parse_from_str(&view.agenda_selected_day, "%Y-%m-%d") {
+            self.agenda_selected_day = date;
+        }
+        if view.search_query.trim().is_empty() {
+            self.last_search_query = None;
+            self.is_search_result = false;
+            self.update_logs();
+        } else {
+            self.run_search_query(&view.search_query);
+        }
+        self.apply_timeline_filter(true);
+        self.apply_task_filter(true);
+        self.refresh_agenda();
+        self.set_agenda_selected_day(self.agenda_selected_day);
+        self.show_saved_view_popup = false;
+        self.toast(format!("Loaded view: {}", view.name));
+        true
+    }
+
+    pub fn apply_selected_saved_view(&mut self) -> bool {
+        let Some(i) = self.saved_view_list_state.selected() else {
+            return false;
+        };
+        if i < self.saved_views.len() {
+            let Some(view) = self.saved_views.get(i).cloned() else {
+                return false;
+            };
+            return self.apply_saved_view(&view);
+        }
+        let search_index = i - self.saved_views.len();
+        let Some(query) = self.saved_searches.get(search_index).cloned() else {
+            return false;
+        };
+        self.run_search_query(&query);
+        self.show_saved_view_popup = false;
+        self.toast("Loaded saved search.");
+        true
+    }
+
+    pub fn remove_selected_saved_view(&mut self) -> io::Result<Option<String>> {
+        let Some(i) = self.saved_view_list_state.selected() else {
+            return Ok(None);
+        };
+        if i < self.saved_views.len() {
+            let removed = self.saved_views.remove(i).name;
+            save_saved_views(&self.saved_views)?;
+            self.sync_saved_view_selection();
+            return Ok(Some(removed));
+        }
+        let search_index = i - self.saved_views.len();
+        if search_index >= self.saved_searches.len() {
+            return Ok(None);
+        }
+        let removed = self.saved_searches.remove(search_index);
+        save_saved_searches(&self.saved_searches)?;
+        self.sync_saved_view_selection();
+        Ok(Some(removed))
+    }
+
+    pub fn run_search_query(&mut self, query: &str) {
+        self.set_search_input(query);
+        crate::actions::submit_search(self);
+        self.recent_search_cursor = None;
     }
 
     pub fn selected_search_explain(&self) -> Option<String> {
@@ -1705,6 +2250,14 @@ impl<'a> App<'a> {
         if self.focus_mode { "ON" } else { "OFF" }
     }
 
+    pub fn navigate_focus_label(&self) -> &'static str {
+        match self.navigate_focus {
+            NavigateFocus::Timeline => "Timeline",
+            NavigateFocus::Agenda => "Agenda",
+            NavigateFocus::Tasks => "Tasks",
+        }
+    }
+
     pub fn transition_to(&mut self, mode: InputMode) {
         match mode {
             InputMode::Navigate => {
@@ -2391,6 +2944,73 @@ fn save_saved_searches(queries: &[String]) -> io::Result<()> {
     fs::write(path, content)
 }
 
+fn primary_shortcut(keys: &[String]) -> String {
+    keys.first().cloned().unwrap_or_else(|| "-".to_string())
+}
+
+fn score_command_palette_item(item: &CommandPaletteItem, query: &str) -> Option<i32> {
+    if query.is_empty() {
+        return Some(1);
+    }
+    let label = item.label.to_ascii_lowercase();
+    if label.starts_with(query) {
+        return Some(120);
+    }
+    if label.contains(query) {
+        return Some(90);
+    }
+    if item.id.contains(query) {
+        return Some(75);
+    }
+    if item
+        .aliases
+        .iter()
+        .any(|alias| alias.to_ascii_lowercase().starts_with(query))
+    {
+        return Some(70);
+    }
+    if item
+        .aliases
+        .iter()
+        .any(|alias| alias.to_ascii_lowercase().contains(query))
+    {
+        return Some(55);
+    }
+    if item.hint.to_ascii_lowercase().contains(query) {
+        return Some(40);
+    }
+    None
+}
+
+fn saved_view_summary(view: &SavedView) -> String {
+    let mut parts = Vec::new();
+    if !view.search_query.trim().is_empty() {
+        parts.push(format!("search {}", view.search_query.trim()));
+    }
+    parts.push(format!(
+        "{} / {} / {}",
+        view.timeline_filter, view.task_filter, view.agenda_filter
+    ));
+    parts.push(view.navigate_focus.to_ascii_lowercase());
+    if view.focus_mode {
+        parts.push("focus".to_string());
+    }
+    truncate_chars(&parts.join(" · "), 64)
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    let count = text.chars().count();
+    if count <= max_chars {
+        return text.to_string();
+    }
+    if max_chars <= 3 {
+        return text.chars().take(max_chars).collect();
+    }
+    let mut output: String = text.chars().take(max_chars - 3).collect();
+    output.push_str("...");
+    output
+}
+
 fn mark_onboarding_seen_if_needed() -> bool {
     if cfg!(test) {
         return false;
@@ -2456,6 +3076,55 @@ mod tests {
     fn app_does_not_show_mood_popup_on_startup() {
         let app = App::new();
         assert!(!app.show_mood_popup);
+    }
+
+    #[test]
+    fn command_palette_surfaces_saved_view_matches() {
+        let mut app = App::new();
+        app.saved_views.push(empty_saved_view(
+            "work focus".to_string(),
+            NaiveDate::from_ymd_opt(2026, 3, 13).expect("valid date"),
+        ));
+        app.open_command_palette();
+        app.command_palette_input = "work".to_string();
+        app.sync_command_palette_selection();
+
+        let labels: Vec<String> = app
+            .filtered_command_palette_items()
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("Load view: work focus"))
+        );
+    }
+
+    #[test]
+    fn save_current_view_captures_current_filters() {
+        let mut app = App::new();
+        app.timeline_filter = TimelineFilter::Work;
+        app.task_filter = TaskFilter::Done;
+        app.agenda_filter = TaskFilter::Overdue;
+        app.navigate_focus = NavigateFocus::Tasks;
+        app.focus_mode = true;
+        app.agenda_selected_day = NaiveDate::from_ymd_opt(2026, 3, 13).expect("valid date");
+        app.agenda_show_unscheduled = true;
+        app.last_search_query = Some("#work".to_string());
+
+        let saved = app.save_current_view("daily focus").expect("save view");
+        assert!(saved);
+        assert_eq!(app.saved_views.len(), 1);
+        assert_eq!(app.saved_views[0].name, "daily focus");
+        assert_eq!(app.saved_views[0].search_query, "#work");
+        assert_eq!(app.saved_views[0].timeline_filter, "Work");
+        assert_eq!(app.saved_views[0].task_filter, "Done");
+        assert_eq!(app.saved_views[0].agenda_filter, "Overdue");
+        assert_eq!(app.saved_views[0].navigate_focus, "Tasks");
+        assert!(app.saved_views[0].focus_mode);
+        assert!(app.saved_views[0].agenda_show_unscheduled);
     }
 
     #[test]

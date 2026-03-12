@@ -316,6 +316,10 @@ pub fn saved_searches_path() -> PathBuf {
     config_sibling_path("saved_searches.txt")
 }
 
+pub fn saved_views_path() -> PathBuf {
+    config_sibling_path("saved_views.json")
+}
+
 pub fn onboarding_seen_path() -> PathBuf {
     config_sibling_path("onboarding_seen")
 }
@@ -524,6 +528,7 @@ pub struct KeyBindings {
 pub struct GlobalBindings {
     pub quit: Vec<String>,
     pub help: Vec<String>,
+    pub command_palette: Vec<String>,
     pub focus_mode_toggle: Vec<String>,
     pub focus_timeline: Vec<String>,
     pub focus_tasks: Vec<String>,
@@ -549,6 +554,7 @@ impl Default for GlobalBindings {
         Self {
             quit: vec!["q".to_string()],
             help: vec!["?".to_string()],
+            command_palette: vec![":".to_string()],
             focus_mode_toggle: vec!["z".to_string()],
             focus_timeline: Vec::new(),
             focus_tasks: Vec::new(),
@@ -1326,6 +1332,11 @@ impl Config {
             },
             BindingSpec {
                 scope: BindingScope::Global,
+                action: "global.command_palette",
+                keys: &kb.global.command_palette,
+            },
+            BindingSpec {
+                scope: BindingScope::Global,
                 action: "global.focus_mode_toggle",
                 keys: &kb.global.focus_mode_toggle,
             },
@@ -1572,6 +1583,7 @@ fn is_priority_global_action(action: &str) -> bool {
     matches!(
         action,
         "global.help"
+            | "global.command_palette"
             | "global.focus_mode_toggle"
             | "global.search"
             | "global.goto_date"
