@@ -57,6 +57,11 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    if key_match(&key, &app.config.keybindings.global.command_palette) {
+        app.open_command_palette();
+        return;
+    }
+
     if key_match(&key, &app.config.keybindings.global.focus_mode_toggle) {
         app.toggle_focus_mode();
         return;

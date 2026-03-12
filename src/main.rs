@@ -23,6 +23,7 @@ mod input;
 mod integrations;
 mod models;
 mod runtime;
+mod saved_views;
 mod storage;
 mod task_metadata;
 mod ui;

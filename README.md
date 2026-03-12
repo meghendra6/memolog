@@ -43,6 +43,7 @@ memolog
 - Right bottom: Tasks (filtered task list)
 
 Use `Ctrl+H/J/K/L` to move focus between Timeline, Agenda, and Tasks.
+Press `:` to open the command palette for quick actions and saved views.
 Press `?` anytime to see the full help overlay.
 The status bar always shows mode, focus, date, context, and active search query.
 
@@ -188,6 +189,9 @@ When it completes, MemoLog appends a tomato (🍅) to the task line.
   - `Ctrl+P` / `Ctrl+N`: cycle recent searches
   - `Ctrl+S`: save current query
   - `Ctrl+O`: open saved queries popup
+- Saved views:
+  - Press `:` and run `Save current view` to capture the current focus/filters/search
+  - Press `:` and choose `Open saved views` (or a specific saved view) to restore it
 - AI search: prefix your query with `?`, `ai:`, or `ask:` to run a Gemini-assisted search
 
 ## Gemini AI search (experimental)

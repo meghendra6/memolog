@@ -30,14 +30,14 @@ pub enum VisualKind {
     Block,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NavigateFocus {
     Timeline,
     Agenda,
     Tasks,
 }
 
-#[derive(Clone, Copy, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum TaskFilter {
     #[default]
     Open,
@@ -49,7 +49,7 @@ pub enum TaskFilter {
     HighPriority,
 }
 
-#[derive(Clone, Copy, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum TimelineFilter {
     #[default]
     All,

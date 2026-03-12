@@ -1344,6 +1344,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
         vec![
             ("Help".to_string(), fmt_keys(&kb.global.help)),
             (
+                "Command palette".to_string(),
+                fmt_keys(&kb.global.command_palette),
+            ),
+            (
                 "Focus sprint mode".to_string(),
                 fmt_keys(&kb.global.focus_mode_toggle),
             ),
@@ -1402,6 +1406,10 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
     } else {
         vec![
             ("Help".to_string(), fmt_keys(&kb.global.help)),
+            (
+                "Command palette".to_string(),
+                fmt_keys(&kb.global.command_palette),
+            ),
             (
                 "Focus sprint mode".to_string(),
                 fmt_keys(&kb.global.focus_mode_toggle),
@@ -2346,6 +2354,150 @@ pub fn render_saved_search_popup(f: &mut Frame, app: &mut App) {
     f.render_widget(help, inner[1]);
 }
 
+pub fn render_saved_view_popup(f: &mut Frame, app: &mut App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let block = Block::default()
+        .title(" 🗂 Saved Views ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_accent));
+
+    let area = centered_rect(68, 56, f.area());
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .margin(1)
+        .split(area);
+
+    let items: Vec<ListItem> = app
+        .saved_view_popup_labels()
+        .into_iter()
+        .map(|label| ListItem::new(Line::from(label)))
+        .collect();
+    let list = List::new(items).highlight_symbol("> ").highlight_style(
+        Style::default()
+            .bg(tokens.ui_selection_bg)
+            .add_modifier(Modifier::BOLD),
+    );
+    f.render_stateful_widget(list, inner[0], &mut app.saved_view_list_state);
+
+    let help = Paragraph::new("Enter: Apply  |  n: Save current  |  Del: Remove  |  Esc: Close")
+        .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(help, inner[1]);
+}
+
+pub fn render_save_view_popup(f: &mut Frame, app: &App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let block = Block::default()
+        .title(" 💾 Save Current View ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_accent));
+
+    let area = centered_rect(56, 22, f.area());
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .margin(1)
+        .split(area);
+
+    let input = Paragraph::new(app.save_view_input.as_str())
+        .block(Block::default().borders(Borders::ALL).title(" View name "))
+        .style(Style::default().fg(tokens.ui_fg));
+    f.render_widget(input, inner[0]);
+
+    let summary = Paragraph::new(format!(
+        "Captures: focus={}  search={}  filters={}/{}/{}",
+        app.navigate_focus_label(),
+        if app.last_search_query.as_deref().unwrap_or("").is_empty() {
+            "none"
+        } else {
+            "active"
+        },
+        app.timeline_filter_label(),
+        app.task_filter_label(),
+        app.agenda_filter_label()
+    ))
+    .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(summary, inner[1]);
+
+    let help = Paragraph::new("Enter: Save  |  Esc: Cancel  |  Ctrl+U: Clear")
+        .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(help, inner[2]);
+
+    let cursor_x = inner[0].x + 2 + app.save_view_input.chars().count() as u16;
+    let cursor_y = inner[0].y + 1;
+    f.set_cursor_position((cursor_x.min(inner[0].right() - 2), cursor_y));
+}
+
+pub fn render_command_palette_popup(f: &mut Frame, app: &mut App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let block = Block::default()
+        .title(" ⌘ Command Palette ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_accent));
+
+    let area = centered_rect(72, 56, f.area());
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(6),
+            Constraint::Length(1),
+        ])
+        .margin(1)
+        .split(area);
+
+    let input = Paragraph::new(app.command_palette_input.as_str())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search commands "),
+        )
+        .style(Style::default().fg(tokens.ui_fg));
+    f.render_widget(input, inner[0]);
+
+    let items: Vec<ListItem> = app
+        .filtered_command_palette_items()
+        .into_iter()
+        .take(10)
+        .map(|item| {
+            let detail = if let Some(reason) = item.disabled_reason {
+                format!("{}  [{}] — {}", item.label, item.hint, reason)
+            } else {
+                format!("{}  [{}]", item.label, item.hint)
+            };
+            ListItem::new(Line::from(detail))
+        })
+        .collect();
+    let list = List::new(items).highlight_symbol("> ").highlight_style(
+        Style::default()
+            .bg(tokens.ui_selection_bg)
+            .add_modifier(Modifier::BOLD),
+    );
+    f.render_stateful_widget(list, inner[1], &mut app.command_palette_list_state);
+
+    let help =
+        Paragraph::new("Type to filter  |  Enter run  |  Esc close  |  ↑/↓ move  |  default key :")
+            .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(help, inner[2]);
+
+    let cursor_x = inner[0].x + 2 + app.command_palette_input.chars().count() as u16;
+    let cursor_y = inner[0].y + 1;
+    f.set_cursor_position((cursor_x.min(inner[0].right() - 2), cursor_y));
+}
+
 pub fn render_onboarding_popup(f: &mut Frame, app: &App) {
     let tokens = ThemeTokens::from_theme(&app.config.theme);
     let block = Block::default()
@@ -2370,6 +2522,7 @@ pub fn render_onboarding_popup(f: &mut Frame, app: &App) {
     };
     let body = vec![
         Line::from("Core shortcuts"),
+        Line::from(" - :: command palette"),
         Line::from(" - i: compose"),
         Line::from(" - /: search"),
         Line::from(" - Ctrl+F: go to date"),
@@ -2380,6 +2533,7 @@ pub fn render_onboarding_popup(f: &mut Frame, app: &App) {
         Line::from(" - Smart query: \"phrase\" | foo bar | foo|bar | -foo | date:YYYY-MM-DD"),
         Line::from(" - Ctrl+S in Search mode: save current query"),
         Line::from(" - Ctrl+O in Search mode: open saved queries"),
+        Line::from(" - Use : to save/open views and reach key actions quickly"),
         Line::from(""),
         Line::from(conflict_hint),
     ];

@@ -9,7 +9,7 @@ use crate::{
     storage,
 };
 use chrono::{Duration, Local, NaiveDate, NaiveTime, Timelike};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
     if app.show_google_auth_popup {
@@ -32,6 +32,10 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
         if key.code == KeyCode::Esc || key_match(&key, &app.config.keybindings.global.help) {
             app.show_help_popup = false;
         }
+        return true;
+    }
+    if app.show_command_palette_popup {
+        handle_command_palette_popup(app, key);
         return true;
     }
     if app.show_date_picker_popup {
@@ -79,6 +83,14 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
     }
     if app.show_saved_search_popup {
         handle_saved_search_popup(app, key);
+        return true;
+    }
+    if app.show_saved_view_popup {
+        handle_saved_view_popup(app, key);
+        return true;
+    }
+    if app.show_save_view_popup {
+        handle_save_view_popup(app, key);
         return true;
     }
     if app.show_activity_popup {
@@ -972,6 +984,117 @@ fn handle_saved_search_popup(app: &mut App, key: KeyEvent) {
             Ok(None) => app.toast("No saved search selected."),
             Err(_) => app.toast("Failed to remove saved search."),
         }
+    }
+}
+
+fn handle_command_palette_popup(app: &mut App, key: KeyEvent) {
+    if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
+        app.close_command_palette();
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.popup.up) {
+        app.move_command_palette_selection(-1);
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.popup.down) {
+        app.move_command_palette_selection(1);
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.popup.confirm) || key.code == KeyCode::Enter {
+        if !app.execute_selected_command_palette_item() {
+            app.toast("No command selected.");
+        }
+        return;
+    }
+
+    match key_code_for_shortcuts(&key) {
+        KeyCode::Backspace => {
+            app.command_palette_input.pop();
+        }
+        KeyCode::Char(c) => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                if c.eq_ignore_ascii_case(&'u') {
+                    app.command_palette_input.clear();
+                }
+            } else if !key.modifiers.contains(KeyModifiers::ALT) {
+                app.command_palette_input.push(c);
+            }
+        }
+        _ => {}
+    }
+    app.sync_command_palette_selection();
+}
+
+fn handle_saved_view_popup(app: &mut App, key: KeyEvent) {
+    if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
+        app.show_saved_view_popup = false;
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.popup.up) {
+        app.move_saved_view_selection(-1);
+        return;
+    }
+    if key_match(&key, &app.config.keybindings.popup.down) {
+        app.move_saved_view_selection(1);
+        return;
+    }
+    if key_match(&key, &app.config.keybindings.popup.confirm) || key.code == KeyCode::Enter {
+        if app.apply_selected_saved_view() {
+            return;
+        }
+        app.toast("No saved view or search selected.");
+        return;
+    }
+
+    match key_code_for_shortcuts(&key) {
+        KeyCode::Char('n') => app.open_save_view_popup(),
+        KeyCode::Delete | KeyCode::Backspace => match app.remove_selected_saved_view() {
+            Ok(Some(name)) => app.toast(format!("Removed saved item: {name}")),
+            Ok(None) => app.toast("No saved view or search selected."),
+            Err(_) => app.toast("Failed to remove saved item."),
+        },
+        _ => {}
+    }
+}
+
+fn handle_save_view_popup(app: &mut App, key: KeyEvent) {
+    if key.code == KeyCode::Esc {
+        app.show_save_view_popup = false;
+        app.save_view_input.clear();
+        return;
+    }
+
+    match key_code_for_shortcuts(&key) {
+        KeyCode::Enter => {
+            let name = app.save_view_input.clone();
+            match app.save_current_view(&name) {
+                Ok(true) => {
+                    let display_name = name.trim().to_string();
+                    app.toast(format!("Saved view: {display_name}"));
+                    app.show_save_view_popup = false;
+                    app.save_view_input.clear();
+                }
+                Ok(false) => app.toast("Enter a view name."),
+                Err(_) => app.toast("Failed to save view."),
+            }
+        }
+        KeyCode::Backspace => {
+            app.save_view_input.pop();
+        }
+        KeyCode::Char(c) => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                if c.eq_ignore_ascii_case(&'u') {
+                    app.save_view_input.clear();
+                }
+            } else {
+                app.save_view_input.push(c);
+            }
+        }
+        _ => {}
     }
 }
 
