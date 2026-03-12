@@ -1278,6 +1278,7 @@ impl<'a> App<'a> {
     }
 
     pub fn open_save_view_popup(&mut self) {
+        self.show_saved_view_popup = false;
         self.show_save_view_popup = true;
         self.save_view_input = self.suggest_saved_view_name();
     }
