@@ -85,12 +85,12 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
         handle_saved_search_popup(app, key);
         return true;
     }
-    if app.show_saved_view_popup {
-        handle_saved_view_popup(app, key);
-        return true;
-    }
     if app.show_save_view_popup {
         handle_save_view_popup(app, key);
+        return true;
+    }
+    if app.show_saved_view_popup {
+        handle_saved_view_popup(app, key);
         return true;
     }
     if app.show_activity_popup {
@@ -1145,7 +1145,7 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
 
 #[cfg(test)]
 mod tests {
-    use super::handle_goto_date_popup;
+    use super::{handle_goto_date_popup, handle_popup_events};
     use crate::app::App;
     use chrono::Local;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -1183,5 +1183,23 @@ mod tests {
         );
         let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
         assert_eq!(app.goto_date_input, today);
+    }
+
+    #[test]
+    fn saved_view_new_switches_input_to_save_view_popup() {
+        let mut app = App::new();
+        app.show_saved_view_popup = true;
+        app.open_save_view_popup();
+
+        assert!(app.show_save_view_popup);
+        assert!(!app.show_saved_view_popup);
+
+        app.show_saved_view_popup = true;
+        let prior = app.save_view_input.clone();
+        let _ = handle_popup_events(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+        );
+        assert_eq!(app.save_view_input, format!("{prior}x"));
     }
 }
