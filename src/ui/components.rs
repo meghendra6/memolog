@@ -8,6 +8,8 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
+const THEMATIC_BREAK_DISPLAY: &str = "────────────────────────";
+
 /// Helper function to calculate centered popup position
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
@@ -97,6 +99,33 @@ pub fn parse_markdown_spans(
         return spans;
     }
 
+    if is_thematic_break_line(content) {
+        spans.push(Span::styled(
+            THEMATIC_BREAK_DISPLAY.to_string(),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ));
+        return spans;
+    }
+
+    if let Some((depth, body)) = split_blockquote_marker(content) {
+        let quote_color = parse_color(&theme.mood);
+        spans.push(Span::styled(
+            format!("{} ", "▎".repeat(depth.max(1))),
+            Style::default()
+                .fg(quote_color)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.extend(patch_spans_style(
+            parse_inline_markdown(body, theme, false, search_regex, search_style),
+            Style::default()
+                .fg(quote_color)
+                .add_modifier(Modifier::ITALIC),
+        ));
+        return spans;
+    }
+
     // TODO checkboxes at line start.
     // Keep display width comparable to the original "- [ ] " / "- [x] " prefix for cleaner wrapping.
     let (content, todo_prefix) = if let Some(stripped) = content.strip_prefix("- [ ] ") {
@@ -182,7 +211,7 @@ pub fn parse_markdown_spans(
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
-            spans.extend(parse_words(
+            spans.extend(parse_inline_markdown(
                 segment,
                 theme,
                 todo_prefix,
@@ -264,6 +293,133 @@ fn heading_text(line: &str) -> Option<&str> {
     } else {
         None
     }
+}
+
+fn parse_inline_markdown(
+    text: &str,
+    theme: &Theme,
+    todo_prefix: bool,
+    search_regex: Option<&regex::Regex>,
+    search_style: Style,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+
+    while cursor < text.len() {
+        let Some((idx, delim, style)) = next_emphasis_delimiter(text, cursor) else {
+            spans.extend(parse_words(
+                &text[cursor..],
+                theme,
+                todo_prefix,
+                search_regex,
+                search_style,
+            ));
+            break;
+        };
+
+        if idx > cursor {
+            spans.extend(parse_words(
+                &text[cursor..idx],
+                theme,
+                todo_prefix,
+                search_regex,
+                search_style,
+            ));
+        }
+
+        let inner_start = idx + delim.len();
+        let Some(rel_end) = text[inner_start..].find(delim) else {
+            spans.extend(parse_words(
+                &text[idx..],
+                theme,
+                todo_prefix,
+                search_regex,
+                search_style,
+            ));
+            break;
+        };
+        let inner_end = inner_start + rel_end;
+        let inner = &text[inner_start..inner_end];
+        if !is_valid_emphasis(inner) {
+            spans.extend(parse_words(
+                &text[idx..inner_start],
+                theme,
+                todo_prefix,
+                search_regex,
+                search_style,
+            ));
+            cursor = inner_start;
+            continue;
+        }
+
+        let styled_inner = patch_spans_style(
+            parse_inline_markdown(inner, theme, todo_prefix, search_regex, search_style),
+            style,
+        );
+        spans.extend(styled_inner);
+        cursor = inner_end + delim.len();
+    }
+
+    spans
+}
+
+fn patch_spans_style(spans: Vec<Span<'static>>, style: Style) -> Vec<Span<'static>> {
+    spans
+        .into_iter()
+        .map(|span| Span::styled(span.content.to_string(), span.style.patch(style)))
+        .collect()
+}
+
+fn next_emphasis_delimiter(text: &str, start: usize) -> Option<(usize, &'static str, Style)> {
+    const DELIMS: [(&str, Modifier); 7] = [
+        ("***", Modifier::BOLD.union(Modifier::ITALIC)),
+        ("___", Modifier::BOLD.union(Modifier::ITALIC)),
+        ("**", Modifier::BOLD),
+        ("__", Modifier::BOLD),
+        ("~~", Modifier::CROSSED_OUT),
+        ("*", Modifier::ITALIC),
+        ("_", Modifier::ITALIC),
+    ];
+
+    let mut best: Option<(usize, &'static str, Style)> = None;
+    for (delim, modifier) in DELIMS {
+        if let Some(rel) = text[start..].find(delim) {
+            let idx = start + rel;
+            let style = Style::default().add_modifier(modifier);
+            match best {
+                Some((best_idx, _, _)) if best_idx <= idx => {}
+                _ => best = Some((idx, delim, style)),
+            }
+        }
+    }
+    best
+}
+
+fn is_valid_emphasis(inner: &str) -> bool {
+    let trimmed = inner.trim();
+    !trimmed.is_empty() && trimmed == inner
+}
+
+fn split_blockquote_marker(line: &str) -> Option<(usize, &str)> {
+    let mut depth = 0usize;
+    let mut rest = line.trim_start();
+    while let Some(next) = rest.strip_prefix('>') {
+        depth += 1;
+        rest = next.strip_prefix(' ').unwrap_or(next);
+    }
+    (depth > 0).then_some((depth, rest))
+}
+
+fn is_thematic_break_line(line: &str) -> bool {
+    let stripped: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+    if stripped.len() < 3 {
+        return false;
+    }
+    let mut chars = stripped.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    matches!(first, '-' | '*' | '_') && chars.all(|ch| ch == first)
 }
 
 fn parse_words(
@@ -514,4 +670,72 @@ fn split_list_marker(text: &str) -> (&'static str, &str) {
     }
 
     ("", text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_markdown_spans;
+    use crate::config::Theme;
+    use ratatui::style::{Modifier, Style};
+
+    #[test]
+    fn parse_markdown_spans_supports_emphasis_variants() {
+        let spans = parse_markdown_spans(
+            "**bold** *italic* ~~gone~~",
+            &Theme::default(),
+            false,
+            None,
+            Style::default(),
+        );
+
+        assert!(spans.iter().any(|span| {
+            span.content.as_ref() == "bold" && span.style.add_modifier.contains(Modifier::BOLD)
+        }));
+        assert!(spans.iter().any(|span| {
+            span.content.as_ref() == "italic" && span.style.add_modifier.contains(Modifier::ITALIC)
+        }));
+        assert!(spans.iter().any(|span| {
+            span.content.as_ref() == "gone"
+                && span.style.add_modifier.contains(Modifier::CROSSED_OUT)
+        }));
+    }
+
+    #[test]
+    fn parse_markdown_spans_supports_bold_italic_combo() {
+        let spans = parse_markdown_spans(
+            "***focus***",
+            &Theme::default(),
+            false,
+            None,
+            Style::default(),
+        );
+
+        assert!(spans.iter().any(|span| {
+            span.content.as_ref() == "focus"
+                && span.style.add_modifier.contains(Modifier::BOLD)
+                && span.style.add_modifier.contains(Modifier::ITALIC)
+        }));
+    }
+
+    #[test]
+    fn parse_markdown_spans_renders_thematic_break_as_rule() {
+        let spans = parse_markdown_spans("---", &Theme::default(), false, None, Style::default());
+
+        assert_eq!(spans.len(), 1);
+        assert!(spans[0].content.as_ref().contains('─'));
+    }
+
+    #[test]
+    fn parse_markdown_spans_renders_blockquote_prefix() {
+        let spans = parse_markdown_spans(
+            "> quoted line",
+            &Theme::default(),
+            false,
+            None,
+            Style::default(),
+        );
+
+        assert_eq!(spans.first().map(|span| span.content.as_ref()), Some("▎ "));
+        assert!(spans.iter().any(|span| span.content.as_ref() == "quoted"));
+    }
 }

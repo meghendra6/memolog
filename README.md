@@ -118,6 +118,7 @@ Insert mode shortcuts:
 - `Ctrl+B` toggle inline image preview
 - `Tab`/`Shift+Tab` indent/outdent
 - Wide terminals show a live markdown preview beside the editor (unless Zen mode is on)
+- Rendered markdown now highlights bold / italic / strikethrough / thematic breaks / blockquotes more clearly
 
 Normal/Visual mode:
 
