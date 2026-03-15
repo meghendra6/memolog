@@ -1186,7 +1186,8 @@ impl Config {
     fn normalize_keybindings(&mut self) -> bool {
         let mut changed = false;
 
-        // Migration: old default save bindings were Ctrl+S/Ctrl+D (often unreliable under some IME setups).
+        // Migration: old save bindings used Ctrl+S/Ctrl+D, which can collide with
+        // terminal flow control / EOF behavior (and may also be unreliable under some IMEs).
         // Move to Shift+Enter by default.
         if self
             .keybindings
@@ -1282,6 +1283,25 @@ impl Config {
                     &goto_bindings,
                 );
         if removed_context_conflicts {
+            changed = true;
+        }
+
+        let timeline_open_bindings = self.keybindings.timeline.open.clone();
+        let tasks_open_bindings = self.keybindings.tasks.open.clone();
+        let removed_open_toggle_conflicts =
+            remove_bindings_in_set(
+                &mut self.keybindings.timeline.toggle_todo,
+                &timeline_open_bindings,
+            ) | remove_bindings_in_set(&mut self.keybindings.tasks.toggle, &tasks_open_bindings);
+        if removed_open_toggle_conflicts {
+            changed = true;
+        }
+        if self.keybindings.timeline.toggle_todo.is_empty() {
+            self.keybindings.timeline.toggle_todo = vec!["space".to_string()];
+            changed = true;
+        }
+        if self.keybindings.tasks.toggle.is_empty() {
+            self.keybindings.tasks.toggle = vec!["space".to_string()];
             changed = true;
         }
 
@@ -1442,6 +1462,11 @@ impl Config {
             },
             BindingSpec {
                 scope: BindingScope::Agenda,
+                action: "agenda.open",
+                keys: &kb.agenda.open,
+            },
+            BindingSpec {
+                scope: BindingScope::Agenda,
                 action: "agenda.toggle",
                 keys: &kb.agenda.toggle,
             },
@@ -1454,6 +1479,11 @@ impl Config {
                 scope: BindingScope::Agenda,
                 action: "agenda.toggle_unscheduled",
                 keys: &kb.agenda.toggle_unscheduled,
+            },
+            BindingSpec {
+                scope: BindingScope::Tasks,
+                action: "tasks.open",
+                keys: &kb.tasks.open,
             },
             BindingSpec {
                 scope: BindingScope::Tasks,
@@ -1708,6 +1738,7 @@ fn replace_keybinding(list: &mut Vec<String>, old: &str, new: &str) -> bool {
 mod tests {
     use super::{Config, Theme, ThemePreset, key_code_for_shortcuts, key_match};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::{fs, path::Path};
 
     #[test]
     fn presets_construct_without_panicking() {
@@ -1795,5 +1826,48 @@ mod tests {
                 .iter()
                 .any(|msg| msg.contains("global.goto_date") && msg.contains("timeline.edit"))
         );
+    }
+
+    #[test]
+    fn keybinding_conflicts_detect_tasks_open_toggle_overlap() {
+        let mut config = Config::default();
+        config.keybindings.tasks.open = vec!["enter".to_string()];
+        config.keybindings.tasks.toggle = vec!["enter".to_string(), "space".to_string()];
+
+        let conflicts = config.keybinding_conflicts();
+        assert!(
+            conflicts
+                .iter()
+                .any(|msg| msg.contains("tasks.open") && msg.contains("tasks.toggle"))
+        );
+    }
+
+    #[test]
+    fn default_config_has_no_keybinding_conflicts() {
+        let config = Config::default();
+        assert!(config.keybinding_conflicts().is_empty());
+    }
+
+    #[test]
+    fn normalize_keybindings_removes_legacy_enter_toggle_conflicts() {
+        let mut config = Config::default();
+        config.keybindings.timeline.toggle_todo = vec!["enter".to_string(), "space".to_string()];
+        config.keybindings.timeline.open = vec!["enter".to_string()];
+        config.keybindings.tasks.toggle = vec!["space".to_string(), "enter".to_string()];
+        config.keybindings.tasks.open = vec!["enter".to_string()];
+
+        assert!(config.normalize_keybindings());
+        assert_eq!(config.keybindings.timeline.toggle_todo, vec!["space"]);
+        assert_eq!(config.keybindings.tasks.toggle, vec!["space"]);
+        assert!(config.keybinding_conflicts().is_empty());
+    }
+
+    #[test]
+    fn repository_sample_config_uses_shift_enter_for_submit() {
+        let sample_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config.toml");
+        let content = fs::read_to_string(sample_path).expect("sample config should be readable");
+        let parsed: Config = toml::from_str(&content).expect("sample config should parse");
+
+        assert_eq!(parsed.keybindings.composer.submit, vec!["shift+enter"]);
     }
 }
