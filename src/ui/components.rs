@@ -328,7 +328,7 @@ fn parse_inline_markdown(
         }
 
         let inner_start = idx + delim.len();
-        let Some(rel_end) = text[inner_start..].find(delim) else {
+        let Some(inner_end) = find_unescaped_delimiter(text, inner_start, delim) else {
             spans.extend(parse_words(
                 &text[idx..],
                 theme,
@@ -338,7 +338,6 @@ fn parse_inline_markdown(
             ));
             break;
         };
-        let inner_end = inner_start + rel_end;
         let inner = &text[inner_start..inner_end];
         if !is_valid_emphasis(inner) {
             spans.extend(parse_words(
@@ -383,8 +382,7 @@ fn next_emphasis_delimiter(text: &str, start: usize) -> Option<(usize, &'static 
 
     let mut best: Option<(usize, &'static str, Style)> = None;
     for (delim, modifier) in DELIMS {
-        if let Some(rel) = text[start..].find(delim) {
-            let idx = start + rel;
+        if let Some(idx) = find_unescaped_delimiter(text, start, delim) {
             let style = Style::default().add_modifier(modifier);
             match best {
                 Some((best_idx, _, _)) if best_idx <= idx => {}
@@ -393,6 +391,30 @@ fn next_emphasis_delimiter(text: &str, start: usize) -> Option<(usize, &'static 
         }
     }
     best
+}
+
+fn find_unescaped_delimiter(text: &str, start: usize, delim: &'static str) -> Option<usize> {
+    let mut offset = start;
+    while offset < text.len() {
+        let rel = text[offset..].find(delim)?;
+        let idx = offset + rel;
+        if !is_escaped_markdown_delimiter(text, idx) {
+            return Some(idx);
+        }
+        offset = idx + delim.len();
+    }
+    None
+}
+
+fn is_escaped_markdown_delimiter(text: &str, idx: usize) -> bool {
+    let bytes = text.as_bytes();
+    let mut slash_count = 0usize;
+    let mut cursor = idx;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        slash_count += 1;
+        cursor -= 1;
+    }
+    slash_count % 2 == 1
 }
 
 fn is_valid_emphasis(inner: &str) -> bool {
@@ -430,6 +452,7 @@ fn parse_words(
     search_style: Style,
 ) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
+    let text = unescape_markdown_text(text);
 
     // URL parsing
     static URL_REGEX: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -437,9 +460,10 @@ fn parse_words(
         regex::Regex::new(r"https?://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]").unwrap()
     });
 
-    for (i, word) in text.split_whitespace().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw(" ".to_string()));
+    for word in split_preserving_whitespace(&text) {
+        if word.chars().all(char::is_whitespace) {
+            spans.push(Span::raw(word.to_string()));
+            continue;
         }
 
         if word.starts_with('⟦') && word.ends_with('⟧') {
@@ -521,6 +545,74 @@ fn parse_words(
     }
 
     spans
+}
+
+fn split_preserving_whitespace(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut in_whitespace: Option<bool> = None;
+
+    for (idx, ch) in text.char_indices() {
+        let is_whitespace = ch.is_whitespace();
+        match in_whitespace {
+            None => in_whitespace = Some(is_whitespace),
+            Some(current) if current != is_whitespace => {
+                parts.push(&text[start..idx]);
+                start = idx;
+                in_whitespace = Some(is_whitespace);
+            }
+            _ => {}
+        }
+    }
+
+    if start < text.len() {
+        parts.push(&text[start..]);
+    }
+
+    parts
+}
+
+fn unescape_markdown_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\'
+            && let Some(&next) = chars.peek()
+            && is_markdown_escapable(next)
+        {
+            out.push(next);
+            chars.next();
+            continue;
+        }
+        out.push(ch);
+    }
+
+    out
+}
+
+fn is_markdown_escapable(ch: char) -> bool {
+    matches!(
+        ch,
+        '\\' | '`'
+            | '*'
+            | '_'
+            | '{'
+            | '}'
+            | '['
+            | ']'
+            | '<'
+            | '>'
+            | '('
+            | ')'
+            | '#'
+            | '+'
+            | '-'
+            | '.'
+            | '!'
+            | '~'
+            | '|'
+    )
 }
 
 fn highlight_matches(
@@ -678,6 +770,10 @@ mod tests {
     use crate::config::Theme;
     use ratatui::style::{Modifier, Style};
 
+    fn span_text(spans: &[ratatui::text::Span<'_>]) -> String {
+        spans.iter().map(|span| span.content.as_ref()).collect()
+    }
+
     #[test]
     fn parse_markdown_spans_supports_emphasis_variants() {
         let spans = parse_markdown_spans(
@@ -737,5 +833,56 @@ mod tests {
 
         assert_eq!(spans.first().map(|span| span.content.as_ref()), Some("▎ "));
         assert!(spans.iter().any(|span| span.content.as_ref() == "quoted"));
+    }
+
+    #[test]
+    fn parse_markdown_spans_renders_escaped_underscores_literally() {
+        let spans = parse_markdown_spans(
+            "\\_text\\_",
+            &Theme::default(),
+            false,
+            None,
+            Style::default(),
+        );
+
+        assert_eq!(span_text(&spans), "_text_");
+        assert!(
+            spans
+                .iter()
+                .all(|span| !span.style.add_modifier.contains(Modifier::ITALIC))
+        );
+    }
+
+    #[test]
+    fn parse_markdown_spans_keeps_escaped_underscores_literal_alongside_emphasis() {
+        let spans = parse_markdown_spans(
+            "\\_literal\\_ _italic_",
+            &Theme::default(),
+            false,
+            None,
+            Style::default(),
+        );
+
+        assert_eq!(span_text(&spans), "_literal_ italic");
+        assert!(spans.iter().any(|span| {
+            span.content.as_ref() == "_literal_"
+                && !span.style.add_modifier.contains(Modifier::ITALIC)
+        }));
+        assert!(spans.iter().any(|span| {
+            span.content.as_ref() == "italic" && span.style.add_modifier.contains(Modifier::ITALIC)
+        }));
+    }
+
+    #[test]
+    fn parse_markdown_spans_preserves_spaces_around_emphasis() {
+        let spans = parse_markdown_spans(
+            "prefix _italic_ suffix",
+            &Theme::default(),
+            false,
+            None,
+            Style::default(),
+        );
+
+        assert_eq!(span_text(&spans), "prefix italic suffix");
     }
 }

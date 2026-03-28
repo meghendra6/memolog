@@ -175,6 +175,15 @@ pub struct EditorSnapshot {
     pub cursor: (usize, usize),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockInsertState {
+    pub start_row: usize,
+    pub end_row: usize,
+    pub anchor_row: usize,
+    pub start_col: usize,
+    pub inserted_text: String,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CommandPaletteAction {
     GoToDate,
@@ -239,6 +248,7 @@ pub struct App<'a> {
     pub composer_image_preview_enabled: bool,
     pub editor_mode: EditorMode,
     pub visual_anchor: Option<(usize, usize)>,
+    pub block_insert: Option<BlockInsertState>,
     pub pending_command: Option<PendingEditCommand>,
     pub pending_count: usize,
     pub yank_buffer: String,
@@ -498,6 +508,7 @@ impl<'a> App<'a> {
             composer_image_preview_enabled: config.editor.image_preview_enabled,
             editor_mode: EditorMode::Normal,
             visual_anchor: None,
+            block_insert: None,
             pending_command: None,
             pending_count: 0,
             yank_buffer: String::new(),
@@ -2325,6 +2336,7 @@ impl<'a> App<'a> {
     pub fn reset_editor_state(&mut self) {
         self.editor_mode = EditorMode::Normal;
         self.visual_anchor = None;
+        self.block_insert = None;
         self.pending_command = None;
         self.pending_count = 0;
         self.insert_snapshot = None;

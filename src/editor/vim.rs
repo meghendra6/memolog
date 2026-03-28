@@ -1,5 +1,5 @@
 use crate::{
-    app::{App, PendingEditCommand},
+    app::{App, BlockInsertState, PendingEditCommand},
     config::{key_code_for_shortcuts, key_match},
     editor::markdown,
     input::editing,
@@ -10,6 +10,11 @@ use tui_textarea::CursorMove;
 
 pub(crate) fn handle_editor_insert(app: &mut App, key: event::KeyEvent) {
     let key_code = key_code_for_shortcuts(&key);
+    if app.block_insert.is_some() {
+        handle_block_insert_input(app, key);
+        return;
+    }
+
     if key_code == KeyCode::Char('u') && key.modifiers.contains(KeyModifiers::CONTROL) {
         if delete_to_line_start(app) {
             app.set_yank_buffer(app.textarea.yank_text());
@@ -403,6 +408,15 @@ pub(crate) fn handle_editor_visual(app: &mut App, key: event::KeyEvent, kind: Vi
             let count = take_count(app);
             move_doc_end_with_count(app, count);
         }
+        KeyCode::Tab => {
+            indent_visual_selection(app, kind, true);
+        }
+        KeyCode::BackTab => {
+            indent_visual_selection(app, kind, false);
+        }
+        KeyCode::Char('I') if kind == VisualKind::Block => {
+            enter_block_insert_mode(app);
+        }
         KeyCode::Char('y') => {
             if let Some(obj) = resolve_visual_text_object(app, kind) {
                 apply_operator(app, Operator::Yank, obj);
@@ -426,6 +440,7 @@ pub(crate) fn handle_editor_visual(app: &mut App, key: event::KeyEvent, kind: Vi
 
 fn enter_insert_mode(app: &mut App) {
     app.begin_insert_group();
+    app.block_insert = None;
     set_insert_mode(app);
 }
 
@@ -434,9 +449,13 @@ fn set_insert_mode(app: &mut App) {
     app.pending_command = None;
     app.pending_count = 0;
     app.visual_anchor = None;
+    app.block_insert = None;
 }
 
 pub(crate) fn exit_insert_mode(app: &mut App) {
+    if let Some(state) = app.block_insert.take() {
+        apply_block_insert(app, state);
+    }
     app.commit_insert_group();
     app.editor_mode = EditorMode::Normal;
     app.pending_command = None;
@@ -456,7 +475,7 @@ fn enter_visual_mode(app: &mut App, kind: VisualKind) {
         VisualKind::Block => "BLOCK",
     };
     app.show_visual_hint(format!(
-        "VISUAL ({kind_label}): hjkl/w b e extend · s change · y yank · d delete · Esc normal · ? help"
+        "VISUAL ({kind_label}): hjkl/w b e extend · Tab indent · Shift+Tab outdent · s change · y yank · d delete · Esc normal · ? help"
     ));
 }
 
@@ -466,6 +485,202 @@ pub(crate) fn exit_visual_mode(app: &mut App) {
     app.pending_command = None;
     app.pending_count = 0;
     clamp_cursor_for_normal(app);
+}
+
+fn enter_block_insert_mode(app: &mut App) {
+    let Some(mut state) = resolve_block_insert_state(app) else {
+        exit_visual_mode(app);
+        return;
+    };
+
+    app.begin_insert_group();
+    set_insert_mode(app);
+    ensure_line_has_column(app, state.anchor_row, state.start_col);
+    app.textarea.move_cursor(CursorMove::Jump(
+        state.anchor_row as u16,
+        state.start_col as u16,
+    ));
+    state.inserted_text.clear();
+    app.block_insert = Some(state);
+}
+
+fn resolve_block_insert_state(app: &App) -> Option<BlockInsertState> {
+    let anchor = app.visual_anchor?;
+    let cursor = app.textarea.cursor();
+    Some(BlockInsertState {
+        start_row: anchor.0.min(cursor.0),
+        end_row: anchor.0.max(cursor.0),
+        anchor_row: anchor.0.min(cursor.0),
+        start_col: anchor.1.min(cursor.1),
+        inserted_text: String::new(),
+    })
+}
+
+fn handle_block_insert_input(app: &mut App, key: event::KeyEvent) {
+    match key.code {
+        KeyCode::Backspace => {
+            let Some(state) = app.block_insert.as_mut() else {
+                return;
+            };
+            if state.inserted_text.is_empty() {
+                return;
+            }
+            if app.textarea.input(key) {
+                state.inserted_text.pop();
+                app.mark_insert_modified();
+                app.composer_dirty = true;
+            }
+        }
+        KeyCode::Char(ch)
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            if app.textarea.input(key) {
+                if let Some(state) = app.block_insert.as_mut() {
+                    state.inserted_text.push(ch);
+                }
+                app.mark_insert_modified();
+                app.composer_dirty = true;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn apply_block_insert(app: &mut App, state: BlockInsertState) {
+    if state.inserted_text.is_empty() {
+        return;
+    }
+
+    for row in state.start_row..=state.end_row {
+        if row == state.anchor_row {
+            continue;
+        }
+        ensure_line_has_column(app, row, state.start_col);
+        app.textarea
+            .move_cursor(CursorMove::Jump(row as u16, state.start_col as u16));
+        app.textarea.insert_str(&state.inserted_text);
+    }
+
+    let end_col = state
+        .start_col
+        .saturating_add(state.inserted_text.chars().count());
+    app.textarea
+        .move_cursor(CursorMove::Jump(state.anchor_row as u16, end_col as u16));
+    app.mark_insert_modified();
+    app.composer_dirty = true;
+}
+
+fn ensure_line_has_column(app: &mut App, row: usize, col: usize) {
+    let line_len = line_len(app.textarea.lines(), row);
+    if line_len >= col {
+        return;
+    }
+
+    app.textarea
+        .move_cursor(CursorMove::Jump(row as u16, line_len as u16));
+    app.textarea.insert_str(" ".repeat(col - line_len));
+}
+
+fn indent_visual_selection(app: &mut App, kind: VisualKind, indent: bool) {
+    let Some((start_row, end_row)) = resolve_visual_row_range(app, kind) else {
+        return;
+    };
+
+    let snapshot = app.editor_snapshot();
+    let original_cursor = app.textarea.cursor();
+    let original_cursor_col = original_cursor.1;
+    let mut adjusted_cursor_col = original_cursor_col;
+    let tab_width = usize::from(app.textarea.tab_length()).max(1);
+    let mut modified = false;
+
+    for row in start_row..=end_row {
+        let before_line = app.textarea.lines().get(row).cloned().unwrap_or_default();
+        let before_len = before_line.chars().count();
+
+        let row_modified = if indent {
+            indent_selected_line(app, row, tab_width)
+        } else {
+            outdent_selected_line(app, row, tab_width)
+        };
+
+        if row == original_cursor.0 {
+            let after_len = line_len(app.textarea.lines(), row);
+            let removed = before_len.saturating_sub(after_len);
+            let added = after_len.saturating_sub(before_len);
+            adjusted_cursor_col = if removed > 0 {
+                original_cursor_col.saturating_sub(removed)
+            } else {
+                original_cursor_col.saturating_add(added).min(after_len)
+            };
+        }
+
+        modified |= row_modified;
+    }
+
+    if !modified {
+        app.textarea.move_cursor(CursorMove::Jump(
+            original_cursor.0 as u16,
+            original_cursor_col as u16,
+        ));
+        return;
+    }
+
+    app.editor_undo.push(snapshot);
+    app.editor_redo.clear();
+    app.textarea.move_cursor(CursorMove::Jump(
+        original_cursor.0 as u16,
+        adjusted_cursor_col as u16,
+    ));
+    app.composer_dirty = true;
+    exit_visual_mode(app);
+}
+
+fn resolve_visual_row_range(app: &App, kind: VisualKind) -> Option<(usize, usize)> {
+    let anchor = app.visual_anchor?;
+    let cursor = app.textarea.cursor();
+    match kind {
+        VisualKind::Char | VisualKind::Line | VisualKind::Block => {
+            Some((anchor.0.min(cursor.0), anchor.0.max(cursor.0)))
+        }
+    }
+}
+
+fn indent_selected_line(app: &mut App, row: usize, tab_width: usize) -> bool {
+    app.textarea.move_cursor(CursorMove::Jump(row as u16, 0));
+    if markdown::indent_or_outdent_list_line(&mut app.textarea, true) {
+        return true;
+    }
+
+    app.textarea.insert_str(" ".repeat(tab_width));
+    true
+}
+
+fn outdent_selected_line(app: &mut App, row: usize, tab_width: usize) -> bool {
+    app.textarea.move_cursor(CursorMove::Jump(row as u16, 0));
+    if markdown::indent_or_outdent_list_line(&mut app.textarea, false) {
+        return true;
+    }
+
+    let remove = generic_outdent_chars(app.textarea.lines(), row, tab_width);
+    if remove == 0 {
+        return false;
+    }
+
+    for _ in 0..remove {
+        let _ = app.textarea.delete_next_char();
+    }
+    true
+}
+
+fn generic_outdent_chars(lines: &[String], row: usize, tab_width: usize) -> usize {
+    let line = lines.get(row).map(|line| line.as_str()).unwrap_or("");
+    if line.starts_with('\t') {
+        return 1;
+    }
+
+    let leading_spaces = line.chars().take_while(|ch| *ch == ' ').count();
+    leading_spaces.min(tab_width)
 }
 
 fn handle_pending_command(app: &mut App, key: event::KeyEvent) -> bool {
@@ -1809,6 +2024,58 @@ mod tests {
         assert_eq!(app.textarea.cursor(), (0, 0));
         send_char(&mut app, 'E');
         assert_eq!(app.textarea.cursor(), (0, 6));
+    }
+
+    #[test]
+    fn visual_block_delete_removes_columns_from_each_selected_line() {
+        let mut app = make_editing_app(&["abc", "ade", "afg"]);
+        send_key(&mut app, KeyCode::Char('v'), KeyModifiers::CONTROL);
+        send_char(&mut app, 'j');
+        send_char(&mut app, 'j');
+        send_char(&mut app, 'l');
+        send_char(&mut app, 'd');
+
+        assert_eq!(app.textarea.lines(), ["c", "e", "g"]);
+        assert_eq!(app.editor_mode, EditorMode::Normal);
+    }
+
+    #[test]
+    fn visual_block_shift_i_inserts_text_on_each_selected_line() {
+        let mut app = make_editing_app(&["alpha", "beta", "gamma"]);
+        send_key(&mut app, KeyCode::Char('v'), KeyModifiers::CONTROL);
+        send_char(&mut app, 'j');
+        send_char(&mut app, 'j');
+        send_key(&mut app, KeyCode::Char('I'), KeyModifiers::SHIFT);
+        send_key(&mut app, KeyCode::Char('>'), KeyModifiers::SHIFT);
+        send_char(&mut app, ' ');
+        send_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+        assert_eq!(app.textarea.lines(), ["> alpha", "> beta", "> gamma"]);
+        assert_eq!(app.editor_mode, EditorMode::Normal);
+    }
+
+    #[test]
+    fn visual_selection_tab_indents_each_selected_line() {
+        let mut app = make_editing_app(&["alpha", "beta", "gamma"]);
+        send_char(&mut app, 'v');
+        send_char(&mut app, 'j');
+        send_char(&mut app, 'j');
+        send_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+
+        assert_eq!(app.textarea.lines(), ["    alpha", "    beta", "    gamma"]);
+        assert_eq!(app.editor_mode, EditorMode::Normal);
+    }
+
+    #[test]
+    fn visual_selection_backtab_outdents_each_selected_line() {
+        let mut app = make_editing_app(&["    alpha", "    beta", "    gamma"]);
+        send_char(&mut app, 'v');
+        send_char(&mut app, 'j');
+        send_char(&mut app, 'j');
+        send_key(&mut app, KeyCode::BackTab, KeyModifiers::NONE);
+
+        assert_eq!(app.textarea.lines(), ["alpha", "beta", "gamma"]);
+        assert_eq!(app.editor_mode, EditorMode::Normal);
     }
 
     // ============ Tests for Shift+shortcut commands (D/C/S/X/P) ============
