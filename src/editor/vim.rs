@@ -588,9 +588,10 @@ fn indent_visual_selection(app: &mut App, kind: VisualKind, indent: bool) {
     };
 
     let snapshot = app.editor_snapshot();
+    let original_anchor = app.visual_anchor.unwrap_or(app.textarea.cursor());
     let original_cursor = app.textarea.cursor();
-    let original_cursor_col = original_cursor.1;
-    let mut adjusted_cursor_col = original_cursor_col;
+    let mut adjusted_anchor = original_anchor;
+    let mut adjusted_cursor = original_cursor;
     let tab_width = usize::from(app.textarea.tab_length()).max(1);
     let mut modified = false;
 
@@ -604,15 +605,14 @@ fn indent_visual_selection(app: &mut App, kind: VisualKind, indent: bool) {
             outdent_selected_line(app, row, tab_width)
         };
 
+        let after_len = line_len(app.textarea.lines(), row);
+        if row == original_anchor.0 {
+            adjusted_anchor.1 =
+                adjusted_visual_indent_col(original_anchor.1, before_len, after_len);
+        }
         if row == original_cursor.0 {
-            let after_len = line_len(app.textarea.lines(), row);
-            let removed = before_len.saturating_sub(after_len);
-            let added = after_len.saturating_sub(before_len);
-            adjusted_cursor_col = if removed > 0 {
-                original_cursor_col.saturating_sub(removed)
-            } else {
-                original_cursor_col.saturating_add(added).min(after_len)
-            };
+            adjusted_cursor.1 =
+                adjusted_visual_indent_col(original_cursor.1, before_len, after_len);
         }
 
         modified |= row_modified;
@@ -621,19 +621,29 @@ fn indent_visual_selection(app: &mut App, kind: VisualKind, indent: bool) {
     if !modified {
         app.textarea.move_cursor(CursorMove::Jump(
             original_cursor.0 as u16,
-            original_cursor_col as u16,
+            original_cursor.1 as u16,
         ));
         return;
     }
 
     app.editor_undo.push(snapshot);
     app.editor_redo.clear();
+    app.visual_anchor = Some(adjusted_anchor);
     app.textarea.move_cursor(CursorMove::Jump(
-        original_cursor.0 as u16,
-        adjusted_cursor_col as u16,
+        adjusted_cursor.0 as u16,
+        adjusted_cursor.1 as u16,
     ));
     app.composer_dirty = true;
-    exit_visual_mode(app);
+}
+
+fn adjusted_visual_indent_col(original_col: usize, before_len: usize, after_len: usize) -> usize {
+    let removed = before_len.saturating_sub(after_len);
+    let added = after_len.saturating_sub(before_len);
+    if removed > 0 {
+        original_col.saturating_sub(removed)
+    } else {
+        original_col.saturating_add(added).min(after_len)
+    }
 }
 
 fn resolve_visual_row_range(app: &App, kind: VisualKind) -> Option<(usize, usize)> {
@@ -2063,7 +2073,9 @@ mod tests {
         send_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
 
         assert_eq!(app.textarea.lines(), ["    alpha", "    beta", "    gamma"]);
-        assert_eq!(app.editor_mode, EditorMode::Normal);
+        assert_eq!(app.editor_mode, EditorMode::Visual(VisualKind::Char));
+        assert_eq!(app.visual_anchor, Some((0, 4)));
+        assert_eq!(app.textarea.cursor(), (2, 4));
     }
 
     #[test]
@@ -2075,7 +2087,42 @@ mod tests {
         send_key(&mut app, KeyCode::BackTab, KeyModifiers::NONE);
 
         assert_eq!(app.textarea.lines(), ["alpha", "beta", "gamma"]);
-        assert_eq!(app.editor_mode, EditorMode::Normal);
+        assert_eq!(app.editor_mode, EditorMode::Visual(VisualKind::Char));
+        assert_eq!(app.visual_anchor, Some((0, 0)));
+        assert_eq!(app.textarea.cursor(), (2, 0));
+    }
+
+    #[test]
+    fn visual_selection_tab_can_repeat_without_reselecting() {
+        let mut app = make_editing_app(&["alpha", "beta", "gamma"]);
+        send_char(&mut app, 'v');
+        send_char(&mut app, 'j');
+        send_char(&mut app, 'j');
+        send_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        send_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+
+        assert_eq!(
+            app.textarea.lines(),
+            ["        alpha", "        beta", "        gamma"]
+        );
+        assert_eq!(app.editor_mode, EditorMode::Visual(VisualKind::Char));
+        assert_eq!(app.visual_anchor, Some((0, 8)));
+        assert_eq!(app.textarea.cursor(), (2, 8));
+    }
+
+    #[test]
+    fn visual_selection_backtab_can_repeat_without_reselecting() {
+        let mut app = make_editing_app(&["        alpha", "        beta", "        gamma"]);
+        send_char(&mut app, 'v');
+        send_char(&mut app, 'j');
+        send_char(&mut app, 'j');
+        send_key(&mut app, KeyCode::BackTab, KeyModifiers::NONE);
+        send_key(&mut app, KeyCode::BackTab, KeyModifiers::NONE);
+
+        assert_eq!(app.textarea.lines(), ["alpha", "beta", "gamma"]);
+        assert_eq!(app.editor_mode, EditorMode::Visual(VisualKind::Char));
+        assert_eq!(app.visual_anchor, Some((0, 0)));
+        assert_eq!(app.textarea.cursor(), (2, 0));
     }
 
     // ============ Tests for Shift+shortcut commands (D/C/S/X/P) ============
