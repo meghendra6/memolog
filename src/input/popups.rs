@@ -1143,6 +1143,7 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
     }
 }
 
+#[allow(dead_code)]
 fn quick_capture_inbox_content(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
