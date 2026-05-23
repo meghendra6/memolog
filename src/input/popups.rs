@@ -1121,12 +1121,11 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
             app.quick_capture_input.clear();
         }
         KeyCode::Enter => {
-            if !app.quick_capture_input.trim().is_empty() {
-                let content = app.quick_capture_input.trim().to_string();
+            if let Some(content) = quick_capture_inbox_content(&app.quick_capture_input) {
                 if let Err(e) = crate::storage::append_entry(&app.config.data.log_path, &content) {
                     app.toast(format!("Failed to save: {}", e));
                 } else {
-                    app.toast("⚡ Quick note saved!");
+                    app.toast("Quick note saved to #inbox.");
                     app.update_logs();
                 }
             }
@@ -1143,7 +1142,6 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
     }
 }
 
-#[allow(dead_code)]
 fn quick_capture_inbox_content(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -1159,10 +1157,28 @@ fn quick_capture_inbox_content(input: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_goto_date_popup, handle_popup_events, quick_capture_inbox_content};
+    use super::{
+        handle_goto_date_popup, handle_popup_events, handle_quick_capture_popup,
+        quick_capture_inbox_content,
+    };
     use crate::app::App;
     use chrono::Local;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static QUICK_CAPTURE_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_quick_capture_log_dir() -> std::path::PathBuf {
+        let unique = QUICK_CAPTURE_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "memolog-quick-capture-test-{}-{}",
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&path).expect("create temp quick capture log dir");
+        path
+    }
 
     fn make_app_with_input(input: &str) -> App<'static> {
         let mut app = App::new();
@@ -1190,6 +1206,23 @@ mod tests {
     #[test]
     fn quick_capture_inbox_content_trims_empty_input() {
         assert_eq!(quick_capture_inbox_content("   \n\t  "), None);
+    }
+
+    #[test]
+    fn quick_capture_enter_saves_note_to_inbox() {
+        let log_dir = temp_quick_capture_log_dir();
+        let mut app = App::new();
+        app.config.data.log_path = log_dir.clone();
+        app.show_quick_capture_popup = true;
+        app.quick_capture_input = "call dentist".to_string();
+
+        handle_quick_capture_popup(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        let today_file = log_dir.join(format!("{}.md", Local::now().format("%Y-%m-%d")));
+        let contents = fs::read_to_string(today_file).expect("read quick capture log");
+        assert!(contents.contains("call dentist #inbox"));
+        assert!(!app.show_quick_capture_popup);
+        assert!(app.quick_capture_input.is_empty());
     }
 
     #[test]
