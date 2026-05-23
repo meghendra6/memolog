@@ -1143,9 +1143,22 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn quick_capture_inbox_content(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.split_whitespace().any(|token| token == "#inbox") {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("{trimmed} #inbox"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{handle_goto_date_popup, handle_popup_events};
+    use super::{handle_goto_date_popup, handle_popup_events, quick_capture_inbox_content};
     use crate::app::App;
     use chrono::Local;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -1155,6 +1168,27 @@ mod tests {
         app.show_goto_date_popup = true;
         app.goto_date_input = input.to_string();
         app
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_appends_marker() {
+        assert_eq!(
+            quick_capture_inbox_content("call dentist"),
+            Some("call dentist #inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_does_not_duplicate_marker() {
+        assert_eq!(
+            quick_capture_inbox_content("call dentist #inbox"),
+            Some("call dentist #inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_trims_empty_input() {
+        assert_eq!(quick_capture_inbox_content("   \n\t  "), None);
     }
 
     #[test]
