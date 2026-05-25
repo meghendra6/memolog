@@ -1162,6 +1162,10 @@ fn has_inbox_tag(input: &str) -> bool {
             continue;
         }
 
+        if i > 0 && is_quick_capture_tag_byte(bytes[i - 1]) {
+            continue;
+        }
+
         let tag_start = i + 1;
         let tag_end = tag_start + b"inbox".len();
         if tag_end > bytes.len() {
@@ -1253,6 +1257,22 @@ mod tests {
         assert_eq!(
             quick_capture_inbox_content("call #inbox-later"),
             Some("call #inbox-later #inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_does_not_treat_embedded_tag_as_marker() {
+        assert_eq!(
+            quick_capture_inbox_content("call abc#inbox"),
+            Some("call abc#inbox #inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_does_not_treat_underscore_longer_tag_as_marker() {
+        assert_eq!(
+            quick_capture_inbox_content("call #inbox_2"),
+            Some("call #inbox_2 #inbox".to_string())
         );
     }
 
