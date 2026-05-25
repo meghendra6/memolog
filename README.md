@@ -188,6 +188,8 @@ When it completes, MemoLog appends a tomato (🍅) to the task line.
 - Press `:` and run `Open inbox` to review captured notes.
 - Edit an inbox entry with `e`, organize it with existing composer shortcuts, then remove `#inbox` when it is processed.
 
+### Search syntax
+
 - Smart query syntax:
   - `foo bar` (AND)
   - `"exact phrase"` (phrase match)
