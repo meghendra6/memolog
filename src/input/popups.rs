@@ -1148,11 +1148,40 @@ fn quick_capture_inbox_content(input: &str) -> Option<String> {
         return None;
     }
 
-    if trimmed.split_whitespace().any(|token| token == "#inbox") {
+    if has_inbox_tag(trimmed) {
         Some(trimmed.to_string())
     } else {
         Some(format!("{trimmed} #inbox"))
     }
+}
+
+fn has_inbox_tag(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i] != b'#' {
+            continue;
+        }
+
+        let tag_start = i + 1;
+        let tag_end = tag_start + b"inbox".len();
+        if tag_end > bytes.len() {
+            continue;
+        }
+
+        if bytes[tag_start..tag_end].eq_ignore_ascii_case(b"inbox")
+            && bytes
+                .get(tag_end)
+                .is_none_or(|next| !is_quick_capture_tag_byte(*next))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn is_quick_capture_tag_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
 }
 
 #[cfg(test)]
@@ -1200,6 +1229,30 @@ mod tests {
         assert_eq!(
             quick_capture_inbox_content("call dentist #inbox"),
             Some("call dentist #inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_detects_marker_with_punctuation() {
+        assert_eq!(
+            quick_capture_inbox_content("triage (#inbox)"),
+            Some("triage (#inbox)".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_detects_marker_case_insensitively() {
+        assert_eq!(
+            quick_capture_inbox_content("call #Inbox"),
+            Some("call #Inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_does_not_treat_longer_tag_as_marker() {
+        assert_eq!(
+            quick_capture_inbox_content("call #inbox-later"),
+            Some("call #inbox-later #inbox".to_string())
         );
     }
 
