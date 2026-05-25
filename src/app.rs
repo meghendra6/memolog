@@ -189,6 +189,7 @@ enum CommandPaletteAction {
     GoToDate,
     Search,
     QuickCapture,
+    OpenInbox,
     SavedSearches,
     SavedViews,
     SaveCurrentView,
@@ -1008,6 +1009,18 @@ impl<'a> App<'a> {
                 target: CommandPaletteTarget::Action(CommandPaletteAction::QuickCapture),
             },
             CommandPaletteItem {
+                id: "action:inbox".to_string(),
+                label: "Open inbox".to_string(),
+                hint: "#inbox".to_string(),
+                aliases: vec![
+                    "inbox".to_string(),
+                    "capture".to_string(),
+                    "review".to_string(),
+                ],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::OpenInbox),
+            },
+            CommandPaletteItem {
                 id: "action:saved-searches".to_string(),
                 label: "Open saved searches".to_string(),
                 hint: primary_shortcut(&self.config.keybindings.search.open_saved),
@@ -1250,6 +1263,11 @@ impl<'a> App<'a> {
             CommandPaletteAction::QuickCapture => {
                 self.show_quick_capture_popup = true;
                 self.quick_capture_input.clear();
+            }
+            CommandPaletteAction::OpenInbox => {
+                self.run_search_query("#inbox");
+                self.set_navigate_focus(NavigateFocus::Timeline);
+                self.toast("Opened #inbox.");
             }
             CommandPaletteAction::SavedSearches => self.open_saved_search_popup(),
             CommandPaletteAction::SavedViews => self.open_saved_view_popup(),
@@ -3112,6 +3130,51 @@ mod tests {
             labels
                 .iter()
                 .any(|label| label.contains("Load view: work focus"))
+        );
+    }
+
+    #[test]
+    fn command_palette_surfaces_open_inbox() {
+        let mut app = App::new();
+        app.open_command_palette();
+        app.command_palette_input = "inbox".to_string();
+        app.sync_command_palette_selection();
+
+        let labels: Vec<String> = app
+            .filtered_command_palette_items()
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+
+        assert!(labels.iter().any(|label| label == "Open inbox"));
+    }
+
+    #[test]
+    fn command_palette_open_inbox_runs_inbox_search_and_focuses_timeline() {
+        let log_dir = temp_log_dir();
+        crate::storage::append_entry_to_date(
+            &log_dir,
+            Local::now().date_naive(),
+            "call dentist #inbox",
+        )
+        .expect("seed inbox entry");
+
+        let mut app = App::new();
+        app.config.data.log_path = log_dir;
+        app.navigate_focus = NavigateFocus::Tasks;
+        app.open_command_palette();
+        app.command_palette_input = "inbox".to_string();
+        app.sync_command_palette_selection();
+
+        assert!(app.execute_selected_command_palette_item());
+        assert_eq!(app.last_search_query.as_deref(), Some("#inbox"));
+        assert_eq!(app.search_highlight_query.as_deref(), Some("#inbox"));
+        assert!(app.is_search_result);
+        assert_eq!(app.navigate_focus, NavigateFocus::Timeline);
+        assert!(
+            app.logs
+                .iter()
+                .any(|entry| entry.content.contains("#inbox"))
         );
     }
 

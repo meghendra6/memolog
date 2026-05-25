@@ -2243,7 +2243,7 @@ pub fn render_quick_capture_popup(f: &mut Frame, app: &App) {
     f.render_widget(input, inner[0]);
 
     // Help text
-    let help = Paragraph::new("Enter: Save  |  Esc: Cancel  |  Type your note...")
+    let help = Paragraph::new("Enter: Save to #inbox  |  Esc: Cancel")
         .style(Style::default().fg(tokens.ui_muted));
     f.render_widget(help, inner[1]);
 

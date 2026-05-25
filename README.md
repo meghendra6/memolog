@@ -44,6 +44,7 @@ memolog
 
 Use `Ctrl+H/J/K/L` to move focus between Timeline, Agenda, and Tasks.
 Press `:` to open the command palette for quick actions and saved views.
+Use `Ctrl+N` for Quick Capture. Quick Capture saves short notes with `#inbox` so you can review them later from the command palette with `Open inbox`.
 Press `?` anytime to see the full help overlay.
 The status bar always shows mode, focus, date, context, and active search query.
 
@@ -179,6 +180,16 @@ When it completes, MemoLog appends a tomato (🍅) to the task line.
 - `/` opens search
 - `t` shows tag list (tags are any `#word` in your logs)
 - **Special tag: `#pinned`** - Entries with `#pinned` in today's log appear in a fixed section at the top of the timeline (always visible while scrolling). Use `Shift+P` to jump to pinned entries in the timeline.
+
+### Capture inbox
+
+- `Ctrl+N` opens Quick Capture for short notes.
+- Quick Capture saves non-empty notes with `#inbox` unless the note already includes it.
+- Press `:` and run `Open inbox` to review captured notes.
+- Edit an inbox entry with `e`, organize it with existing composer shortcuts, then remove `#inbox` when it is processed.
+
+### Search syntax
+
 - Smart query syntax:
   - `foo bar` (AND)
   - `"exact phrase"` (phrase match)
@@ -359,7 +370,7 @@ Global
 - `Ctrl+H/J/K/L` focus move
 - `a` agenda focus
 - `i` compose
-- `Ctrl+N` quick capture
+- `Ctrl+N` quick capture to `#inbox`
 - `/` search
 - `Ctrl+F` go to date (`YYYY-MM-DD`, `today`, `+3d`, `next mon`)
   - In the popup: `←/→` day, `↑/↓` week, `PgUp/PgDn` month, `Home` today, `Ctrl+T` today

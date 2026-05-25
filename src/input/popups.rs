@@ -1121,12 +1121,11 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
             app.quick_capture_input.clear();
         }
         KeyCode::Enter => {
-            if !app.quick_capture_input.trim().is_empty() {
-                let content = app.quick_capture_input.trim().to_string();
+            if let Some(content) = quick_capture_inbox_content(&app.quick_capture_input) {
                 if let Err(e) = crate::storage::append_entry(&app.config.data.log_path, &content) {
                     app.toast(format!("Failed to save: {}", e));
                 } else {
-                    app.toast("⚡ Quick note saved!");
+                    app.toast("Quick note saved to #inbox.");
                     app.update_logs();
                 }
             }
@@ -1143,18 +1142,160 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn quick_capture_inbox_content(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if has_inbox_tag(trimmed) {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("{trimmed} #inbox"))
+    }
+}
+
+fn has_inbox_tag(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i] != b'#' {
+            continue;
+        }
+
+        if i > 0 && is_quick_capture_tag_byte(bytes[i - 1]) {
+            continue;
+        }
+
+        let tag_start = i + 1;
+        let tag_end = tag_start + b"inbox".len();
+        if tag_end > bytes.len() {
+            continue;
+        }
+
+        if bytes[tag_start..tag_end].eq_ignore_ascii_case(b"inbox")
+            && bytes
+                .get(tag_end)
+                .is_none_or(|next| !is_quick_capture_tag_byte(*next))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn is_quick_capture_tag_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{handle_goto_date_popup, handle_popup_events};
+    use super::{
+        handle_goto_date_popup, handle_popup_events, handle_quick_capture_popup,
+        quick_capture_inbox_content,
+    };
     use crate::app::App;
     use chrono::Local;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static QUICK_CAPTURE_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_quick_capture_log_dir() -> std::path::PathBuf {
+        let unique = QUICK_CAPTURE_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "memolog-quick-capture-test-{}-{}",
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&path).expect("create temp quick capture log dir");
+        path
+    }
 
     fn make_app_with_input(input: &str) -> App<'static> {
         let mut app = App::new();
         app.show_goto_date_popup = true;
         app.goto_date_input = input.to_string();
         app
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_appends_marker() {
+        assert_eq!(
+            quick_capture_inbox_content("call dentist"),
+            Some("call dentist #inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_does_not_duplicate_marker() {
+        assert_eq!(
+            quick_capture_inbox_content("call dentist #inbox"),
+            Some("call dentist #inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_detects_marker_with_punctuation() {
+        assert_eq!(
+            quick_capture_inbox_content("triage (#inbox)"),
+            Some("triage (#inbox)".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_detects_marker_case_insensitively() {
+        assert_eq!(
+            quick_capture_inbox_content("call #Inbox"),
+            Some("call #Inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_does_not_treat_longer_tag_as_marker() {
+        assert_eq!(
+            quick_capture_inbox_content("call #inbox-later"),
+            Some("call #inbox-later #inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_does_not_treat_embedded_tag_as_marker() {
+        assert_eq!(
+            quick_capture_inbox_content("call abc#inbox"),
+            Some("call abc#inbox #inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_does_not_treat_underscore_longer_tag_as_marker() {
+        assert_eq!(
+            quick_capture_inbox_content("call #inbox_2"),
+            Some("call #inbox_2 #inbox".to_string())
+        );
+    }
+
+    #[test]
+    fn quick_capture_inbox_content_trims_empty_input() {
+        assert_eq!(quick_capture_inbox_content("   \n\t  "), None);
+    }
+
+    #[test]
+    fn quick_capture_enter_saves_note_to_inbox() {
+        let log_dir = temp_quick_capture_log_dir();
+        let mut app = App::new();
+        app.config.data.log_path = log_dir.clone();
+        app.show_quick_capture_popup = true;
+        app.quick_capture_input = "call dentist".to_string();
+
+        handle_quick_capture_popup(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        let today_file = log_dir.join(format!("{}.md", Local::now().format("%Y-%m-%d")));
+        let contents = fs::read_to_string(today_file).expect("read quick capture log");
+        assert!(contents.contains("call dentist #inbox"));
+        assert!(!app.show_quick_capture_popup);
+        assert!(app.quick_capture_input.is_empty());
     }
 
     #[test]
