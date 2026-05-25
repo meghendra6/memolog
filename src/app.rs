@@ -3171,7 +3171,11 @@ mod tests {
         assert_eq!(app.search_highlight_query.as_deref(), Some("#inbox"));
         assert!(app.is_search_result);
         assert_eq!(app.navigate_focus, NavigateFocus::Timeline);
-        assert!(app.logs.iter().any(|entry| entry.content.contains("#inbox")));
+        assert!(
+            app.logs
+                .iter()
+                .any(|entry| entry.content.contains("#inbox"))
+        );
     }
 
     #[test]
