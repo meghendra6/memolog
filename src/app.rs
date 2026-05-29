@@ -457,12 +457,16 @@ impl<'a> App<'a> {
         let tasks_state = ListState::default();
         let task_filter = TaskFilter::Open;
 
-        let today_logs =
-            storage::read_today_entries(&config.data.log_path).unwrap_or_else(|_| Vec::new());
-
         let input_mode = InputMode::Navigate;
 
-        // Calculate today's stats from today's logs only
+        // Calculate today's stats from today's logs only, reusing the already-loaded
+        // entries instead of re-reading today's file from disk.
+        let today_name = format!("{}.md", today.format("%Y-%m-%d"));
+        let today_logs: Vec<LogEntry> = all_logs
+            .iter()
+            .filter(|entry| entry_is_from_log_file(entry, &today_name))
+            .cloned()
+            .collect();
         let (today_done_tasks, today_tomatoes) = compute_today_task_stats(&today_logs);
 
         // Calculate streak
