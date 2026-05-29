@@ -2509,8 +2509,10 @@ pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
 
 /// Aggregates a review summary over the inclusive [start, end] date range.
 /// Tomato attribution is derived from task lines (TaskItem.tomato_count), matching
-/// how the pomodoro timer appends 🍅 to tasks. Estimated minutes are computed by the
-/// caller (which has the pomodoro config), keeping this function config-free.
+/// how the pomodoro timer appends 🍅 to tasks. Carryover tasks' tomatoes are excluded
+/// (they were earned on a prior day), matching get_activity_stats. Estimated minutes
+/// are computed by the caller (which has the pomodoro config), keeping this function
+/// config-free.
 // Wired into the Review popup in a later task.
 #[allow(dead_code)]
 pub fn build_review(
@@ -2572,7 +2574,7 @@ pub fn build_review(
                 summary.tasks_completed += 1;
                 day_done += 1;
             }
-            if t.tomato_count > 0 {
+            if t.tomato_count > 0 && t.carryover_from.is_none() {
                 day_tomato += t.tomato_count;
                 *per_task.entry(t.text.clone()).or_insert(0) += t.tomato_count;
                 for tag in tags_in_line(&t.text) {
@@ -3796,6 +3798,31 @@ mod tests {
         // tasks_created = 2, tasks_completed = 1
         assert_eq!(summary.tasks_created, 2);
         assert_eq!(summary.tasks_completed, 1);
+    }
+
+    #[test]
+    fn build_review_excludes_carryover_tomatoes() {
+        // Carryover tasks carry 🍅 earned on a prior day; counting them again
+        // would double-count pomodoros.  build_review must skip their tomatoes,
+        // matching the behaviour of get_activity_stats.
+        //
+        // On-disk format: tomatoes trail the carryover marker, e.g.
+        //   - [x] task text ⟦YYYY-MM-DD⟧ 🍅🍅
+        let dir = temp_log_dir();
+        let path = dir.join("2020-11-01.md");
+        fs::write(
+            &path,
+            "## [09:00:00]\n- [x] real task 🍅\n- [x] carried task ⟦2020-10-31⟧ 🍅🍅\n",
+        )
+        .expect("write");
+
+        let start = NaiveDate::from_ymd_opt(2020, 11, 1).unwrap();
+        let summary = build_review(&dir, start, start).expect("review");
+
+        assert_eq!(
+            summary.tomatoes, 1,
+            "only the non-carryover task's tomato counts; carryover tomatoes must be excluded"
+        );
     }
 
     #[test]
