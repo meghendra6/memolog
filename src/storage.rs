@@ -2503,8 +2503,6 @@ pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
 
 /// Returns all wikilink targets with occurrence counts, sorted by count
 /// descending then target ascending. Reads through the content cache.
-// Wired into the Links popup in a later task.
-#[allow(dead_code)]
 pub fn get_all_links(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
     use std::collections::HashMap;
 

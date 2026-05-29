@@ -25,6 +25,45 @@ pub fn open_tag_popup(app: &mut App) {
     }
 }
 
+pub fn open_links_popup(app: &mut App) {
+    if let Ok(links) = storage::get_all_links(&app.config.data.log_path) {
+        app.links = links;
+        app.links_popup_filter = None;
+        if app.links.is_empty() {
+            app.toast("No wikilinks found.");
+        } else {
+            app.links_list_state.select(Some(0));
+            app.show_links_popup = true;
+        }
+    }
+}
+
+/// Opens the Links popup restricted to a specific set of targets (used when
+/// following links from the memo viewer). Counts come from the full index.
+#[allow(dead_code)] // Used by follow-from-viewer in the next task.
+pub fn open_links_popup_filtered(app: &mut App, targets: Vec<String>) {
+    if targets.is_empty() {
+        app.toast("No links in this entry.");
+        return;
+    }
+    let all = storage::get_all_links(&app.config.data.log_path).unwrap_or_default();
+    let links: Vec<(String, usize)> = targets
+        .iter()
+        .map(|t| {
+            let count = all
+                .iter()
+                .find(|(name, _)| name == t)
+                .map(|(_, c)| *c)
+                .unwrap_or(1);
+            (t.clone(), count)
+        })
+        .collect();
+    app.links = links;
+    app.links_popup_filter = Some(targets);
+    app.links_list_state.select(Some(0));
+    app.show_links_popup = true;
+}
+
 pub fn toggle_todo_in_timeline(app: &mut App) {
     if let Some(i) = app.logs_state.selected()
         && i < app.logs.len()

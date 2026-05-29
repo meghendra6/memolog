@@ -134,4 +134,13 @@ mod tests {
         let targets = distinct_targets("[[B]] [[A]] [[B]] [[A|alias]]");
         assert_eq!(targets, vec!["B".to_string(), "A".to_string()]);
     }
+
+    #[test]
+    fn distinct_targets_drives_filtered_follow() {
+        let entry = "## [09:00:00]\nlink to [[Alpha]] and [[Alpha|a]] and [[Beta]]";
+        assert_eq!(
+            distinct_targets(entry),
+            vec!["Alpha".to_string(), "Beta".to_string()]
+        );
+    }
 }
