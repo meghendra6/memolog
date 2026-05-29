@@ -571,7 +571,32 @@ fn save_composer(app: &mut App, stay_in_editor: bool) {
     } else {
         let input = lines.join("\n");
         if !input.trim().is_empty() {
-            if let Err(e) = storage::append_entry(&app.config.data.log_path, &input) {
+            let today = chrono::Local::now().date_naive();
+            let to_save = if app.config.capture.nl_parse {
+                match input.split_once('\n') {
+                    Some((first, rest)) => format!(
+                        "{}\n{}",
+                        crate::capture_nl::enrich_capture_text(first, today),
+                        rest
+                    ),
+                    None => crate::capture_nl::enrich_capture_text(&input, today),
+                }
+            } else {
+                input.clone()
+            };
+            let header = if app.config.capture.daily_template.is_empty() {
+                None
+            } else {
+                Some(crate::capture_nl::render_daily_template(
+                    &app.config.capture.daily_template,
+                    today,
+                ))
+            };
+            if let Err(e) = storage::append_entry_with_header(
+                &app.config.data.log_path,
+                &to_save,
+                header.as_deref(),
+            ) {
                 app.toast(format!("Error saving: {}", e));
                 return;
             }

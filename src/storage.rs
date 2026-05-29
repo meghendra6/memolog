@@ -130,15 +130,33 @@ fn separator_for_existing_file(path: &Path) -> io::Result<&'static [u8]> {
 }
 
 pub fn append_entry(log_path: &Path, content: &str) -> io::Result<()> {
+    append_entry_with_header(log_path, content, None)
+}
+
+pub fn append_entry_with_header(
+    log_path: &Path,
+    content: &str,
+    header: Option<&str>,
+) -> io::Result<()> {
     let today = Local::now().date_naive();
-    append_entry_to_date(log_path, today, content)
+    append_entry_to_date_with_header(log_path, today, content, header)
 }
 
 pub fn append_entry_to_date(log_path: &Path, date: NaiveDate, content: &str) -> io::Result<()> {
+    append_entry_to_date_with_header(log_path, date, content, None)
+}
+
+pub fn append_entry_to_date_with_header(
+    log_path: &Path,
+    date: NaiveDate,
+    content: &str,
+    header: Option<&str>,
+) -> io::Result<()> {
     ensure_log_dir(log_path)?;
     let date_str = date.format("%Y-%m-%d").to_string();
     let path = get_file_path_for_date(log_path, &date_str);
-    let separator = if path.exists() && path.metadata()?.len() > 0 {
+    let is_new = !(path.exists() && path.metadata()?.len() > 0);
+    let separator: &[u8] = if !is_new {
         separator_for_existing_file(&path)?
     } else {
         b""
@@ -161,7 +179,17 @@ pub fn append_entry_to_date(log_path: &Path, date: NaiveDate, content: &str) -> 
     }
 
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-    if !separator.is_empty() {
+    if is_new {
+        if let Some(h) = header
+            && !h.trim().is_empty()
+        {
+            file.write_all(h.as_bytes())?;
+            if !h.ends_with('\n') {
+                file.write_all(b"\n")?;
+            }
+            file.write_all(b"\n")?; // blank line between template and first entry
+        }
+    } else if !separator.is_empty() {
         file.write_all(separator)?;
     }
     file.write_all(entry.as_bytes())?;
@@ -2949,6 +2977,50 @@ mod tests {
         assert_eq!(
             lines.get(second.saturating_sub(1)).copied().unwrap_or(""),
             ""
+        );
+    }
+
+    #[test]
+    fn append_with_header_writes_template_once() {
+        let dir = temp_log_dir();
+        let date = NaiveDate::from_ymd_opt(2026, 5, 29).expect("valid date");
+
+        append_entry_to_date_with_header(&dir, date, "first note", Some("# TEMPLATE"))
+            .expect("append first");
+        let path = get_file_path_for_date(&dir, "2026-05-29");
+        let content = fs::read_to_string(&path).expect("read log");
+        let template_pos = content.find("# TEMPLATE").expect("template present");
+        let first_pos = content.find("first note").expect("first note present");
+        assert!(
+            template_pos < first_pos,
+            "template should appear before first note: {content}"
+        );
+
+        append_entry_to_date_with_header(&dir, date, "second note", Some("# TEMPLATE"))
+            .expect("append second");
+        let content = fs::read_to_string(&path).expect("read log");
+        assert_eq!(
+            content.matches("# TEMPLATE").count(),
+            1,
+            "template should appear exactly once: {content}"
+        );
+        assert!(
+            content.contains("first note"),
+            "first note present: {content}"
+        );
+        assert!(
+            content.contains("second note"),
+            "second note present: {content}"
+        );
+
+        // A fresh date with a None header writes no template line.
+        let date2 = NaiveDate::from_ymd_opt(2026, 5, 30).expect("valid date");
+        append_entry_to_date(&dir, date2, "x").expect("append no header");
+        let path2 = get_file_path_for_date(&dir, "2026-05-30");
+        let content2 = fs::read_to_string(&path2).expect("read log");
+        assert!(
+            !content2.contains("# TEMPLATE"),
+            "None header should write no template: {content2}"
         );
     }
 

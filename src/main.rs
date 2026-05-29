@@ -16,6 +16,7 @@ use std::{error::Error, io};
 
 mod actions;
 mod app;
+mod capture_nl;
 mod config;
 mod date_input;
 mod editor;
