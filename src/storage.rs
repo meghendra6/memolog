@@ -2501,6 +2501,67 @@ pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
     Ok(tags)
 }
 
+/// Returns all wikilink targets with occurrence counts, sorted by count
+/// descending then target ascending. Reads through the content cache.
+// Wired into the Links popup in a later task.
+#[allow(dead_code)]
+pub fn get_all_links(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
+    use std::collections::HashMap;
+
+    ensure_log_dir(log_path)?;
+    let dates = get_available_log_dates(log_path).unwrap_or_default();
+    let mut counts: HashMap<String, usize> = HashMap::new();
+
+    for date in dates {
+        let date_str = date.format("%Y-%m-%d").to_string();
+        let path = get_file_path_for_date(log_path, &date_str);
+        if !path.exists() {
+            continue;
+        }
+        if let Ok(content) = read_log_file_cached(&path) {
+            for link in crate::links::parse_links(&content) {
+                *counts.entry(link.target).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut links: Vec<(String, usize)> = counts.into_iter().collect();
+    links.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Ok(links)
+}
+
+/// Returns every log entry whose content references `target` via a wikilink
+/// (`[[target]]` or `[[target|alias]]`). Exact, case-sensitive match. Reads
+/// through the content cache.
+// Wired into the Links popup confirm handler in a later task.
+#[allow(dead_code)]
+pub fn backlinks_for(log_path: &Path, target: &str) -> io::Result<Vec<LogEntry>> {
+    ensure_log_dir(log_path)?;
+    let dates = get_available_log_dates(log_path).unwrap_or_default();
+    let mut entries = Vec::new();
+
+    for date in dates {
+        let date_str = date.format("%Y-%m-%d").to_string();
+        let path = get_file_path_for_date(log_path, &date_str);
+        if !path.exists() {
+            continue;
+        }
+        let path_str = path.to_string_lossy().to_string();
+        if let Ok(content) = read_log_file_cached(&path) {
+            for entry in parse_log_content(&content, &path_str) {
+                if crate::links::parse_links(&entry.content)
+                    .iter()
+                    .any(|l| l.target == target)
+                {
+                    entries.push(entry);
+                }
+            }
+        }
+    }
+
+    Ok(entries)
+}
+
 pub fn is_carryover_done(log_path: &Path) -> io::Result<bool> {
     let state = load_state(log_path)?;
     let today = Local::now().format("%Y-%m-%d").to_string();
@@ -3403,5 +3464,51 @@ mod tests {
             1,
             "read after append_entry_to_date must hit disk again"
         );
+    }
+
+    #[test]
+    fn get_all_links_counts_and_sorts_cache_routed() {
+        let dir = temp_log_dir();
+        let p1 = dir.join("2020-08-01.md");
+        let p2 = dir.join("2020-08-02.md");
+        fs::write(&p1, "## [09:00:00]\nnote about [[Alpha]] and [[Beta]]\n").expect("write p1");
+        fs::write(&p2, "## [09:00:00]\nmore on [[Alpha]] again\n").expect("write p2");
+
+        let before = file_read_count(&p1);
+        let links = get_all_links(&dir).expect("links");
+        assert_eq!(
+            links.first().map(|(t, c)| (t.as_str(), *c)),
+            Some(("Alpha", 2))
+        );
+        assert!(links.iter().any(|(t, c)| t == "Beta" && *c == 1));
+
+        let _ = get_all_links(&dir).expect("links 2");
+        assert_eq!(
+            file_read_count(&p1) - before,
+            1,
+            "second get_all_links must hit the content cache for unchanged past files"
+        );
+    }
+
+    #[test]
+    fn backlinks_for_returns_exact_matches_including_alias() {
+        let dir = temp_log_dir();
+        let path = dir.join("2020-09-01.md");
+        fs::write(
+            &path,
+            "## [09:00:00]\nplain [[Topic]] here\n\n## [10:00:00]\naliased [[Topic|t]] here\n\n## [11:00:00]\nunrelated [[Other]] here\n",
+        )
+        .expect("write");
+
+        let entries = backlinks_for(&dir, "Topic").expect("backlinks");
+        assert_eq!(
+            entries.len(),
+            2,
+            "both the plain and alias forms reference Topic"
+        );
+        assert!(entries.iter().all(|e| e.content.contains("[[Topic")));
+
+        let none = backlinks_for(&dir, "topic").expect("backlinks lower");
+        assert!(none.is_empty(), "matching is exact and case-sensitive");
     }
 }
