@@ -746,9 +746,20 @@ impl<'a> App<'a> {
             self.fold_overrides.retain(|key, _| keep.contains(key));
         }
 
-        // Calculate stats from today's logs only
-        let today_logs =
-            storage::read_today_entries(&self.config.data.log_path).unwrap_or_default();
+        // Calculate stats from today's logs only, reusing the already-loaded
+        // range entries instead of re-reading today's file from disk.
+        let today_name = format!("{}.md", today.format("%Y-%m-%d"));
+        let today_logs: Vec<LogEntry> = self
+            .all_logs
+            .iter()
+            .filter(|entry| {
+                std::path::Path::new(&entry.file_path)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    == Some(today_name.as_str())
+            })
+            .cloned()
+            .collect();
         let (done, tomatoes) = compute_today_task_stats(&today_logs);
         self.today_done_tasks = done;
         self.today_tomatoes = tomatoes;
@@ -3429,5 +3440,42 @@ mod tests {
                 .expect("read today tasks")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn today_entries_filter_matches_today_file() {
+        let today = Local::now().date_naive();
+        let today_file = format!("/logs/{}.md", today.format("%Y-%m-%d"));
+        let past_file = "/logs/2020-01-01.md".to_string();
+
+        let all_logs = [
+            LogEntry {
+                content: "## [09:00:00]\n- [x] done today\n".to_string(),
+                file_path: today_file.clone(),
+                line_number: 0,
+                end_line: 1,
+            },
+            LogEntry {
+                content: "## [10:00:00]\n- [x] done in the past\n".to_string(),
+                file_path: past_file,
+                line_number: 0,
+                end_line: 1,
+            },
+        ];
+
+        let today_name = format!("{}.md", today.format("%Y-%m-%d"));
+        let today_logs: Vec<LogEntry> = all_logs
+            .iter()
+            .filter(|e| {
+                std::path::Path::new(&e.file_path)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    == Some(today_name.as_str())
+            })
+            .cloned()
+            .collect();
+
+        let (done, _tomatoes) = compute_today_task_stats(&today_logs);
+        assert_eq!(done, 1, "only today's completed task should count");
     }
 }
