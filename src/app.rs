@@ -3620,4 +3620,74 @@ mod tests {
         let (done, _tomatoes) = compute_today_task_stats(&today_logs);
         assert_eq!(done, 1, "only today's completed task should count");
     }
+
+    // ── [[wikilink autocomplete insertion ──────────────────────────────────
+
+    #[test]
+    fn insert_selected_link_target_rewrites_line_and_cursor() {
+        // "go [[Pro" — chars: g(0) o(1) ' '(2) [(3) [(4) P(5) r(6) o(7)
+        // cursor after "Pro" → col 8; anchor right after "[[" → col 5
+        let mut app = App::new();
+        app.textarea = tui_textarea::TextArea::from(vec!["go [[Pro".to_string()]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(0, 8));
+        app.link_complete_candidates = vec!["Project X".to_string()];
+        app.link_complete_query = "Pro".to_string();
+        app.link_complete_anchor_col = 5;
+        app.show_link_complete_popup = true;
+        app.link_complete_state.select(Some(0));
+
+        app.insert_selected_link_target();
+
+        assert_eq!(
+            app.textarea.lines()[0],
+            "go [[Project X]]",
+            "line should have the full target wrapped in [[ ]]"
+        );
+        let (row, col) = app.textarea.cursor();
+        // cursor must land right after "]]": "go [[Project X]]" has 17 chars
+        assert_eq!(
+            (row, col),
+            (0, "go [[Project X]]".chars().count()),
+            "cursor should be right after ])"
+        );
+        assert!(
+            !app.show_link_complete_popup,
+            "popup should close after insertion"
+        );
+    }
+
+    #[test]
+    fn insert_selected_link_target_handles_multibyte() {
+        // "메모 [[프" — chars: 메(0) 모(1) ' '(2) [(3) [(4) 프(5)
+        // cursor after "프" → col 6; anchor right after "[[" → col 5
+        let mut app = App::new();
+        app.textarea = tui_textarea::TextArea::from(vec!["메모 [[프".to_string()]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(0, 6));
+        app.link_complete_candidates = vec!["프로젝트".to_string()];
+        app.link_complete_query = "프".to_string();
+        app.link_complete_anchor_col = 5;
+        app.show_link_complete_popup = true;
+        app.link_complete_state.select(Some(0));
+
+        app.insert_selected_link_target();
+
+        assert_eq!(
+            app.textarea.lines()[0],
+            "메모 [[프로젝트]]",
+            "multibyte: line should have the full target wrapped in [[ ]]"
+        );
+        let (row, col) = app.textarea.cursor();
+        // "메모 [[프로젝트]]" = 메,모,' ',[,[,프,로,젝,트,],] = 11 chars
+        assert_eq!(
+            (row, col),
+            (0, "메모 [[프로젝트]]".chars().count()),
+            "multibyte: cursor should be right after ]]"
+        );
+        assert!(
+            !app.show_link_complete_popup,
+            "popup should close after insertion"
+        );
+    }
 }
