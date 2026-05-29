@@ -342,13 +342,114 @@ pub fn strip_trailing_tomatoes(s: &str) -> (&str, usize) {
     (text, count)
 }
 
+// Consumed by the Review popup + export in a later task.
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ReviewPeriod {
+    Day,
+    #[default]
+    Week,
+    Month,
+}
+
+// Consumed by the Review popup + export in a later task.
+#[allow(dead_code)]
+impl ReviewPeriod {
+    /// Cycle Day -> Week -> Month -> Day.
+    pub fn next(self) -> ReviewPeriod {
+        match self {
+            ReviewPeriod::Day => ReviewPeriod::Week,
+            ReviewPeriod::Week => ReviewPeriod::Month,
+            ReviewPeriod::Month => ReviewPeriod::Day,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ReviewPeriod::Day => "Day",
+            ReviewPeriod::Week => "Week",
+            ReviewPeriod::Month => "Month",
+        }
+    }
+
+    /// Inclusive (start, end) range ending at `anchor` (today). Day = anchor only,
+    /// Week = last 7 days, Month = last 30 days.
+    pub fn range(self, anchor: NaiveDate) -> (NaiveDate, NaiveDate) {
+        let days = match self {
+            ReviewPeriod::Day => 0,
+            ReviewPeriod::Week => 6,
+            ReviewPeriod::Month => 29,
+        };
+        (anchor - chrono::Duration::days(days), anchor)
+    }
+}
+
+// Consumed by the Review popup + export in a later task.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DayStat {
+    pub date: NaiveDate,
+    pub log_lines: usize,
+    pub tasks_completed: usize,
+    pub tomatoes: usize,
+}
+
+// Consumed by the Review popup + export in a later task.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PomodoroBreakdown {
+    pub total: usize,
+    pub per_task: Vec<(String, usize)>, // task text -> tomatoes, desc
+    pub per_tag: Vec<(String, usize)>,  // #tag -> tomatoes, desc
+}
+
+// Consumed by the Review popup + export in a later task.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReviewSummary {
+    pub start: Option<NaiveDate>,
+    pub end: Option<NaiveDate>,
+    pub log_lines: usize,
+    pub tasks_created: usize,
+    pub tasks_completed: usize,
+    pub tomatoes: usize,
+    pub top_tags: Vec<(String, usize)>,  // desc by count then name
+    pub top_links: Vec<(String, usize)>, // desc by count then name
+    pub per_day: Vec<DayStat>,           // ascending by date
+    pub pomodoro: PomodoroBreakdown,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        TaskSchedule, is_heading_timestamp_line, is_task_overdue, split_timestamp_line,
-        strip_timestamp_prefix, task_overdue_anchor_date,
+        ReviewPeriod, TaskSchedule, is_heading_timestamp_line, is_task_overdue,
+        split_timestamp_line, strip_timestamp_prefix, task_overdue_anchor_date,
     };
     use chrono::NaiveDate;
+
+    #[test]
+    fn review_period_cycles_and_ranges() {
+        assert_eq!(ReviewPeriod::Day.next(), ReviewPeriod::Week);
+        assert_eq!(ReviewPeriod::Week.next(), ReviewPeriod::Month);
+        assert_eq!(ReviewPeriod::Month.next(), ReviewPeriod::Day);
+
+        let anchor = NaiveDate::from_ymd_opt(2026, 5, 29).expect("date");
+        let (start, end) = ReviewPeriod::Day.range(anchor);
+        assert_eq!(start, anchor);
+        assert_eq!(end, anchor);
+
+        let (start, end) = ReviewPeriod::Week.range(anchor);
+        let expected_start = NaiveDate::from_ymd_opt(2026, 5, 23).expect("date");
+        assert_eq!(start, expected_start);
+        assert_eq!(end, anchor);
+        let span = (end - start).num_days();
+        assert_eq!(span, 6, "Week spans 7 days (6 days delta)");
+
+        let (start, end) = ReviewPeriod::Month.range(anchor);
+        let span = (end - start).num_days();
+        assert_eq!(span, 29, "Month spans 30 days (29 days delta)");
+        assert_eq!(end, anchor);
+    }
 
     #[test]
     fn parses_heading_timestamp_line() {
