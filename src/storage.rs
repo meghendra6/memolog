@@ -3378,4 +3378,30 @@ mod tests {
         let second_line = entries[0].content.lines().nth(1).unwrap();
         assert_eq!(second_line, "#Important Task #pinned");
     }
+
+    #[test]
+    fn append_to_past_date_invalidates_cache() {
+        let dir = temp_log_dir();
+        let date = NaiveDate::from_ymd_opt(2020, 7, 2).unwrap();
+        let path = dir.join("2020-07-02.md");
+        fs::write(&path, "## [09:00:00]\nfirst\n").expect("write");
+
+        // Warm the cache via a range read.
+        let _ = read_entries_for_date_range(&dir, date, date).expect("read 1");
+        let mid = file_read_count(&path);
+
+        // Append through the choke point — must invalidate the cached content.
+        append_entry_to_date(&dir, date, "appended note").expect("append");
+
+        let after = read_entries_for_date_range(&dir, date, date).expect("read 2");
+        assert!(
+            after.iter().any(|e| e.content.contains("appended note")),
+            "re-read after append must reflect the appended content"
+        );
+        assert_eq!(
+            file_read_count(&path) - mid,
+            1,
+            "read after append_entry_to_date must hit disk again"
+        );
+    }
 }
