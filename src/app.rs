@@ -747,17 +747,14 @@ impl<'a> App<'a> {
         }
 
         // Calculate stats from today's logs only, reusing the already-loaded
-        // range entries instead of re-reading today's file from disk.
+        // range entries instead of re-reading today's file from disk. If the
+        // range reload above failed, this filters the prior `all_logs` (stale
+        // for one render cycle); the next update_logs call retries.
         let today_name = format!("{}.md", today.format("%Y-%m-%d"));
         let today_logs: Vec<LogEntry> = self
             .all_logs
             .iter()
-            .filter(|entry| {
-                std::path::Path::new(&entry.file_path)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    == Some(today_name.as_str())
-            })
+            .filter(|entry| entry_is_from_log_file(entry, &today_name))
             .cloned()
             .collect();
         let (done, tomatoes) = compute_today_task_stats(&today_logs);
@@ -2490,6 +2487,14 @@ fn split_timestamp_prefix(line: &str) -> (String, String) {
     }
 }
 
+/// True when `entry` belongs to the log file named `file_name` (e.g. "2026-05-29.md").
+fn entry_is_from_log_file(entry: &LogEntry, file_name: &str) -> bool {
+    Path::new(&entry.file_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        == Some(file_name)
+}
+
 /// Computes (done_count, tomato_count) for today's tasks.
 /// Excludes tomatoes from carryover tasks (marked with ⟦date⟧) to ensure
 /// the tomato count resets daily.
@@ -3466,12 +3471,7 @@ mod tests {
         let today_name = format!("{}.md", today.format("%Y-%m-%d"));
         let today_logs: Vec<LogEntry> = all_logs
             .iter()
-            .filter(|e| {
-                std::path::Path::new(&e.file_path)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    == Some(today_name.as_str())
-            })
+            .filter(|e| entry_is_from_log_file(e, &today_name))
             .cloned()
             .collect();
 
