@@ -568,7 +568,7 @@ impl Default for GlobalBindings {
             goto_date: vec!["ctrl+f".to_string()],
             tags: vec!["t".to_string()],
             links: vec!["shift+l".to_string()],
-            graph: vec!["shift+g".to_string()],
+            graph: vec!["shift+m".to_string()],
             activity: vec!["ctrl+a".to_string()],
             review: vec!["shift+r".to_string()],
             agenda: vec!["a".to_string(), "shift+a".to_string()],

@@ -785,11 +785,15 @@ fn open_topic_backlinks(app: &mut App, target: &str) {
 
 fn handle_graph_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.up) {
-        let i = match app.graph_list_state.selected() {
-            Some(i) => i.saturating_sub(1),
-            None => 0,
-        };
-        app.graph_list_state.select(Some(i));
+        if app.graph_neighbors.is_empty() {
+            app.graph_list_state.select(None);
+        } else {
+            let i = match app.graph_list_state.selected() {
+                Some(i) => i.saturating_sub(1),
+                None => 0,
+            };
+            app.graph_list_state.select(Some(i));
+        }
     } else if key_match(&key, &app.config.keybindings.popup.down) {
         let i = match app.graph_list_state.selected() {
             Some(i) => {
@@ -837,6 +841,7 @@ fn handle_graph_popup(app: &mut App, key: KeyEvent) {
         app.graph_center = None;
         app.graph_neighbors = Vec::new();
         app.graph_history = Vec::new();
+        app.graph_list_state.select(None);
         app.transition_to(InputMode::Navigate);
     }
 }

@@ -1298,8 +1298,12 @@ pub fn render_graph_popup(f: &mut Frame, app: &mut App) {
         f.render_stateful_widget(list, popup_layout[1], &mut app.graph_list_state);
     }
 
-    let footer = Paragraph::new("j/k select · Enter recenter · o open · Bksp back · Esc close")
-        .style(Style::default().fg(tokens.ui_muted));
+    let footer_text = if app.graph_history.is_empty() {
+        "j/k select · Enter recenter · o open · Esc close".to_string()
+    } else {
+        "j/k select · Enter recenter · o open · Bksp back · Esc close".to_string()
+    };
+    let footer = Paragraph::new(footer_text).style(Style::default().fg(tokens.ui_muted));
     f.render_widget(footer, popup_layout[2]);
 }
 
