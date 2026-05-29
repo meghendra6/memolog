@@ -2608,6 +2608,33 @@ pub fn build_review(
     Ok(summary)
 }
 
+// Wired into the Review popup export in a later task.
+#[allow(dead_code)]
+/// Returns all task items whose log-file date falls in [start, end] inclusive.
+pub fn collect_tasks_in_range(
+    log_path: &Path,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> io::Result<Vec<TaskItem>> {
+    ensure_log_dir(log_path)?;
+    let mut out = Vec::new();
+    for date in get_available_log_dates(log_path).unwrap_or_default() {
+        if date < start || date > end {
+            continue;
+        }
+        let date_str = date.format("%Y-%m-%d").to_string();
+        let path = get_file_path_for_date(log_path, &date_str);
+        if !path.exists() {
+            continue;
+        }
+        let path_str = path.to_string_lossy().to_string();
+        if let Ok(content) = read_log_file_cached(&path) {
+            out.extend(parse_task_content(&content, &path_str));
+        }
+    }
+    Ok(out)
+}
+
 /// Returns all wikilink targets with occurrence counts, sorted by count
 /// descending then target ascending. Reads through the content cache.
 pub fn get_all_links(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
@@ -3852,6 +3879,40 @@ mod tests {
             file_read_count(&path) - before,
             1,
             "two distinct searches of an unchanged past file read it from disk once (content cache), despite separate result-cache keys"
+        );
+    }
+
+    #[test]
+    fn collect_tasks_in_range_returns_only_in_range_tasks() {
+        let dir = temp_log_dir();
+
+        // Two in-range files
+        write_log(
+            &dir,
+            "2022-06-01",
+            "## [09:00:00]\n- [ ] task alpha\n- [x] task beta\n",
+        );
+        write_log(&dir, "2022-06-02", "## [10:00:00]\n- [ ] task gamma\n");
+
+        // One out-of-range file — must be excluded
+        write_log(&dir, "2022-05-31", "## [08:00:00]\n- [ ] task excluded\n");
+
+        let start = NaiveDate::from_ymd_opt(2022, 6, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2022, 6, 2).unwrap();
+        let tasks = collect_tasks_in_range(&dir, start, end).expect("collect");
+
+        assert_eq!(tasks.len(), 3, "only in-range tasks returned");
+        assert!(
+            tasks.iter().any(|t| t.text.contains("alpha")),
+            "task alpha present"
+        );
+        assert!(
+            tasks.iter().any(|t| t.text.contains("gamma")),
+            "task gamma present"
+        );
+        assert!(
+            tasks.iter().all(|t| !t.text.contains("excluded")),
+            "out-of-range task must not appear"
         );
     }
 }
