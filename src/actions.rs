@@ -63,6 +63,77 @@ pub fn open_links_popup_filtered(app: &mut App, targets: Vec<String>) {
     app.active_popup = ActivePopup::Links;
 }
 
+pub fn open_graph_popup(app: &mut App) {
+    let graph = match storage::build_link_graph(&app.config.data.log_path) {
+        Ok(g) => g,
+        Err(_) => {
+            app.toast("Failed to build link graph.");
+            return;
+        }
+    };
+    // Seed center: first distinct topic of the selected timeline entry that exists in the graph, else highest-degree node.
+    let seed = app
+        .logs_state
+        .selected()
+        .and_then(|i| app.logs.get(i))
+        .map(|e| crate::links::distinct_targets(&e.content))
+        .and_then(|targets| {
+            targets.into_iter().find(|t| {
+                matches!(crate::links::link_kind(t), crate::links::LinkKind::Topic)
+                    && graph.adjacency.contains_key(t)
+            })
+        })
+        .or_else(|| graph.highest_degree());
+    let Some(center) = seed else {
+        app.toast("No links to graph yet.");
+        return;
+    };
+    app.graph_neighbors = graph.neighbors(&center);
+    app.graph_center = Some(center);
+    app.graph_history = Vec::new();
+    app.graph_data = Some(graph);
+    app.graph_list_state
+        .select(if app.graph_neighbors.is_empty() {
+            None
+        } else {
+            Some(0)
+        });
+    app.active_popup = crate::models::ActivePopup::Graph;
+}
+
+/// Re-center on `node`, pushing the current center onto history.
+pub fn graph_recenter(app: &mut App, node: String) {
+    if let Some(cur) = app.graph_center.take() {
+        app.graph_history.push(cur);
+    }
+    if let Some(graph) = &app.graph_data {
+        app.graph_neighbors = graph.neighbors(&node);
+    }
+    app.graph_center = Some(node);
+    app.graph_list_state
+        .select(if app.graph_neighbors.is_empty() {
+            None
+        } else {
+            Some(0)
+        });
+}
+
+/// Pop history and re-center without pushing.
+pub fn graph_back(app: &mut App) {
+    if let Some(prev) = app.graph_history.pop() {
+        if let Some(graph) = &app.graph_data {
+            app.graph_neighbors = graph.neighbors(&prev);
+        }
+        app.graph_center = Some(prev);
+        app.graph_list_state
+            .select(if app.graph_neighbors.is_empty() {
+                None
+            } else {
+                Some(0)
+            });
+    }
+}
+
 pub fn toggle_todo_in_timeline(app: &mut App) {
     if let Some(i) = app.logs_state.selected()
         && i < app.logs.len()

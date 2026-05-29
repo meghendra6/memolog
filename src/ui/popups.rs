@@ -39,6 +39,8 @@ mod popup_size {
     pub const TAG: (u16, u16) = (50, 60);
     /// Links popup
     pub const LINKS: (u16, u16) = (60, 60);
+    /// Ego-graph popup
+    pub const GRAPH: (u16, u16) = (60, 70);
     /// Activity graph popup
     pub const ACTIVITY: (u16, u16) = (70, 50);
     /// Review / insight popup
@@ -1212,6 +1214,97 @@ pub fn render_links_popup(f: &mut Frame, app: &mut App) {
     let footer = Paragraph::new("↑/↓/j/k select · Enter open (backlinks / jump) · Esc close")
         .style(Style::default().fg(tokens.ui_muted));
     f.render_widget(footer, popup_layout[1]);
+}
+
+pub fn render_graph_popup(f: &mut Frame, app: &mut App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let depth = app.graph_history.len();
+    let title = if depth > 0 {
+        format!(" Graph ↩{depth} ")
+    } else {
+        " Graph ".to_string()
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_border_default));
+    let area = centered_rect(popup_size::GRAPH.0, popup_size::GRAPH.1, f.area());
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let link_color = tokens.content_link;
+    let marker_for = |target: &str| -> &'static str {
+        if matches!(
+            crate::links::link_kind(target),
+            crate::links::LinkKind::Date(_)
+        ) {
+            "📅 "
+        } else {
+            "🔗 "
+        }
+    };
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .margin(1)
+        .split(area);
+
+    // Center line.
+    let center_line = match app.graph_center.as_deref() {
+        Some(center) => Line::from(vec![
+            Span::raw(marker_for(center)),
+            Span::styled(
+                center.to_string(),
+                Style::default().fg(link_color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        None => Line::from(Span::styled(
+            "(no center)",
+            Style::default().fg(tokens.ui_muted),
+        )),
+    };
+    f.render_widget(Paragraph::new(center_line), popup_layout[0]);
+
+    if app.graph_neighbors.is_empty() {
+        let empty = Paragraph::new("No neighbors.").style(Style::default().fg(tokens.ui_muted));
+        f.render_widget(empty, popup_layout[1]);
+    } else {
+        let items: Vec<ListItem> = app
+            .graph_neighbors
+            .iter()
+            .map(|(name, weight)| {
+                ListItem::new(Line::from(vec![
+                    Span::raw(marker_for(name)),
+                    Span::styled(
+                        name.clone(),
+                        Style::default().fg(link_color).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(format!(" ({})", weight)),
+                ]))
+            })
+            .collect();
+
+        let highlight_bg = parse_color(&app.config.theme.text_highlight);
+        let list = List::new(items).highlight_symbol("→ ").highlight_style(
+            Style::default()
+                .bg(highlight_bg)
+                .add_modifier(Modifier::BOLD),
+        );
+        f.render_stateful_widget(list, popup_layout[1], &mut app.graph_list_state);
+    }
+
+    let footer_text = if app.graph_history.is_empty() {
+        "j/k select · Enter recenter · o open · Esc close".to_string()
+    } else {
+        "j/k select · Enter recenter · o open · Bksp back · Esc close".to_string()
+    };
+    let footer = Paragraph::new(footer_text).style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(footer, popup_layout[2]);
 }
 
 pub fn render_path_popup(f: &mut Frame, app: &App) {

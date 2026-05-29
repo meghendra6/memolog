@@ -201,6 +201,7 @@ enum CommandPaletteAction {
     EditorStyle,
     Activity,
     Review,
+    Graph,
     Pomodoro,
     Tags,
     SyncGoogle,
@@ -288,6 +289,11 @@ pub struct App<'a> {
     pub links: Vec<(String, usize)>,
     pub links_list_state: ListState,
     pub links_popup_filter: Option<Vec<String>>,
+    pub graph_data: Option<crate::storage::LinkGraph>,
+    pub graph_center: Option<String>,
+    pub graph_neighbors: Vec<(String, usize)>,
+    pub graph_history: Vec<String>,
+    pub graph_list_state: ListState,
     pub agenda_all_items: Vec<crate::models::AgendaItem>,
     pub agenda_items: Vec<crate::models::AgendaItem>,
     pub agenda_state: ListState,
@@ -545,6 +551,11 @@ impl<'a> App<'a> {
             links: Vec::new(),
             links_list_state: ListState::default(),
             links_popup_filter: None,
+            graph_data: None,
+            graph_center: None,
+            graph_neighbors: Vec::new(),
+            graph_history: Vec::new(),
+            graph_list_state: ListState::default(),
             agenda_all_items: Vec::new(),
             agenda_items: Vec::new(),
             agenda_state: ListState::default(),
@@ -1124,6 +1135,14 @@ impl<'a> App<'a> {
                 target: CommandPaletteTarget::Action(CommandPaletteAction::Review),
             },
             CommandPaletteItem {
+                id: "action:graph".to_string(),
+                label: "Graph".to_string(),
+                hint: primary_shortcut(&kb.global.graph),
+                aliases: vec!["links graph".to_string(), "map".to_string()],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::Graph),
+            },
+            CommandPaletteItem {
                 id: "action:pomodoro".to_string(),
                 label: "Pomodoro".to_string(),
                 hint: primary_shortcut(&kb.global.pomodoro),
@@ -1283,6 +1302,7 @@ impl<'a> App<'a> {
             CommandPaletteAction::EditorStyle => crate::actions::open_editor_style_switcher(self),
             CommandPaletteAction::Activity => crate::actions::open_activity_popup(self),
             CommandPaletteAction::Review => crate::actions::open_review_popup(self),
+            CommandPaletteAction::Graph => crate::actions::open_graph_popup(self),
             CommandPaletteAction::Pomodoro => {
                 crate::actions::open_or_toggle_pomodoro_for_selected_task(self)
             }
@@ -3205,6 +3225,30 @@ mod tests {
         assert_eq!(app.active_popup, ActivePopup::Review);
         let summary = app.review_data.expect("review data populated");
         assert!(summary.log_lines >= 1, "today's log line should be counted");
+    }
+
+    #[test]
+    fn open_graph_popup_sets_active_popup_and_center() {
+        let log_dir = temp_log_dir();
+        crate::storage::append_entry_to_date(
+            &log_dir,
+            Local::now().date_naive(),
+            "linking [[Alpha]] and [[Beta]] together",
+        )
+        .expect("seed linked entry");
+
+        let mut app = App::new();
+        app.config.data.log_path = log_dir;
+
+        crate::actions::open_graph_popup(&mut app);
+
+        assert_eq!(app.active_popup, ActivePopup::Graph);
+        assert!(app.graph_center.is_some(), "a center node should be seeded");
+        assert!(
+            !app.graph_neighbors.is_empty(),
+            "the center should have at least one neighbor"
+        );
+        assert!(app.graph_data.is_some(), "graph data should be retained");
     }
 
     #[test]
