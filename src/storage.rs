@@ -2531,8 +2531,6 @@ pub fn get_all_links(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
 /// Returns every log entry whose content references `target` via a wikilink
 /// (`[[target]]` or `[[target|alias]]`). Exact, case-sensitive match. Reads
 /// through the content cache.
-// Wired into the Links popup confirm handler in a later task.
-#[allow(dead_code)]
 pub fn backlinks_for(log_path: &Path, target: &str) -> io::Result<Vec<LogEntry>> {
     ensure_log_dir(log_path)?;
     let dates = get_available_log_dates(log_path).unwrap_or_default();

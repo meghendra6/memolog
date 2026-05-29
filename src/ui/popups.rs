@@ -37,6 +37,8 @@ mod popup_size {
     pub const LOADING: (u16, u16) = (70, 30);
     /// Tag selector popup
     pub const TAG: (u16, u16) = (50, 60);
+    /// Links popup
+    pub const LINKS: (u16, u16) = (60, 60);
     /// Activity graph popup
     pub const ACTIVITY: (u16, u16) = (70, 50);
 }
@@ -1014,6 +1016,68 @@ pub fn render_tag_popup(f: &mut Frame, app: &mut App) {
 
     // Add helpful footer with keyboard shortcuts
     let footer = Paragraph::new("↑/↓/j/k select · Enter filter · Esc close")
+        .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(footer, popup_layout[1]);
+}
+
+pub fn render_links_popup(f: &mut Frame, app: &mut App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let selection = app
+        .links_list_state
+        .selected()
+        .map(|i| format!("{}/{}", i + 1, app.links.len()))
+        .unwrap_or_else(|| "0/0".to_string());
+    let filtered = app.links_popup_filter.is_some();
+    let title = if filtered {
+        format!(" Links in entry {selection} ")
+    } else {
+        format!(" Links {selection} ")
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_border_default));
+    let area = centered_rect(popup_size::LINKS.0, popup_size::LINKS.1, f.area());
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let link_color = parse_color(&app.config.theme.link);
+    let items: Vec<ListItem> = app
+        .links
+        .iter()
+        .map(|(target, count)| {
+            let is_date = matches!(
+                crate::links::link_kind(target),
+                crate::links::LinkKind::Date(_)
+            );
+            let marker = if is_date { "📅 " } else { "🔗 " };
+            ListItem::new(Line::from(vec![
+                Span::raw(marker),
+                Span::styled(
+                    target.clone(),
+                    Style::default().fg(link_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(format!(" ({})", count)),
+            ]))
+        })
+        .collect();
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .margin(1)
+        .split(area);
+
+    let highlight_bg = parse_color(&app.config.theme.text_highlight);
+    let list = List::new(items).highlight_symbol("→ ").highlight_style(
+        Style::default()
+            .bg(highlight_bg)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    f.render_stateful_widget(list, popup_layout[0], &mut app.links_list_state);
+
+    let footer = Paragraph::new("↑/↓/j/k select · Enter open (backlinks / jump) · Esc close")
         .style(Style::default().fg(tokens.ui_muted));
     f.render_widget(footer, popup_layout[1]);
 }

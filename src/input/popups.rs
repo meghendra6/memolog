@@ -81,6 +81,10 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
         handle_tag_popup(app, key);
         return true;
     }
+    if app.show_links_popup {
+        handle_links_popup(app, key);
+        return true;
+    }
     if app.show_saved_search_popup {
         handle_saved_search_popup(app, key);
         return true;
@@ -136,6 +140,16 @@ fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
     }
     if key_match(&key, &app.config.keybindings.popup.down) {
         app.memo_preview_scroll = app.memo_preview_scroll.saturating_add(1);
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.global.links) {
+        if let Some(entry) = app.memo_preview_entry.clone() {
+            let targets = crate::links::distinct_targets(&entry.content);
+            app.show_memo_preview_popup = false;
+            app.memo_preview_entry = None;
+            crate::actions::open_links_popup_filtered(app, targets);
+        }
         return;
     }
 
@@ -682,6 +696,69 @@ fn handle_tag_popup(app: &mut App, key: KeyEvent) {
         app.transition_to(InputMode::Navigate);
     } else if key_match(&key, &app.config.keybindings.popup.cancel) {
         app.show_tag_popup = false;
+        app.transition_to(InputMode::Navigate);
+    }
+}
+
+fn handle_links_popup(app: &mut App, key: KeyEvent) {
+    if key_match(&key, &app.config.keybindings.popup.up) {
+        let i = match app.links_list_state.selected() {
+            Some(i) => i.saturating_sub(1),
+            None => 0,
+        };
+        app.links_list_state.select(Some(i));
+    } else if key_match(&key, &app.config.keybindings.popup.down) {
+        let i = match app.links_list_state.selected() {
+            Some(i) => {
+                if app.links.is_empty() || i >= app.links.len() - 1 {
+                    app.links.len().saturating_sub(1)
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        app.links_list_state.select(Some(i));
+    } else if key_match(&key, &app.config.keybindings.popup.confirm) {
+        if let Some(i) = app.links_list_state.selected()
+            && i < app.links.len()
+        {
+            let target = app.links[i].0.clone();
+            app.show_links_popup = false;
+            app.links_popup_filter = None;
+            match crate::links::link_kind(&target) {
+                crate::links::LinkKind::Date(date) => {
+                    app.transition_to(InputMode::Navigate);
+                    app.jump_to_date(date);
+                }
+                crate::links::LinkKind::Topic => {
+                    if let Ok(entries) = storage::backlinks_for(&app.config.data.log_path, &target)
+                    {
+                        app.clear_search_match_metadata();
+                        app.logs = entries;
+                        app.is_search_result = true;
+                        app.last_search_query = Some(target.clone());
+                        app.search_highlight_query = Some(target.clone());
+                        app.search_highlight_ready_at =
+                            Some(Local::now() + Duration::milliseconds(150));
+                        if app.logs.is_empty() {
+                            app.logs_state.select(None);
+                            app.toast("No backlinks found.");
+                        } else {
+                            app.logs_state.select(Some(0));
+                        }
+                    }
+                    app.transition_to(InputMode::Navigate);
+                }
+            }
+        } else {
+            app.show_links_popup = false;
+            app.links_popup_filter = None;
+            app.transition_to(InputMode::Navigate);
+        }
+    } else if key_match(&key, &app.config.keybindings.popup.cancel) {
+        app.show_links_popup = false;
+        app.links_popup_filter = None;
         app.transition_to(InputMode::Navigate);
     }
 }

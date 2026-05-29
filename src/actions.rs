@@ -40,7 +40,6 @@ pub fn open_links_popup(app: &mut App) {
 
 /// Opens the Links popup restricted to a specific set of targets (used when
 /// following links from the memo viewer). Counts come from the full index.
-#[allow(dead_code)] // Used by follow-from-viewer in the next task.
 pub fn open_links_popup_filtered(app: &mut App, targets: Vec<String>) {
     if targets.is_empty() {
         app.toast("No links in this entry.");
