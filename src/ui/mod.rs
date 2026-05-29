@@ -39,11 +39,11 @@ use popups::{
     render_activity_popup, render_ai_loading_popup, render_ai_response_popup,
     render_command_palette_popup, render_date_picker_popup, render_delete_entry_popup,
     render_editor_style_popup, render_exit_popup, render_google_auth_popup, render_goto_date_popup,
-    render_help_popup, render_links_popup, render_memo_preview_popup, render_mood_popup,
-    render_onboarding_popup, render_path_popup, render_pomodoro_popup, render_quick_capture_popup,
-    render_review_popup, render_save_view_popup, render_saved_search_popup,
-    render_saved_view_popup, render_siren_popup, render_tag_popup, render_theme_switcher_popup,
-    render_todo_popup,
+    render_graph_popup, render_help_popup, render_links_popup, render_memo_preview_popup,
+    render_mood_popup, render_onboarding_popup, render_path_popup, render_pomodoro_popup,
+    render_quick_capture_popup, render_review_popup, render_save_view_popup,
+    render_saved_search_popup, render_saved_view_popup, render_siren_popup, render_tag_popup,
+    render_theme_switcher_popup, render_todo_popup,
 };
 
 pub fn ui(f: &mut Frame, app: &mut App) {
@@ -1106,6 +1106,9 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     }
     if app.is_popup(ActivePopup::Links) {
         render_links_popup(f, app);
+    }
+    if app.is_popup(ActivePopup::Graph) {
+        render_graph_popup(f, app);
     }
     if app.is_popup(ActivePopup::SavedSearch) {
         render_saved_search_popup(f, app);

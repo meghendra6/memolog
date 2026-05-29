@@ -85,6 +85,10 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
         handle_links_popup(app, key);
         return true;
     }
+    if app.is_popup(ActivePopup::Graph) {
+        handle_graph_popup(app, key);
+        return true;
+    }
     if app.is_popup(ActivePopup::SavedSearch) {
         handle_saved_search_popup(app, key);
         return true;
@@ -739,26 +743,7 @@ fn handle_links_popup(app: &mut App, key: KeyEvent) {
                     app.jump_to_date(date);
                 }
                 crate::links::LinkKind::Topic => {
-                    match storage::backlinks_for(&app.config.data.log_path, &target) {
-                        Ok(entries) => {
-                            app.clear_search_match_metadata();
-                            app.logs = entries;
-                            app.is_search_result = true;
-                            app.search_highlight_query = Some(target.clone());
-                            app.last_search_query = Some(target);
-                            app.search_highlight_ready_at =
-                                Some(Local::now() + Duration::milliseconds(150));
-                            if app.logs.is_empty() {
-                                app.logs_state.select(None);
-                                app.toast("No backlinks found.");
-                            } else {
-                                app.logs_state.select(Some(0));
-                            }
-                        }
-                        Err(_) => {
-                            app.toast("Failed to load backlinks.");
-                        }
-                    }
+                    open_topic_backlinks(app, &target);
                     app.transition_to(InputMode::Navigate);
                 }
             }
@@ -770,6 +755,88 @@ fn handle_links_popup(app: &mut App, key: KeyEvent) {
     } else if key_match(&key, &app.config.keybindings.popup.cancel) {
         app.active_popup = ActivePopup::None;
         app.links_popup_filter = None;
+        app.transition_to(InputMode::Navigate);
+    }
+}
+
+/// Populates the timeline with backlinks to `target` (a topic). Caller is
+/// responsible for any popup/state cleanup and the `transition_to` afterwards.
+fn open_topic_backlinks(app: &mut App, target: &str) {
+    match storage::backlinks_for(&app.config.data.log_path, target) {
+        Ok(entries) => {
+            app.clear_search_match_metadata();
+            app.logs = entries;
+            app.is_search_result = true;
+            app.search_highlight_query = Some(target.to_string());
+            app.last_search_query = Some(target.to_string());
+            app.search_highlight_ready_at = Some(Local::now() + Duration::milliseconds(150));
+            if app.logs.is_empty() {
+                app.logs_state.select(None);
+                app.toast("No backlinks found.");
+            } else {
+                app.logs_state.select(Some(0));
+            }
+        }
+        Err(_) => {
+            app.toast("Failed to load backlinks.");
+        }
+    }
+}
+
+fn handle_graph_popup(app: &mut App, key: KeyEvent) {
+    if key_match(&key, &app.config.keybindings.popup.up) {
+        let i = match app.graph_list_state.selected() {
+            Some(i) => i.saturating_sub(1),
+            None => 0,
+        };
+        app.graph_list_state.select(Some(i));
+    } else if key_match(&key, &app.config.keybindings.popup.down) {
+        let i = match app.graph_list_state.selected() {
+            Some(i) => {
+                if app.graph_neighbors.is_empty() || i >= app.graph_neighbors.len() - 1 {
+                    app.graph_neighbors.len().saturating_sub(1)
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        if app.graph_neighbors.is_empty() {
+            app.graph_list_state.select(None);
+        } else {
+            app.graph_list_state.select(Some(i));
+        }
+    } else if key_match(&key, &app.config.keybindings.popup.confirm) {
+        if let Some(i) = app.graph_list_state.selected()
+            && i < app.graph_neighbors.len()
+        {
+            crate::actions::graph_recenter(app, app.graph_neighbors[i].0.clone());
+        }
+    } else if key.code == KeyCode::Backspace {
+        crate::actions::graph_back(app);
+    } else if key.code == KeyCode::Char('o') {
+        if let Some(i) = app.graph_list_state.selected()
+            && i < app.graph_neighbors.len()
+        {
+            let target = app.graph_neighbors[i].0.clone();
+            app.active_popup = ActivePopup::None;
+            match crate::links::link_kind(&target) {
+                crate::links::LinkKind::Date(date) => {
+                    app.transition_to(InputMode::Navigate);
+                    app.jump_to_date(date);
+                }
+                crate::links::LinkKind::Topic => {
+                    open_topic_backlinks(app, &target);
+                    app.transition_to(InputMode::Navigate);
+                }
+            }
+        }
+    } else if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
+        app.active_popup = ActivePopup::None;
+        app.graph_data = None;
+        app.graph_center = None;
+        app.graph_neighbors = Vec::new();
+        app.graph_history = Vec::new();
         app.transition_to(InputMode::Navigate);
     }
 }

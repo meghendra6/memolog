@@ -16,6 +16,7 @@ pub enum ActivePopup {
     Help,
     Tag,
     Links,
+    Graph,
     DatePicker,
     Exit,
     DeleteEntry,

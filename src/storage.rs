@@ -2659,15 +2659,12 @@ pub fn get_all_links(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
 }
 
 /// An undirected weighted graph of wikilink co-occurrences across all log entries.
-/// Wired into the graph popup in a later task.
-#[allow(dead_code)]
 #[derive(Debug, Default, Clone)]
 pub struct LinkGraph {
     /// node (topic or YYYY-MM-DD date) -> neighbors, each (neighbor, weight), sorted desc by weight then name asc.
     pub adjacency: std::collections::HashMap<String, Vec<(String, usize)>>,
 }
 
-#[allow(dead_code)]
 impl LinkGraph {
     /// Neighbors of `node`, already sorted desc by weight then name asc. Empty if unknown.
     pub fn neighbors(&self, node: &str) -> Vec<(String, usize)> {
@@ -2700,8 +2697,6 @@ fn add_edge(weights: &mut HashMap<(String, String), usize>, a: &str, b: &str) {
 /// Edges: (a) co-occurrence between distinct TOPIC targets within the same entry;
 /// (b) each topic to its containing log date and to any [[YYYY-MM-DD]] date target it co-occurs with.
 /// Weight = number of entries the edge co-occurs in. Adjacency is symmetric.
-/// Wired into the graph popup in a later task.
-#[allow(dead_code)]
 pub fn build_link_graph(log_path: &Path) -> io::Result<LinkGraph> {
     ensure_log_dir(log_path)?;
     let mut weights: HashMap<(String, String), usize> = HashMap::new();
