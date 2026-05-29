@@ -9,6 +9,14 @@ submit = ["shift+enter"]
 newline = ["enter"]
 cancel = ["esc"]
 
+[capture]
+# Auto-add @sched(...)/@time(...) from natural language in Quick Capture and new entries.
+nl_parse = true
+# Inline daily-note template inserted once when a new day's log file is first created.
+# Empty = no template. Placeholders: {{date}}, {{weekday}}, {{date_long}}.
+# Example: daily_template = "# {{date}} ({{weekday}})\n"
+daily_template = ""
+
 [gemini]
 enabled = false
 api_key = ""
