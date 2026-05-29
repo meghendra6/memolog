@@ -2658,6 +2658,104 @@ pub fn get_all_links(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
     Ok(links)
 }
 
+/// An undirected weighted graph of wikilink co-occurrences across all log entries.
+/// Wired into the graph popup in a later task.
+#[allow(dead_code)]
+#[derive(Debug, Default, Clone)]
+pub struct LinkGraph {
+    /// node (topic or YYYY-MM-DD date) -> neighbors, each (neighbor, weight), sorted desc by weight then name asc.
+    pub adjacency: std::collections::HashMap<String, Vec<(String, usize)>>,
+}
+
+#[allow(dead_code)]
+impl LinkGraph {
+    /// Neighbors of `node`, already sorted desc by weight then name asc. Empty if unknown.
+    pub fn neighbors(&self, node: &str) -> Vec<(String, usize)> {
+        self.adjacency.get(node).cloned().unwrap_or_default()
+    }
+
+    /// The node with the highest total edge weight (ties broken by name asc). None if empty.
+    pub fn highest_degree(&self) -> Option<String> {
+        self.adjacency
+            .iter()
+            .map(|(n, neigh)| (n.clone(), neigh.iter().map(|(_, w)| *w).sum::<usize>()))
+            .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+            .map(|(n, _)| n)
+    }
+}
+
+fn add_edge(weights: &mut HashMap<(String, String), usize>, a: &str, b: &str) {
+    if a == b {
+        return;
+    }
+    let key = if a <= b {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
+    };
+    *weights.entry(key).or_insert(0) += 1;
+}
+
+/// Builds an undirected, weighted link graph from all logs (cache-routed).
+/// Edges: (a) co-occurrence between distinct TOPIC targets within the same entry;
+/// (b) each topic to its containing log date and to any [[YYYY-MM-DD]] date target it co-occurs with.
+/// Weight = number of entries the edge co-occurs in. Adjacency is symmetric.
+/// Wired into the graph popup in a later task.
+#[allow(dead_code)]
+pub fn build_link_graph(log_path: &Path) -> io::Result<LinkGraph> {
+    ensure_log_dir(log_path)?;
+    let mut weights: HashMap<(String, String), usize> = HashMap::new();
+
+    for date in get_available_log_dates(log_path).unwrap_or_default() {
+        let date_str = date.format("%Y-%m-%d").to_string();
+        let path = get_file_path_for_date(log_path, &date_str);
+        if !path.exists() {
+            continue;
+        }
+        let path_str = path.to_string_lossy().to_string();
+        let Ok(content) = read_log_file_cached(&path) else {
+            continue;
+        };
+        for entry in parse_log_content(&content, &path_str) {
+            let targets = crate::links::distinct_targets(&entry.content);
+            let mut topics: Vec<String> = Vec::new();
+            let mut dates: Vec<String> = Vec::new();
+            for t in targets {
+                match crate::links::link_kind(&t) {
+                    crate::links::LinkKind::Date(_) => dates.push(t),
+                    crate::links::LinkKind::Topic => topics.push(t),
+                }
+            }
+            // (a) topic <-> topic co-occurrence
+            for i in 0..topics.len() {
+                for j in (i + 1)..topics.len() {
+                    add_edge(&mut weights, &topics[i], &topics[j]);
+                }
+            }
+            // (b) topic <-> containing date and topic <-> explicit date targets
+            for topic in &topics {
+                add_edge(&mut weights, topic, &date_str);
+                for d in &dates {
+                    if d != &date_str {
+                        add_edge(&mut weights, topic, d);
+                    }
+                }
+            }
+        }
+    }
+
+    // Materialize symmetric adjacency, sorted desc by weight then name asc.
+    let mut adjacency: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+    for ((a, b), w) in weights {
+        adjacency.entry(a.clone()).or_default().push((b.clone(), w));
+        adjacency.entry(b).or_default().push((a, w));
+    }
+    for neigh in adjacency.values_mut() {
+        neigh.sort_by(|x, y| y.1.cmp(&x.1).then_with(|| x.0.cmp(&y.0)));
+    }
+    Ok(LinkGraph { adjacency })
+}
+
 /// Returns every log entry whose content references `target` via a wikilink
 /// (`[[target]]` or `[[target|alias]]`). Exact, case-sensitive match. Reads
 /// through the content cache.
@@ -3909,6 +4007,168 @@ mod tests {
         assert!(
             tasks.iter().all(|t| !t.text.contains("excluded")),
             "out-of-range task must not appear"
+        );
+    }
+
+    #[test]
+    fn build_link_graph_co_occurrence() {
+        let dir = temp_log_dir();
+        write_log(&dir, "2020-12-01", "## [09:00:00]\n[[A]] [[B]] [[C]]\n");
+        let graph = build_link_graph(&dir).expect("build graph");
+
+        // All pairwise topic edges should have weight 1
+        let neighbors_a = graph.neighbors("A");
+        assert!(
+            neighbors_a.iter().any(|(n, w)| n == "B" && *w == 1),
+            "A-B edge weight 1"
+        );
+        assert!(
+            neighbors_a.iter().any(|(n, w)| n == "C" && *w == 1),
+            "A-C edge weight 1"
+        );
+        // A should also link to the containing date
+        assert!(
+            neighbors_a
+                .iter()
+                .any(|(n, w)| n == "2020-12-01" && *w == 1),
+            "A linked to containing date"
+        );
+        // B-C edge
+        assert!(
+            graph
+                .neighbors("B")
+                .iter()
+                .any(|(n, w)| n == "C" && *w == 1),
+            "B-C edge weight 1"
+        );
+    }
+
+    #[test]
+    fn build_link_graph_weight_accumulates() {
+        let dir = temp_log_dir();
+        // Two separate entries each containing [[A]] [[B]]
+        write_log(
+            &dir,
+            "2020-12-01",
+            "## [09:00:00]\n[[A]] [[B]]\n\n## [10:00:00]\n[[A]] [[B]]\n",
+        );
+        let graph = build_link_graph(&dir).expect("build graph");
+
+        let neighbors_a = graph.neighbors("A");
+        let b_weight = neighbors_a
+            .iter()
+            .find(|(n, _)| n == "B")
+            .map(|(_, w)| *w)
+            .unwrap_or(0);
+        assert_eq!(
+            b_weight, 2,
+            "A-B edge weight accumulates to 2 across two entries"
+        );
+    }
+
+    #[test]
+    fn build_link_graph_intra_entry_dedupes() {
+        let dir = temp_log_dir();
+        // [[A]] appears twice in same entry — distinct_targets dedupes it
+        write_log(&dir, "2020-12-01", "## [09:00:00]\n[[A]] [[A]] [[B]]\n");
+        let graph = build_link_graph(&dir).expect("build graph");
+
+        let b_weight = graph
+            .neighbors("A")
+            .iter()
+            .find(|(n, _)| n == "B")
+            .map(|(_, w)| *w)
+            .unwrap_or(0);
+        assert_eq!(
+            b_weight, 1,
+            "A-B edge weight is 1 despite [[A]] appearing twice in the entry"
+        );
+    }
+
+    #[test]
+    fn build_link_graph_symmetric() {
+        let dir = temp_log_dir();
+        write_log(&dir, "2020-12-01", "## [09:00:00]\n[[A]] [[B]]\n");
+        let graph = build_link_graph(&dir).expect("build graph");
+
+        let a_has_b = graph.neighbors("A").iter().any(|(n, _)| n == "B");
+        let b_has_a = graph.neighbors("B").iter().any(|(n, _)| n == "A");
+        assert!(a_has_b, "A -> B in adjacency");
+        assert!(b_has_a, "B -> A in adjacency (symmetric)");
+
+        let a_b_weight = graph
+            .neighbors("A")
+            .iter()
+            .find(|(n, _)| n == "B")
+            .map(|(_, w)| *w)
+            .unwrap_or(0);
+        let b_a_weight = graph
+            .neighbors("B")
+            .iter()
+            .find(|(n, _)| n == "A")
+            .map(|(_, w)| *w)
+            .unwrap_or(0);
+        assert_eq!(a_b_weight, b_a_weight, "symmetric edges have equal weight");
+    }
+
+    #[test]
+    fn link_graph_highest_degree() {
+        let dir = temp_log_dir();
+        // Hub connects to A, B, C in each of 3 entries → weight 3 each = total 9
+        // Spoke only connects to Hub in each of 3 entries → weight 3 = total 3
+        write_log(&dir, "2020-12-01", "## [09:00:00]\n[[Hub]] [[A]]\n");
+        write_log(&dir, "2020-12-02", "## [09:00:00]\n[[Hub]] [[B]]\n");
+        write_log(&dir, "2020-12-03", "## [09:00:00]\n[[Hub]] [[C]]\n");
+        let graph = build_link_graph(&dir).expect("build graph");
+
+        // Hub has edges to A(1), B(1), C(1) plus each containing date(1) = total weight >= 3 topics
+        // A, B, C each have edge weight 1 (Hub) + containing date(1) = 2
+        // Hub has topic edges = 3 plus date edges = 3 = 6 total; A,B,C = 2 each
+        let top = graph.highest_degree().expect("non-empty graph");
+        assert_eq!(top, "Hub", "Hub has the highest total edge weight");
+
+        // Tie-break: equal-weight nodes -> alphabetically first name wins
+        let dir2 = temp_log_dir();
+        // "Apple" and "Banana" each appear once with one partner → same total degree
+        write_log(&dir2, "2021-01-01", "## [09:00:00]\n[[Apple]] [[Banana]]\n");
+        let graph2 = build_link_graph(&dir2).expect("build graph2");
+        // Apple-Banana edge: weight 1. Apple also links to date: weight 1, total=2
+        // Banana also links to date: weight 1, total=2
+        // Both equal → alphabetically first = "2021-01-01" date node (0-9 < A) OR
+        // we need to check actual totals. The date node has edges to Apple(1) + Banana(1) = 2.
+        // Apple has edges to Banana(1) + 2021-01-01(1) = 2. Banana same = 2.
+        // Three-way tie: "2021-01-01" < "Apple" < "Banana" alphabetically.
+        // highest_degree uses max_by with tie-break b.0.cmp(&a.0) which makes smaller name win.
+        let top2 = graph2.highest_degree().expect("non-empty graph2");
+        assert_eq!(
+            top2, "2021-01-01",
+            "tie broken by alphabetically first name"
+        );
+    }
+
+    #[test]
+    fn build_link_graph_date_target_edge() {
+        let dir = temp_log_dir();
+        // Entry in 2020-12-05 explicitly references [[Topic]] and [[2021-01-15]]
+        write_log(
+            &dir,
+            "2020-12-05",
+            "## [09:00:00]\n[[Topic]] [[2021-01-15]]\n",
+        );
+        let graph = build_link_graph(&dir).expect("build graph");
+
+        let topic_neighbors: Vec<String> = graph
+            .neighbors("Topic")
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        assert!(
+            topic_neighbors.contains(&"2020-12-05".to_string()),
+            "Topic linked to containing date 2020-12-05"
+        );
+        assert!(
+            topic_neighbors.contains(&"2021-01-15".to_string()),
+            "Topic linked to explicit date target 2021-01-15"
         );
     }
 }
