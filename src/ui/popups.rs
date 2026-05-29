@@ -1041,7 +1041,7 @@ pub fn render_links_popup(f: &mut Frame, app: &mut App) {
     f.render_widget(Clear, area);
     f.render_widget(block, area);
 
-    let link_color = parse_color(&app.config.theme.link);
+    let link_color = tokens.content_link;
     let items: Vec<ListItem> = app
         .links
         .iter()
@@ -1491,6 +1491,7 @@ fn help_sections(app: &App, compact: bool) -> Vec<HelpSection> {
                 "←/→ ±1d · ↑/↓ ±1w · PgUp/PgDn ±1m".to_string(),
             ),
             ("Tags".to_string(), fmt_keys(&kb.global.tags)),
+            ("Links".to_string(), fmt_keys(&kb.global.links)),
             ("Pomodoro".to_string(), fmt_keys(&kb.global.pomodoro)),
             ("Activity".to_string(), fmt_keys(&kb.global.activity)),
             ("Focus agenda".to_string(), fmt_keys(&kb.global.agenda)),
