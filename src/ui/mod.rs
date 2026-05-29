@@ -41,8 +41,9 @@ use popups::{
     render_editor_style_popup, render_exit_popup, render_google_auth_popup, render_goto_date_popup,
     render_help_popup, render_links_popup, render_memo_preview_popup, render_mood_popup,
     render_onboarding_popup, render_path_popup, render_pomodoro_popup, render_quick_capture_popup,
-    render_save_view_popup, render_saved_search_popup, render_saved_view_popup, render_siren_popup,
-    render_tag_popup, render_theme_switcher_popup, render_todo_popup,
+    render_review_popup, render_save_view_popup, render_saved_search_popup,
+    render_saved_view_popup, render_siren_popup, render_tag_popup, render_theme_switcher_popup,
+    render_todo_popup,
 };
 
 pub fn ui(f: &mut Frame, app: &mut App) {
@@ -1086,6 +1087,10 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     // Render popups (order matters: later ones appear on top)
     if app.is_popup(ActivePopup::Activity) {
         render_activity_popup(f, app);
+    }
+
+    if app.is_popup(ActivePopup::Review) {
+        render_review_popup(f, app);
     }
 
     if app.is_popup(ActivePopup::Mood) {

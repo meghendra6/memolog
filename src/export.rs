@@ -1,5 +1,4 @@
 //! Pure formatters for exporting review data to Markdown and CSV.
-#![allow(dead_code)] // consumed by the Review popup export action in a later task
 
 use crate::models::{ReviewSummary, TaskItem};
 use std::path::Path;

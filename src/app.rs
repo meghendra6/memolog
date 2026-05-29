@@ -200,6 +200,7 @@ enum CommandPaletteAction {
     ThemeSwitcher,
     EditorStyle,
     Activity,
+    Review,
     Pomodoro,
     Tags,
     SyncGoogle,
@@ -310,6 +311,9 @@ pub struct App<'a> {
     pub pomodoro_target: Option<PomodoroTarget>,
     pub activity_data: HashMap<String, (usize, usize)>, // "YYYY-MM-DD" -> (line_count, tomato_count)
     pub streak: (usize, bool),                          // (streak_days, includes_today)
+    pub review_data: Option<crate::models::ReviewSummary>,
+    pub review_period: crate::models::ReviewPeriod,
+    pub review_scroll: usize,
     pub theme_list_state: ListState,
     pub theme_preview_backup: Option<Theme>,
 
@@ -562,6 +566,9 @@ impl<'a> App<'a> {
             pomodoro_target: None,
             activity_data: HashMap::new(),
             streak,
+            review_data: None,
+            review_period: crate::models::ReviewPeriod::default(),
+            review_scroll: 0,
             theme_list_state: ListState::default(),
             theme_preview_backup: None,
             editor_style_list_state: ListState::default(),
@@ -1105,6 +1112,18 @@ impl<'a> App<'a> {
                 target: CommandPaletteTarget::Action(CommandPaletteAction::Activity),
             },
             CommandPaletteItem {
+                id: "action:review".to_string(),
+                label: "Review".to_string(),
+                hint: primary_shortcut(&kb.global.review),
+                aliases: vec![
+                    "insight".to_string(),
+                    "digest".to_string(),
+                    "summary".to_string(),
+                ],
+                disabled_reason: None,
+                target: CommandPaletteTarget::Action(CommandPaletteAction::Review),
+            },
+            CommandPaletteItem {
                 id: "action:pomodoro".to_string(),
                 label: "Pomodoro".to_string(),
                 hint: primary_shortcut(&kb.global.pomodoro),
@@ -1263,6 +1282,7 @@ impl<'a> App<'a> {
             CommandPaletteAction::ThemeSwitcher => crate::actions::open_theme_switcher(self),
             CommandPaletteAction::EditorStyle => crate::actions::open_editor_style_switcher(self),
             CommandPaletteAction::Activity => crate::actions::open_activity_popup(self),
+            CommandPaletteAction::Review => crate::actions::open_review_popup(self),
             CommandPaletteAction::Pomodoro => {
                 crate::actions::open_or_toggle_pomodoro_for_selected_task(self)
             }
@@ -3167,6 +3187,24 @@ mod tests {
                 .iter()
                 .any(|entry| entry.content.contains("#inbox"))
         );
+    }
+
+    #[test]
+    fn open_review_popup_sets_active_popup_and_data() {
+        let log_dir = temp_log_dir();
+        let today = chrono::Local::now().date_naive();
+        let file = log_dir.join(format!("{}.md", today.format("%Y-%m-%d")));
+        fs::write(&file, "[09:00:00] worked on #review feature\n").expect("seed log file");
+
+        let mut app = App::new();
+        app.config.data.log_path = log_dir;
+        app.review_period = crate::models::ReviewPeriod::Day;
+
+        crate::actions::open_review_popup(&mut app);
+
+        assert_eq!(app.active_popup, ActivePopup::Review);
+        let summary = app.review_data.expect("review data populated");
+        assert!(summary.log_lines >= 1, "today's log line should be counted");
     }
 
     #[test]

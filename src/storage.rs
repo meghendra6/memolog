@@ -2513,8 +2513,6 @@ pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
 /// (they were earned on a prior day), matching get_activity_stats. Estimated minutes
 /// are computed by the caller (which has the pomodoro config), keeping this function
 /// config-free.
-// Wired into the Review popup in a later task.
-#[allow(dead_code)]
 pub fn build_review(
     log_path: &Path,
     start: NaiveDate,
@@ -2608,8 +2606,6 @@ pub fn build_review(
     Ok(summary)
 }
 
-// Wired into the Review popup export in a later task.
-#[allow(dead_code)]
 /// Returns all task items whose log-file date falls in [start, end] inclusive.
 pub fn collect_tasks_in_range(
     log_path: &Path,

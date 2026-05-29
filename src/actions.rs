@@ -169,6 +169,64 @@ pub fn open_activity_popup(app: &mut App) {
     }
 }
 
+pub fn open_review_popup(app: &mut App) {
+    let today = Local::now().date_naive();
+    let (start, end) = app.review_period.range(today);
+    match storage::build_review(&app.config.data.log_path, start, end) {
+        Ok(summary) => {
+            app.review_data = Some(summary);
+            app.review_scroll = 0;
+            app.active_popup = ActivePopup::Review;
+        }
+        Err(_) => app.toast("Failed to build review."),
+    }
+}
+
+/// Rebuilds the review for the current period (after a period cycle).
+pub fn refresh_review(app: &mut App) {
+    let today = Local::now().date_naive();
+    let (start, end) = app.review_period.range(today);
+    if let Ok(summary) = storage::build_review(&app.config.data.log_path, start, end) {
+        app.review_data = Some(summary);
+        app.review_scroll = 0;
+    }
+}
+
+/// Exports the current review period. `as_csv=false` -> Markdown digest, true -> tasks CSV.
+/// Writes to <log_path>/exports/<name>-<stamp>.<ext> and toasts the path.
+pub fn export_review(app: &mut App, as_csv: bool) {
+    let today = Local::now().date_naive();
+    let (start, end) = app.review_period.range(today);
+    let stamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let mut dir = std::path::PathBuf::from(&app.config.data.log_path);
+    dir.push("exports");
+    let (content, fname) = if as_csv {
+        let tasks = storage::collect_tasks_in_range(&app.config.data.log_path, start, end)
+            .unwrap_or_default();
+        (
+            crate::export::tasks_csv(&tasks),
+            format!("tasks-{stamp}.csv"),
+        )
+    } else {
+        match &app.review_data {
+            Some(s) => (
+                crate::export::digest_markdown(s),
+                format!("review-{stamp}.md"),
+            ),
+            None => {
+                app.toast("No review to export.");
+                return;
+            }
+        }
+    };
+    let mut path = dir;
+    path.push(&fname);
+    match storage::write_atomic_bytes(&path, content.as_bytes()) {
+        Ok(()) => app.toast(format!("Exported to exports/{fname}")),
+        Err(_) => app.toast("Export failed."),
+    }
+}
+
 pub fn sync_google(app: &mut App) {
     if app.google_auth_receiver.is_some() {
         app.active_popup = ActivePopup::GoogleAuth;

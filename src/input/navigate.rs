@@ -361,6 +361,8 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         actions::open_or_toggle_pomodoro_for_selected_task(app);
     } else if key_match(&key, &app.config.keybindings.global.activity) {
         actions::open_activity_popup(app);
+    } else if key_match(&key, &app.config.keybindings.global.review) {
+        actions::open_review_popup(app);
     } else if key_match(&key, &app.config.keybindings.global.log_dir) {
         app.active_popup = ActivePopup::Path;
     } else if key_match(&key, &app.config.keybindings.global.theme_switcher) {

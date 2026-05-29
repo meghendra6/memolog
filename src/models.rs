@@ -20,6 +20,7 @@ pub enum ActivePopup {
     Exit,
     DeleteEntry,
     Activity,
+    Review,
     Path,
     Theme,
     EditorStyle,
@@ -342,8 +343,6 @@ pub fn strip_trailing_tomatoes(s: &str) -> (&str, usize) {
     (text, count)
 }
 
-// Consumed by the Review popup + export in a later task.
-#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ReviewPeriod {
     Day,
@@ -352,8 +351,6 @@ pub enum ReviewPeriod {
     Month,
 }
 
-// Consumed by the Review popup + export in a later task.
-#[allow(dead_code)]
 impl ReviewPeriod {
     /// Cycle Day -> Week -> Month -> Day.
     pub fn next(self) -> ReviewPeriod {
@@ -384,8 +381,6 @@ impl ReviewPeriod {
     }
 }
 
-// Consumed by the Review popup + export in a later task.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DayStat {
     pub date: NaiveDate,
@@ -394,8 +389,6 @@ pub struct DayStat {
     pub tomatoes: usize,
 }
 
-// Consumed by the Review popup + export in a later task.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PomodoroBreakdown {
     pub total: usize,
@@ -403,8 +396,6 @@ pub struct PomodoroBreakdown {
     pub per_tag: Vec<(String, usize)>,  // #tag -> tomatoes, desc
 }
 
-// Consumed by the Review popup + export in a later task.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReviewSummary {
     pub start: Option<NaiveDate>,
