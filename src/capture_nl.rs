@@ -1,5 +1,4 @@
 //! Natural-language capture enrichment and daily-note template rendering. Pure functions.
-#![allow(dead_code)] // wired into Quick Capture / composer / storage in a later task
 
 use crate::task_metadata::{TaskMetadataKey, parse_task_metadata, upsert_task_metadata_token};
 use chrono::{NaiveDate, NaiveTime};

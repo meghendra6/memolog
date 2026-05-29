@@ -1310,11 +1310,36 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
             app.quick_capture_input.clear();
         }
         KeyCode::Enter => {
-            if let Some(content) = quick_capture_inbox_content(&app.quick_capture_input) {
-                if let Err(e) = crate::storage::append_entry(&app.config.data.log_path, &content) {
+            let today = chrono::Local::now().date_naive();
+            let (text, enriched) = if app.config.capture.nl_parse {
+                let changed = crate::capture_nl::would_enrich(&app.quick_capture_input, today);
+                let enriched_text =
+                    crate::capture_nl::enrich_capture_text(&app.quick_capture_input, today);
+                (enriched_text, changed)
+            } else {
+                (app.quick_capture_input.clone(), false)
+            };
+            if let Some(content) = quick_capture_inbox_content(&text) {
+                let header = if app.config.capture.daily_template.is_empty() {
+                    None
+                } else {
+                    Some(crate::capture_nl::render_daily_template(
+                        &app.config.capture.daily_template,
+                        today,
+                    ))
+                };
+                if let Err(e) = crate::storage::append_entry_with_header(
+                    &app.config.data.log_path,
+                    &content,
+                    header.as_deref(),
+                ) {
                     app.toast(format!("Failed to save: {}", e));
                 } else {
-                    app.toast("Quick note saved to #inbox.");
+                    if enriched {
+                        app.toast("Quick note saved (auto-scheduled).");
+                    } else {
+                        app.toast("Quick note saved to #inbox.");
+                    }
                     app.update_logs();
                 }
             }
