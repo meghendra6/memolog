@@ -474,11 +474,17 @@ fn invalidate_search_cache() {
     }
 }
 
+// Past-date log files are small and stable; 512 entries (~1.4 years of daily
+// logs) bounds memory while keeping the working set fully cached. On overflow
+// the whole cache is cleared rather than evicting LRU — simple and rare in practice.
 const FILE_CONTENT_CACHE_MAX_ENTRIES: usize = 512;
 
 struct CachedFileContent {
+    /// Modification time from `fs::metadata` when this entry was filled.
     mtime: std::time::SystemTime,
+    /// Byte length from `fs::metadata` when this entry was filled.
     len: u64,
+    /// Full file contents read at fill time.
     content: String,
 }
 
@@ -547,7 +553,7 @@ fn read_log_file_cached(path: &Path) -> io::Result<String> {
 
     let meta = fs::metadata(path)?;
     let len = meta.len();
-    let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+    let mtime = meta.modified()?;
 
     if let Ok(guard) = file_content_cache().lock()
         && let Some(cached) = guard.get(path)
