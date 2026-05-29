@@ -104,6 +104,7 @@ pub fn write_atomic_bytes(path: &Path, content: &[u8]) -> io::Result<()> {
 fn write_log_content(path: &Path, content: &str) -> io::Result<()> {
     write_atomic_bytes(path, content.as_bytes())?;
     invalidate_search_cache();
+    invalidate_file_content_cache(path);
     Ok(())
 }
 
@@ -165,6 +166,7 @@ pub fn append_entry_to_date(log_path: &Path, date: NaiveDate, content: &str) -> 
     }
     file.write_all(entry.as_bytes())?;
     invalidate_search_cache();
+    invalidate_file_content_cache(&path);
     Ok(())
 }
 
@@ -199,7 +201,7 @@ pub fn read_entries_for_date_range(
 
         if path.exists() {
             let path_str = path.to_string_lossy().to_string();
-            if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(content) = read_log_file_cached(&path) {
                 let entries = parse_log_content(&content, &path_str);
                 all_entries.extend(entries);
             }
@@ -317,7 +319,7 @@ pub fn read_tasks_for_date_range(
             continue;
         }
         let path_str = path.to_string_lossy().to_string();
-        if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(content) = read_log_file_cached(&path) {
             let tasks = parse_task_content(&content, &path_str);
             for task in tasks {
                 let agenda_date = agenda_date_for_task(&task, date);
@@ -378,7 +380,7 @@ fn read_note_entries(
         if !path.exists() {
             continue;
         }
-        let content = fs::read_to_string(&path)?;
+        let content = read_log_file_cached(&path)?;
         let path_str = path.to_string_lossy().to_string();
 
         for (idx, line) in content.lines().enumerate() {
@@ -497,7 +499,6 @@ fn file_content_cache() -> &'static Mutex<HashMap<PathBuf, CachedFileContent>> {
 /// Removes a single path from the content cache. Called by write paths so an
 /// in-app edit to a past-date file is never served stale, even when the
 /// filesystem mtime granularity is too coarse to detect a same-second write.
-#[allow(dead_code)]
 fn invalidate_file_content_cache(path: &Path) {
     if let Some(cache) = FILE_CONTENT_CACHE.get()
         && let Ok(mut guard) = cache.lock()
@@ -544,7 +545,6 @@ fn file_read_count(path: &Path) -> u64 {
 /// Reads a log file's content, using an in-memory cache validated by
 /// `(mtime, len)`. Today's file is always read fresh. Callers must only pass
 /// paths that exist (the existing readers already guard with `path.exists()`).
-#[allow(dead_code)]
 fn read_log_file_cached(path: &Path) -> io::Result<String> {
     if is_today_log_file(path) {
         record_file_read(path);
@@ -3323,6 +3323,37 @@ mod tests {
             file_read_count(&path) - before,
             2,
             "today's file must always be read fresh"
+        );
+    }
+
+    #[test]
+    fn range_read_uses_cache_then_invalidates_on_write() {
+        let dir = temp_log_dir();
+        let start = NaiveDate::from_ymd_opt(2020, 6, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2020, 6, 1).unwrap();
+        let path = dir.join("2020-06-01.md");
+        fs::write(&path, "## [09:00:00]\n- [ ] task one\nplain note\n").expect("write");
+
+        // First range read populates the cache; second is served from it.
+        let before = file_read_count(&path);
+        let first = read_entries_for_date_range(&dir, start, end).expect("read 1");
+        let cached = read_entries_for_date_range(&dir, start, end).expect("read 2");
+        assert_eq!(first.len(), cached.len());
+        assert_eq!(
+            file_read_count(&path) - before,
+            1,
+            "second range read of an unchanged past file must hit the cache"
+        );
+
+        // A write through the choke point must invalidate the path.
+        let mid = file_read_count(&path);
+        write_log_content(&path, "## [10:00:00]\n- [x] task one\nplain note\n").expect("write");
+        let after = read_entries_for_date_range(&dir, start, end).expect("read 3");
+        assert!(after.iter().any(|e| e.content.contains("- [x] task one")));
+        assert_eq!(
+            file_read_count(&path) - mid,
+            1,
+            "read after write_log_content must hit disk again"
         );
     }
 
