@@ -666,7 +666,7 @@ pub fn search_entries_with_explain(log_path: &Path, query: &str) -> io::Result<V
 
     for path in paths {
         let path_str = path.to_string_lossy().to_string();
-        if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(content) = read_log_file_cached(&path) {
             let parsed_entries = parse_log_content(&content, &path_str);
             for entry in parsed_entries {
                 if let Some(detail) = score_search_match(&entry, &plan) {
@@ -2405,7 +2405,7 @@ pub fn collect_carryover_tasks(log_path: &Path, today: &str) -> io::Result<Vec<S
 
     let today_path = get_file_path_for_date(log_path, today);
     if today_path.exists() {
-        let content = fs::read_to_string(&today_path)?;
+        let content = read_log_file_cached(&today_path)?;
         for line in content.lines() {
             if let Some(parsed) = parse_task_line(line) {
                 resolved.insert(parsed.identity);
@@ -2423,7 +2423,7 @@ pub fn collect_carryover_tasks(log_path: &Path, today: &str) -> io::Result<Vec<S
         if !path.exists() {
             continue;
         }
-        let content = fs::read_to_string(&path)?;
+        let content = read_log_file_cached(&path)?;
         let mut ordered: Vec<String> = Vec::new();
         let mut states: std::collections::HashMap<String, ParsedTaskLine> =
             std::collections::HashMap::new();
@@ -2481,7 +2481,7 @@ pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("md")
-                && let Ok(content) = fs::read_to_string(&path)
+                && let Ok(content) = read_log_file_cached(&path)
             {
                 for line in content.lines() {
                     for word in line.split_whitespace() {
@@ -2586,7 +2586,7 @@ pub fn get_activity_stats(
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("md")
                 && let Some(filename) = path.file_stem().and_then(|s| s.to_str())
-                && let Ok(content) = fs::read_to_string(&path)
+                && let Ok(content) = read_log_file_cached(&path)
             {
                 let mut line_count = 0usize;
                 let mut tomato_count = 0usize;
@@ -3506,5 +3506,64 @@ mod tests {
 
         let none = backlinks_for(&dir, "topic").expect("backlinks lower");
         assert!(none.is_empty(), "matching is exact and case-sensitive");
+    }
+
+    #[test]
+    fn get_all_tags_is_cache_routed() {
+        let dir = temp_log_dir();
+        let path = dir.join("2020-10-01.md");
+        fs::write(&path, "## [09:00:00]\nnote #work #idea\n").expect("write");
+        let before = file_read_count(&path);
+        let _ = get_all_tags(&dir).expect("tags 1");
+        let _ = get_all_tags(&dir).expect("tags 2");
+        assert_eq!(
+            file_read_count(&path) - before,
+            1,
+            "second get_all_tags must hit the content cache"
+        );
+    }
+
+    #[test]
+    fn get_all_tags_still_scans_non_date_md_files() {
+        let dir = temp_log_dir();
+        fs::write(dir.join("2020-10-02.md"), "## [09:00:00]\n#fromlog\n").expect("write log");
+        fs::write(dir.join("README.md"), "# notes\n#fromreadme\n").expect("write readme");
+        let tags = get_all_tags(&dir).expect("tags");
+        let names: Vec<&str> = tags.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(names.contains(&"#fromlog"), "log tags counted");
+        assert!(
+            names.contains(&"#fromreadme"),
+            "stray .md files are still scanned (no behavior change)"
+        );
+    }
+
+    #[test]
+    fn get_activity_stats_is_cache_routed() {
+        let dir = temp_log_dir();
+        let path = dir.join("2020-10-03.md");
+        fs::write(&path, "## [09:00:00]\n- [x] done 🍅\n").expect("write");
+        let before = file_read_count(&path);
+        let _ = get_activity_stats(&dir).expect("stats 1");
+        let _ = get_activity_stats(&dir).expect("stats 2");
+        assert_eq!(
+            file_read_count(&path) - before,
+            1,
+            "second get_activity_stats must hit the content cache"
+        );
+    }
+
+    #[test]
+    fn search_entries_is_cache_routed() {
+        let dir = temp_log_dir();
+        let path = dir.join("2020-10-04.md");
+        fs::write(&path, "## [09:00:00]\nalpha bravo charlie\n").expect("write");
+        let before = file_read_count(&path);
+        let _ = search_entries_with_explain(&dir, "alpha").expect("search 1");
+        let _ = search_entries_with_explain(&dir, "bravo").expect("search 2");
+        assert_eq!(
+            file_read_count(&path) - before,
+            1,
+            "two distinct searches of an unchanged past file read it from disk once (content cache), despite separate result-cache keys"
+        );
     }
 }
