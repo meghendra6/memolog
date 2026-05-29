@@ -60,19 +60,18 @@ fn scan_first_date(input: &str, base: NaiveDate) -> Option<NaiveDate> {
     for (i, w) in words.iter().enumerate() {
         let lw = w.to_ascii_lowercase();
         if lw == "next" {
-            if let Some(nw) = words.get(i + 1) {
-                if let Some(d) =
+            if let Some(nw) = words.get(i + 1)
+                && let Some(d) =
                     crate::date_input::parse_relative_date_input(&format!("next {nw}"), base)
-                {
-                    return Some(d);
-                }
+            {
+                return Some(d);
             }
             continue;
         }
-        if looks_like_date_word(w) {
-            if let Some(d) = crate::date_input::parse_relative_date_input(&lw, base) {
-                return Some(d);
-            }
+        if looks_like_date_word(w)
+            && let Some(d) = crate::date_input::parse_relative_date_input(&lw, base)
+        {
+            return Some(d);
         }
     }
     None
@@ -84,23 +83,25 @@ fn scan_first_date(input: &str, base: NaiveDate) -> Option<NaiveDate> {
 pub fn enrich_capture_text(input: &str, base: NaiveDate) -> String {
     let (existing, _) = parse_task_metadata(input);
     let mut result = input.to_string();
-    if existing.scheduled.is_none() && existing.due.is_none() && existing.start.is_none() {
-        if let Some(date) = scan_first_date(input, base) {
-            result = upsert_task_metadata_token(
-                &result,
-                TaskMetadataKey::Scheduled,
-                &date.format("%Y-%m-%d").to_string(),
-            );
-        }
+    if existing.scheduled.is_none()
+        && existing.due.is_none()
+        && existing.start.is_none()
+        && let Some(date) = scan_first_date(input, base)
+    {
+        result = upsert_task_metadata_token(
+            &result,
+            TaskMetadataKey::Scheduled,
+            &date.format("%Y-%m-%d").to_string(),
+        );
     }
-    if existing.time.is_none() {
-        if let Some(time) = scan_first_time(input) {
-            result = upsert_task_metadata_token(
-                &result,
-                TaskMetadataKey::Time,
-                &time.format("%H:%M").to_string(),
-            );
-        }
+    if existing.time.is_none()
+        && let Some(time) = scan_first_time(input)
+    {
+        result = upsert_task_metadata_token(
+            &result,
+            TaskMetadataKey::Time,
+            &time.format("%H:%M").to_string(),
+        );
     }
     result
 }
@@ -250,6 +251,26 @@ mod tests {
         assert!(
             !would_enrich("plain note", base()),
             "should not enrich 'plain note'"
+        );
+    }
+
+    #[test]
+    fn words_ending_in_ampm_are_not_times() {
+        assert_eq!(parse_time_ampm("spam"), None);
+        assert_eq!(parse_time_ampm("exam"), None);
+        assert_eq!(parse_time_ampm("program"), None);
+        assert_eq!(parse_time_ampm("team"), None);
+    }
+
+    #[test]
+    fn enrich_ignores_words_ending_in_ampm() {
+        assert_eq!(
+            enrich_capture_text("send exam results", base()),
+            "send exam results"
+        );
+        assert_eq!(
+            enrich_capture_text("review the program", base()),
+            "review the program"
         );
     }
 }
