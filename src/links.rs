@@ -1,8 +1,4 @@
 //! Parsing and classification of Obsidian-style `[[wikilinks]]`.
-// TEMP: functions are consumed by later wikilink tasks (storage index, popup,
-// follow-from-viewer, inline highlight). Remove this allow in the final task
-// once all are wired in.
-#![allow(dead_code)]
 
 use chrono::NaiveDate;
 use regex::Regex;
