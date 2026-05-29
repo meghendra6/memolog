@@ -3,7 +3,7 @@ use crate::{
     config::{EditorStyle, ThemePreset, config_path},
     integrations::gemini,
     integrations::google,
-    models::{self, EntryIdentity, Priority},
+    models::{self, ActivePopup, EntryIdentity, Priority},
     storage,
 };
 use chrono::{Duration, Local};
@@ -12,7 +12,7 @@ use std::fs;
 fn show_memo_preview(app: &mut App, entry: models::LogEntry) {
     app.memo_preview_entry = Some(entry);
     app.memo_preview_scroll = 0;
-    app.show_memo_preview_popup = true;
+    app.active_popup = ActivePopup::MemoPreview;
 }
 
 pub fn open_tag_popup(app: &mut App) {
@@ -20,7 +20,7 @@ pub fn open_tag_popup(app: &mut App) {
         app.tags = tags;
         if !app.tags.is_empty() {
             app.tag_list_state.select(Some(0));
-            app.show_tag_popup = true;
+            app.active_popup = ActivePopup::Tag;
         }
     }
 }
@@ -33,7 +33,7 @@ pub fn open_links_popup(app: &mut App) {
             app.toast("No wikilinks found.");
         } else {
             app.links_list_state.select(Some(0));
-            app.show_links_popup = true;
+            app.active_popup = ActivePopup::Links;
         }
     }
 }
@@ -60,7 +60,7 @@ pub fn open_links_popup_filtered(app: &mut App, targets: Vec<String>) {
     app.links = links;
     app.links_popup_filter = Some(targets);
     app.links_list_state.select(Some(0));
-    app.show_links_popup = true;
+    app.active_popup = ActivePopup::Links;
 }
 
 pub fn toggle_todo_in_timeline(app: &mut App) {
@@ -165,13 +165,13 @@ pub fn snooze_selected_task(app: &mut App, delta_days: i64) {
 pub fn open_activity_popup(app: &mut App) {
     if let Ok(data) = storage::get_activity_stats(&app.config.data.log_path) {
         app.activity_data = data;
-        app.show_activity_popup = true;
+        app.active_popup = ActivePopup::Activity;
     }
 }
 
 pub fn sync_google(app: &mut App) {
     if app.google_auth_receiver.is_some() {
-        app.show_google_auth_popup = true;
+        app.active_popup = ActivePopup::GoogleAuth;
         app.toast("Google auth in progress.");
         return;
     }
@@ -279,7 +279,7 @@ pub fn toggle_agenda_task(app: &mut App) {
 }
 
 pub fn open_theme_switcher(app: &mut App) {
-    if app.show_theme_popup {
+    if app.active_popup == ActivePopup::Theme {
         return;
     }
 
@@ -296,11 +296,11 @@ pub fn open_theme_switcher(app: &mut App) {
         .unwrap_or(0);
     app.theme_list_state.select(Some(selected));
     app.theme_preview_backup = Some(app.config.theme.clone());
-    app.show_theme_popup = true;
+    app.active_popup = ActivePopup::Theme;
 }
 
 pub fn open_editor_style_switcher(app: &mut App) {
-    if app.show_editor_style_popup {
+    if app.active_popup == ActivePopup::EditorStyle {
         return;
     }
 
@@ -316,7 +316,7 @@ pub fn open_editor_style_switcher(app: &mut App) {
         .position(|style| *style == current)
         .unwrap_or(0);
     app.editor_style_list_state.select(Some(selected));
-    app.show_editor_style_popup = true;
+    app.active_popup = ActivePopup::EditorStyle;
 }
 
 pub fn open_or_toggle_pomodoro_for_selected_task(app: &mut App) {
@@ -355,7 +355,7 @@ pub fn open_or_toggle_pomodoro_for_selected_task(app: &mut App) {
 
     app.pomodoro_pending_task = Some(task);
     app.pomodoro_minutes_input = app.config.pomodoro.work_minutes.to_string();
-    app.show_pomodoro_popup = true;
+    app.active_popup = ActivePopup::Pomodoro;
 }
 
 pub fn submit_search(app: &mut App) {
@@ -517,7 +517,7 @@ fn submit_ai_search(app: &mut App, question: &str) {
     app.clear_search_match_metadata();
     app.is_search_result = false;
     app.update_logs();
-    app.show_ai_loading_popup = true;
+    app.active_popup = ActivePopup::AiLoading;
     app.ai_loading_question = Some(question.to_string());
 
     let receiver = gemini::spawn_ai_search(
@@ -534,7 +534,7 @@ mod tests {
     use super::{open_agenda_preview, open_task_preview, open_timeline_preview};
     use crate::{
         app::App,
-        models::{AgendaItem, AgendaItemKind, LogEntry, TaskItem, TaskSchedule},
+        models::{ActivePopup, AgendaItem, AgendaItemKind, LogEntry, TaskItem, TaskSchedule},
     };
     use chrono::NaiveDate;
     use std::{
@@ -569,7 +569,7 @@ mod tests {
 
         open_timeline_preview(&mut app);
 
-        assert!(app.show_memo_preview_popup);
+        assert_eq!(app.active_popup, ActivePopup::MemoPreview);
         assert_eq!(app.memo_preview_scroll, 0);
         assert_eq!(
             app.memo_preview_entry
@@ -603,7 +603,7 @@ mod tests {
         open_task_preview(&mut app);
 
         let preview = app.memo_preview_entry.expect("preview entry");
-        assert!(app.show_memo_preview_popup);
+        assert_eq!(app.active_popup, ActivePopup::MemoPreview);
         assert_eq!(app.memo_preview_scroll, 0);
         assert!(preview.content.contains("## [12:03:20]"));
         assert!(preview.content.contains("TODO: [ ] 점심 메뉴 정하기 #food"));
@@ -634,7 +634,7 @@ mod tests {
         open_agenda_preview(&mut app);
 
         let preview = app.memo_preview_entry.expect("preview entry");
-        assert!(app.show_memo_preview_popup);
+        assert_eq!(app.active_popup, ActivePopup::MemoPreview);
         assert!(preview.content.contains("MEETING: 프로젝트 점검 #work"));
         assert_eq!(preview.line_number, 0);
     }

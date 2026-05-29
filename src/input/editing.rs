@@ -2,7 +2,7 @@ use crate::{
     app::App,
     config::key_match,
     editor::markdown,
-    models::{EditorMode, EntryIdentity, InputMode, TimelineFilter},
+    models::{ActivePopup, EditorMode, EntryIdentity, InputMode, TimelineFilter},
     storage,
 };
 use arboard::{Clipboard, ImageData};
@@ -263,7 +263,7 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
 
 fn request_exit_composer(app: &mut App) {
     if composer_has_unsaved_input(app) {
-        app.show_exit_popup = true;
+        app.active_popup = ActivePopup::Exit;
     } else {
         discard_composer(app);
     }

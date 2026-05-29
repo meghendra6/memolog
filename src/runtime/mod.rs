@@ -3,7 +3,8 @@ use crate::{
     app::App,
     config::google_token_path,
     integrations::{gemini, google},
-    models, storage,
+    models::{self, ActivePopup},
+    storage,
 };
 use chrono::{Duration, Local};
 use std::sync::mpsc::TryRecvError;
@@ -70,11 +71,10 @@ fn handle_ai_search(app: &mut App) {
     match result {
         Ok(gemini::AiSearchOutcome::Success(response)) => {
             app.ai_search_receiver = None;
-            app.show_ai_loading_popup = false;
             app.ai_loading_question = None;
             app.ai_response_scroll = 0;
             app.ai_response = Some(response.clone());
-            app.show_ai_response_popup = true;
+            app.active_popup = ActivePopup::AiResponse;
 
             if !response.entries.is_empty() {
                 app.logs = response.entries.clone();
@@ -98,17 +98,25 @@ fn handle_ai_search(app: &mut App) {
         }
         Ok(gemini::AiSearchOutcome::Error(message)) => {
             app.ai_search_receiver = None;
-            app.show_ai_loading_popup = false;
+            if matches!(
+                app.active_popup,
+                ActivePopup::AiLoading | ActivePopup::AiResponse
+            ) {
+                app.active_popup = ActivePopup::None;
+            }
             app.ai_loading_question = None;
-            app.show_ai_response_popup = false;
             app.toast(message);
         }
         Err(TryRecvError::Empty) => {}
         Err(TryRecvError::Disconnected) => {
             app.ai_search_receiver = None;
-            app.show_ai_loading_popup = false;
+            if matches!(
+                app.active_popup,
+                ActivePopup::AiLoading | ActivePopup::AiResponse
+            ) {
+                app.active_popup = ActivePopup::None;
+            }
             app.ai_loading_question = None;
-            app.show_ai_response_popup = false;
             app.toast("AI search stopped.");
         }
     }
@@ -132,7 +140,7 @@ fn handle_google_sync(app: &mut App) {
             app.google_sync_receiver = None;
             let token_path = google_token_path(&app.config);
             app.google_auth_display = Some(session.display.clone());
-            app.show_google_auth_popup = true;
+            app.active_popup = ActivePopup::GoogleAuth;
             app.google_auth_receiver = Some(google::spawn_auth_flow_poll(
                 app.config.google.clone(),
                 session,
@@ -163,21 +171,27 @@ fn handle_google_auth(app: &mut App) {
     match result {
         Ok(google::AuthPollResult::Success) => {
             app.google_auth_receiver = None;
-            app.show_google_auth_popup = false;
+            if app.active_popup == ActivePopup::GoogleAuth {
+                app.active_popup = ActivePopup::None;
+            }
             app.google_auth_display = None;
             app.toast("Google auth complete. Syncing now...");
             actions::sync_google(app);
         }
         Ok(google::AuthPollResult::Error(message)) => {
             app.google_auth_receiver = None;
-            app.show_google_auth_popup = false;
+            if app.active_popup == ActivePopup::GoogleAuth {
+                app.active_popup = ActivePopup::None;
+            }
             app.google_auth_display = None;
             app.toast(format!("Google auth failed: {message}"));
         }
         Err(TryRecvError::Empty) => {}
         Err(TryRecvError::Disconnected) => {
             app.google_auth_receiver = None;
-            app.show_google_auth_popup = false;
+            if app.active_popup == ActivePopup::GoogleAuth {
+                app.active_popup = ActivePopup::None;
+            }
             app.google_auth_display = None;
             app.toast("Google auth stopped.");
         }
@@ -197,7 +211,9 @@ fn handle_day_rollover(app: &mut App) {
     app.pomodoro_target = None;
     app.pomodoro_alert_expiry = None;
     app.pomodoro_alert_message = None;
-    app.show_pomodoro_popup = false;
+    if app.active_popup == ActivePopup::Pomodoro {
+        app.active_popup = ActivePopup::None;
+    }
     app.pomodoro_pending_task = None;
     app.pomodoro_minutes_input.clear();
 

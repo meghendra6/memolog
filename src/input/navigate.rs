@@ -2,7 +2,7 @@ use crate::{
     actions,
     app::App,
     config::{key_code_for_shortcuts, key_match},
-    models::{self, InputMode, TimelineFilter},
+    models::{self, ActivePopup, InputMode, TimelineFilter},
 };
 use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -52,7 +52,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     }
 
     if key_match(&key, &app.config.keybindings.global.quick_capture) {
-        app.show_quick_capture_popup = true;
+        app.active_popup = ActivePopup::QuickCapture;
         app.quick_capture_input.clear();
         return;
     }
@@ -122,7 +122,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     {
         app.set_selected_entry_context(TimelineFilter::All);
     } else if key_match(&key, &app.config.keybindings.global.help) {
-        app.show_help_popup = true;
+        app.active_popup = ActivePopup::Help;
     } else if key_match(&key, &app.config.keybindings.global.goto_date) {
         app.open_goto_date_popup();
     } else if key_match(&key, &app.config.keybindings.global.tags) {
@@ -134,7 +134,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     } else if key_match(&key, &app.config.keybindings.global.sync_google) {
         actions::sync_google(app);
     } else if key_match(&key, &app.config.keybindings.global.quick_capture) {
-        app.show_quick_capture_popup = true;
+        app.active_popup = ActivePopup::QuickCapture;
         app.quick_capture_input.clear();
     } else if key_match(&key, &app.config.keybindings.global.quit) {
         app.quit();
@@ -218,7 +218,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
             if let Some(i) = app.logs_state.selected() {
                 if i < app.logs.len() {
                     app.delete_entry_target = Some(app.logs[i].clone());
-                    app.show_delete_entry_popup = true;
+                    app.active_popup = ActivePopup::DeleteEntry;
                 }
             } else {
                 app.toast("No entry selected.");
@@ -362,7 +362,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     } else if key_match(&key, &app.config.keybindings.global.activity) {
         actions::open_activity_popup(app);
     } else if key_match(&key, &app.config.keybindings.global.log_dir) {
-        app.show_path_popup = true;
+        app.active_popup = ActivePopup::Path;
     } else if key_match(&key, &app.config.keybindings.global.theme_switcher) {
         actions::open_theme_switcher(app);
     } else if key_match(&key, &app.config.keybindings.global.editor_style_switcher) {
@@ -374,7 +374,7 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
 mod tests {
     use super::handle_normal_mode;
     use crate::app::App;
-    use crate::models::{LogEntry, NavigateFocus};
+    use crate::models::{ActivePopup, LogEntry, NavigateFocus};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn make_nav_app() -> App<'static> {
@@ -398,7 +398,7 @@ mod tests {
         let mut app = make_nav_app();
         let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
         handle_normal_mode(&mut app, key);
-        assert!(app.show_goto_date_popup);
+        assert_eq!(app.active_popup, ActivePopup::GotoDate);
         assert_eq!(app.goto_date_input, "2026-02-09");
     }
 
