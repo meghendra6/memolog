@@ -21,6 +21,7 @@ mod date_input;
 mod editor;
 mod input;
 mod integrations;
+mod links;
 mod models;
 mod runtime;
 mod saved_views;

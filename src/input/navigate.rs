@@ -127,6 +127,8 @@ pub fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         app.open_goto_date_popup();
     } else if key_match(&key, &app.config.keybindings.global.tags) {
         actions::open_tag_popup(app);
+    } else if key_match(&key, &app.config.keybindings.global.links) {
+        actions::open_links_popup(app);
     } else if key_match(&key, &app.config.keybindings.global.edit_config) {
         actions::open_config_in_composer(app);
     } else if key_match(&key, &app.config.keybindings.global.sync_google) {

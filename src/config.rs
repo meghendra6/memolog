@@ -538,6 +538,7 @@ pub struct GlobalBindings {
     pub search: Vec<String>,
     pub goto_date: Vec<String>,
     pub tags: Vec<String>,
+    pub links: Vec<String>,
     pub activity: Vec<String>,
     pub agenda: Vec<String>,
     pub log_dir: Vec<String>,
@@ -564,6 +565,7 @@ impl Default for GlobalBindings {
             search: vec!["/".to_string()],
             goto_date: vec!["ctrl+f".to_string()],
             tags: vec!["t".to_string()],
+            links: vec!["shift+l".to_string()],
             activity: vec!["ctrl+a".to_string()],
             agenda: vec!["a".to_string(), "shift+a".to_string()],
             log_dir: vec!["o".to_string()],
@@ -804,6 +806,7 @@ pub struct Theme {
     pub tag: String,
     pub mood: String,
     pub timestamp: String,
+    pub link: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ui: Option<ThemeUiOverrides>,
 }
@@ -821,6 +824,7 @@ impl Default for Theme {
             tag: "Yellow".to_string(),
             mood: "Magenta".to_string(),
             timestamp: "Blue".to_string(),
+            link: "LightMagenta".to_string(),
             ui: None,
         }
     }
@@ -959,6 +963,7 @@ impl Theme {
                 tag: "255,184,108".to_string(),
                 mood: "255,121,198".to_string(),
                 timestamp: "98,114,164".to_string(),
+                link: "189,147,249".to_string(),
                 ui: Some(ThemeUiOverrides {
                     fg: Some("248,248,242".to_string()),
                     bg: Some("40,42,54".to_string()),
@@ -984,6 +989,7 @@ impl Theme {
                 tag: "181,137,0".to_string(),
                 mood: "211,54,130".to_string(),
                 timestamp: "38,139,210".to_string(),
+                link: "108,113,196".to_string(),
                 ui: Some(ThemeUiOverrides {
                     fg: Some("131,148,150".to_string()),
                     bg: Some("0,43,54".to_string()),
@@ -1009,6 +1015,7 @@ impl Theme {
                 tag: "38,139,210".to_string(),
                 mood: "211,54,130".to_string(),
                 timestamp: "147,161,161".to_string(),
+                link: "211,54,130".to_string(),
                 ui: Some(ThemeUiOverrides {
                     fg: Some("101,123,131".to_string()),
                     bg: Some("253,246,227".to_string()),
@@ -1034,6 +1041,7 @@ impl Theme {
                 tag: "235,203,139".to_string(),
                 mood: "180,142,173".to_string(),
                 timestamp: "94,129,172".to_string(),
+                link: "180,142,173".to_string(),
                 ui: Some(ThemeUiOverrides {
                     fg: Some("216,222,233".to_string()),
                     bg: Some("46,52,64".to_string()),
@@ -1059,6 +1067,7 @@ impl Theme {
                 tag: "200,200,200".to_string(),
                 mood: "200,200,200".to_string(),
                 timestamp: "160,160,160".to_string(),
+                link: "150,150,150".to_string(),
                 ui: Some(ThemeUiOverrides {
                     fg: Some("240,240,240".to_string()),
                     bg: Some("16,16,16".to_string()),

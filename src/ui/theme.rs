@@ -15,6 +15,7 @@ pub struct ThemeTokens {
     pub content_tag: Color,
     pub content_mood: Color,
     pub content_timestamp: Color,
+    pub content_link: Color,
     pub ui_fg: Color,
     pub ui_bg: Color,
     pub ui_muted: Color,
@@ -38,6 +39,7 @@ impl ThemeTokens {
         let content_tag = parse_color(&theme.tag);
         let content_mood = parse_color(&theme.mood);
         let content_timestamp = parse_color(&theme.timestamp);
+        let content_link = parse_color(&theme.link);
 
         let ui_fg = parse_color(
             theme
@@ -118,6 +120,7 @@ impl ThemeTokens {
             content_tag,
             content_mood,
             content_timestamp,
+            content_link,
             ui_fg,
             ui_bg,
             ui_muted,
@@ -150,6 +153,7 @@ mod tests {
             tag: "Cyan".to_string(),
             mood: "Magenta".to_string(),
             timestamp: "LightCyan".to_string(),
+            link: "LightMagenta".to_string(),
             ui: None,
         };
 
@@ -164,6 +168,16 @@ mod tests {
         assert_eq!(tokens.content_tag, Color::Cyan);
         assert_eq!(tokens.content_mood, Color::Magenta);
         assert_eq!(tokens.content_timestamp, Color::LightCyan);
+    }
+
+    #[test]
+    fn from_theme_parses_link_token() {
+        let theme = Theme {
+            link: "Magenta".to_string(),
+            ..Default::default()
+        };
+        let tokens = ThemeTokens::from_theme(&theme);
+        assert_eq!(tokens.content_link, ratatui::style::Color::Magenta);
     }
 
     #[test]

@@ -306,6 +306,40 @@ fn parse_inline_markdown(
     let mut cursor = 0usize;
 
     while cursor < text.len() {
+        // Wikilinks `[[target]]` / `[[target|alias]]` take precedence so multi-word
+        // targets are not split by the word tokenizer.
+        if let Some(rel) = text[cursor..].find("[[")
+            && let Some(close_rel) = text[cursor + rel + 2..].find("]]")
+        {
+            let open = cursor + rel;
+            let inner_start = open + 2;
+            let inner_end = inner_start + close_rel;
+            let inner = &text[inner_start..inner_end];
+            let target_part = inner.split('|').next().unwrap_or("").trim();
+            if !inner.contains('\n') && !target_part.is_empty() {
+                if open > cursor {
+                    spans.extend(parse_words(
+                        &text[cursor..open],
+                        theme,
+                        todo_prefix,
+                        search_regex,
+                        search_style,
+                    ));
+                }
+                let display = match inner.split_once('|') {
+                    Some((_, alias)) if !alias.trim().is_empty() => alias.trim().to_string(),
+                    _ => target_part.to_string(),
+                };
+                let link_color = parse_color(&theme.link);
+                spans.push(Span::styled(
+                    display,
+                    Style::default().fg(link_color).add_modifier(Modifier::BOLD),
+                ));
+                cursor = inner_end + 2;
+                continue;
+            }
+        }
+
         let Some((idx, delim, style)) = next_emphasis_delimiter(text, cursor) else {
             spans.extend(parse_words(
                 &text[cursor..],
@@ -884,5 +918,40 @@ mod tests {
         );
 
         assert_eq!(span_text(&spans), "prefix italic suffix");
+    }
+
+    #[test]
+    fn parse_markdown_spans_styles_wikilink() {
+        let theme = Theme::default(); // theme.link defaults to "LightMagenta"
+        let spans = parse_markdown_spans(
+            "see [[Project Phoenix]] now",
+            &theme,
+            false,
+            None,
+            Style::default(),
+        );
+        let link_color = crate::ui::color_parser::parse_color(&theme.link);
+        let has_link_span = spans
+            .iter()
+            .any(|s| s.content.contains("Project Phoenix") && s.style.fg == Some(link_color));
+        assert!(
+            has_link_span,
+            "the [[...]] target should be styled with the link color"
+        );
+    }
+
+    #[test]
+    fn parse_markdown_spans_wikilink_shows_alias() {
+        let theme = Theme::default();
+        let spans =
+            parse_markdown_spans("[[Target|Display]]", &theme, false, None, Style::default());
+        let link_color = crate::ui::color_parser::parse_color(&theme.link);
+        // The alias is shown, the raw target is not.
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.content.contains("Display") && s.style.fg == Some(link_color))
+        );
+        assert!(!spans.iter().any(|s| s.content.contains("Target|")));
     }
 }
