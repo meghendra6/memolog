@@ -729,23 +729,29 @@ fn handle_links_popup(app: &mut App, key: KeyEvent) {
             match crate::links::link_kind(&target) {
                 crate::links::LinkKind::Date(date) => {
                     app.transition_to(InputMode::Navigate);
+                    // jump_to_date -> update_logs clears is_search_result, so a prior
+                    // backlinks/search view is reset when navigating to the date.
                     app.jump_to_date(date);
                 }
                 crate::links::LinkKind::Topic => {
-                    if let Ok(entries) = storage::backlinks_for(&app.config.data.log_path, &target)
-                    {
-                        app.clear_search_match_metadata();
-                        app.logs = entries;
-                        app.is_search_result = true;
-                        app.last_search_query = Some(target.clone());
-                        app.search_highlight_query = Some(target.clone());
-                        app.search_highlight_ready_at =
-                            Some(Local::now() + Duration::milliseconds(150));
-                        if app.logs.is_empty() {
-                            app.logs_state.select(None);
-                            app.toast("No backlinks found.");
-                        } else {
-                            app.logs_state.select(Some(0));
+                    match storage::backlinks_for(&app.config.data.log_path, &target) {
+                        Ok(entries) => {
+                            app.clear_search_match_metadata();
+                            app.logs = entries;
+                            app.is_search_result = true;
+                            app.search_highlight_query = Some(target.clone());
+                            app.last_search_query = Some(target);
+                            app.search_highlight_ready_at =
+                                Some(Local::now() + Duration::milliseconds(150));
+                            if app.logs.is_empty() {
+                                app.logs_state.select(None);
+                                app.toast("No backlinks found.");
+                            } else {
+                                app.logs_state.select(Some(0));
+                            }
+                        }
+                        Err(_) => {
+                            app.toast("Failed to load backlinks.");
                         }
                     }
                     app.transition_to(InputMode::Navigate);
