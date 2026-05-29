@@ -102,6 +102,10 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
         app.active_popup = ActivePopup::None;
         return true;
     }
+    if app.is_popup(ActivePopup::Review) {
+        handle_review_popup(app, key);
+        return true;
+    }
     if app.is_popup(ActivePopup::Path) {
         handle_path_popup(app, key);
         return true;
@@ -767,6 +771,36 @@ fn handle_links_popup(app: &mut App, key: KeyEvent) {
         app.active_popup = ActivePopup::None;
         app.links_popup_filter = None;
         app.transition_to(InputMode::Navigate);
+    }
+}
+
+fn handle_review_popup(app: &mut App, key: KeyEvent) {
+    if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
+        app.active_popup = ActivePopup::None;
+        app.review_data = None;
+        app.transition_to(InputMode::Navigate);
+        return;
+    }
+    if key.code == KeyCode::Tab {
+        app.review_period = app.review_period.next();
+        crate::actions::refresh_review(app);
+        return;
+    }
+    match key.code {
+        KeyCode::Char('m') => {
+            crate::actions::export_review(app, false);
+            return;
+        }
+        KeyCode::Char('c') => {
+            crate::actions::export_review(app, true);
+            return;
+        }
+        _ => {}
+    }
+    if key_match(&key, &app.config.keybindings.popup.up) {
+        app.review_scroll = app.review_scroll.saturating_sub(1);
+    } else if key_match(&key, &app.config.keybindings.popup.down) {
+        app.review_scroll = app.review_scroll.saturating_add(1);
     }
 }
 

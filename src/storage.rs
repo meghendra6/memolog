@@ -2469,6 +2469,14 @@ pub fn collect_carryover_tasks(log_path: &Path, today: &str) -> io::Result<Vec<S
     Ok(carryover)
 }
 
+/// Yields each `#tag` token in a line (words starting with '#', length > 1).
+fn tags_in_line(line: &str) -> Vec<String> {
+    line.split_whitespace()
+        .filter(|w| w.starts_with('#') && w.len() > 1)
+        .map(|w| w.to_string())
+        .collect()
+}
+
 /// Returns all tags found in log files with their occurrence counts, sorted by frequency.
 pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
     use std::collections::HashMap;
@@ -2484,10 +2492,8 @@ pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
                 && let Ok(content) = read_log_file_cached(&path)
             {
                 for line in content.lines() {
-                    for word in line.split_whitespace() {
-                        if word.starts_with('#') && word.len() > 1 {
-                            *tag_counts.entry(word.to_string()).or_insert(0) += 1;
-                        }
+                    for tag in tags_in_line(line) {
+                        *tag_counts.entry(tag).or_insert(0) += 1;
                     }
                 }
             }
@@ -2499,6 +2505,130 @@ pub fn get_all_tags(log_path: &Path) -> io::Result<Vec<(String, usize)>> {
     tags.sort_by(|a, b| b.1.cmp(&a.1));
 
     Ok(tags)
+}
+
+/// Aggregates a review summary over the inclusive [start, end] date range.
+/// Tomato attribution is derived from task lines (TaskItem.tomato_count), matching
+/// how the pomodoro timer appends 🍅 to tasks. Carryover tasks' tomatoes are excluded
+/// (they were earned on a prior day), matching get_activity_stats. Estimated minutes
+/// are computed by the caller (which has the pomodoro config), keeping this function
+/// config-free.
+pub fn build_review(
+    log_path: &Path,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> io::Result<crate::models::ReviewSummary> {
+    use crate::models::{DayStat, PomodoroBreakdown, ReviewSummary};
+    use std::collections::HashMap;
+
+    ensure_log_dir(log_path)?;
+    let mut summary = ReviewSummary {
+        start: Some(start),
+        end: Some(end),
+        ..Default::default()
+    };
+    let mut tag_counts: HashMap<String, usize> = HashMap::new();
+    let mut link_counts: HashMap<String, usize> = HashMap::new();
+    let mut per_task: HashMap<String, usize> = HashMap::new();
+    let mut per_tag_tomato: HashMap<String, usize> = HashMap::new();
+
+    let dates = get_available_log_dates(log_path).unwrap_or_default();
+    for date in dates {
+        if date < start || date > end {
+            continue;
+        }
+        let date_str = date.format("%Y-%m-%d").to_string();
+        let path = get_file_path_for_date(log_path, &date_str);
+        if !path.exists() {
+            continue;
+        }
+        let Ok(content) = read_log_file_cached(&path) else {
+            continue;
+        };
+        let path_str = path.to_string_lossy().to_string();
+
+        // Log lines (mirror get_activity_stats rule)
+        let mut day_lines = 0usize;
+        for line in content.lines() {
+            if line.trim().is_empty() || line.contains("System: Carryover Checked") {
+                continue;
+            }
+            day_lines += 1;
+            for tag in tags_in_line(line) {
+                *tag_counts.entry(tag).or_insert(0) += 1;
+            }
+        }
+        for link in crate::links::parse_links(&content) {
+            *link_counts.entry(link.target).or_insert(0) += 1;
+        }
+
+        // Tasks + tomatoes from task lines
+        let tasks = parse_task_content(&content, &path_str);
+        let mut day_done = 0usize;
+        let mut day_tomato = 0usize;
+        for t in &tasks {
+            summary.tasks_created += 1;
+            if t.is_done {
+                summary.tasks_completed += 1;
+                day_done += 1;
+            }
+            if t.tomato_count > 0 && t.carryover_from.is_none() {
+                day_tomato += t.tomato_count;
+                *per_task.entry(t.text.clone()).or_insert(0) += t.tomato_count;
+                for tag in tags_in_line(&t.text) {
+                    *per_tag_tomato.entry(tag).or_insert(0) += t.tomato_count;
+                }
+            }
+        }
+        summary.log_lines += day_lines;
+        summary.tomatoes += day_tomato;
+        summary.per_day.push(DayStat {
+            date,
+            log_lines: day_lines,
+            tasks_completed: day_done,
+            tomatoes: day_tomato,
+        });
+    }
+
+    summary.per_day.sort_by_key(|d| d.date);
+    let sort_desc = |m: HashMap<String, usize>| {
+        let mut v: Vec<(String, usize)> = m.into_iter().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        v
+    };
+    summary.top_tags = sort_desc(tag_counts);
+    summary.top_links = sort_desc(link_counts);
+    summary.pomodoro = PomodoroBreakdown {
+        total: summary.tomatoes,
+        per_task: sort_desc(per_task),
+        per_tag: sort_desc(per_tag_tomato),
+    };
+    Ok(summary)
+}
+
+/// Returns all task items whose log-file date falls in [start, end] inclusive.
+pub fn collect_tasks_in_range(
+    log_path: &Path,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> io::Result<Vec<TaskItem>> {
+    ensure_log_dir(log_path)?;
+    let mut out = Vec::new();
+    for date in get_available_log_dates(log_path).unwrap_or_default() {
+        if date < start || date > end {
+            continue;
+        }
+        let date_str = date.format("%Y-%m-%d").to_string();
+        let path = get_file_path_for_date(log_path, &date_str);
+        if !path.exists() {
+            continue;
+        }
+        let path_str = path.to_string_lossy().to_string();
+        if let Ok(content) = read_log_file_cached(&path) {
+            out.extend(parse_task_content(&content, &path_str));
+        }
+    }
+    Ok(out)
 }
 
 /// Returns all wikilink targets with occurrence counts, sorted by count
@@ -3538,6 +3668,187 @@ mod tests {
     }
 
     #[test]
+    fn get_all_tags_still_works_after_helper_extraction() {
+        let dir = temp_log_dir();
+        fs::write(
+            dir.join("2021-01-01.md"),
+            "## [09:00:00]\nnote #alpha #beta\n#beta again\n",
+        )
+        .expect("write");
+        let tags = get_all_tags(&dir).expect("tags");
+        let count = |name: &str| {
+            tags.iter()
+                .find(|(t, _)| t == name)
+                .map(|(_, c)| *c)
+                .unwrap_or(0)
+        };
+        assert_eq!(count("#alpha"), 1, "#alpha appears once");
+        assert_eq!(count("#beta"), 2, "#beta appears twice");
+        // #alpha has count 1, #beta has count 2 → #beta should rank first
+        assert_eq!(tags[0].0, "#beta");
+    }
+
+    #[test]
+    fn build_review_aggregates_range() {
+        let dir = temp_log_dir();
+
+        // Two files inside the range
+        write_log(
+            &dir,
+            "2021-03-01",
+            "## [09:00:00]\n- [ ] plan sprint #work\n- [x] review PR #work 🍅\n[[Alpha]]\n",
+        );
+        write_log(
+            &dir,
+            "2021-03-02",
+            "## [10:00:00]\n- [x] deploy service #ops\n[[Beta]]\n[[Alpha]]\n",
+        );
+
+        // One file outside the range — must be excluded
+        write_log(
+            &dir,
+            "2021-02-28",
+            "## [08:00:00]\n- [x] old task #old\n[[Excluded]]\n",
+        );
+
+        let start = NaiveDate::from_ymd_opt(2021, 3, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2021, 3, 2).unwrap();
+        let summary = build_review(&dir, start, end).expect("build_review");
+
+        assert_eq!(summary.start, Some(start));
+        assert_eq!(summary.end, Some(end));
+
+        // tasks_created: 3 (plan sprint, review PR, deploy service)
+        assert_eq!(summary.tasks_created, 3);
+        // tasks_completed: 2 (review PR, deploy service)
+        assert_eq!(summary.tasks_completed, 2);
+
+        // per_day ascending
+        assert_eq!(summary.per_day.len(), 2);
+        assert_eq!(summary.per_day[0].date, start);
+        assert_eq!(summary.per_day[1].date, end);
+        assert_eq!(summary.per_day[0].tasks_completed, 1);
+        assert_eq!(summary.per_day[1].tasks_completed, 1);
+
+        // top_links: Alpha appears in both files, Beta and [[Alpha]] in day2
+        let alpha_count = summary
+            .top_links
+            .iter()
+            .find(|(t, _)| t == "Alpha")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(alpha_count, 2, "Alpha linked twice");
+        let beta_count = summary
+            .top_links
+            .iter()
+            .find(|(t, _)| t == "Beta")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(beta_count, 1, "Beta linked once");
+
+        // Excluded link must not appear
+        assert!(
+            summary.top_links.iter().all(|(t, _)| t != "Excluded"),
+            "Excluded link must not appear in range"
+        );
+
+        // top_tags: #work appears in day1 twice (plan sprint, review PR)
+        let work_count = summary
+            .top_tags
+            .iter()
+            .find(|(t, _)| t == "#work")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert!(work_count >= 2, "#work should appear at least twice");
+
+        // #old from outside range must not appear
+        assert!(
+            summary.top_tags.iter().all(|(t, _)| t != "#old"),
+            "#old from outside range must not appear"
+        );
+    }
+
+    #[test]
+    fn build_review_pomodoro_attribution() {
+        let dir = temp_log_dir();
+
+        // A done task with 2 tomatoes and a #work tag — use trailing 🍅🍅
+        write_log(
+            &dir,
+            "2021-04-01",
+            "## [09:00:00]\n- [x] write report #work 🍅🍅\n- [ ] plan next #work\n",
+        );
+
+        let start = NaiveDate::from_ymd_opt(2021, 4, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2021, 4, 1).unwrap();
+        let summary = build_review(&dir, start, end).expect("build_review");
+
+        // The parser strips trailing tomatoes — tomato_count should be 2
+        assert_eq!(
+            summary.tomatoes, 2,
+            "total tomatoes: the done task has 🍅🍅"
+        );
+        assert_eq!(summary.pomodoro.total, 2);
+
+        // per_task: the done task text (after stripping tomatoes) should have count 2
+        // parse_task_content strips tomatoes and returns text without them
+        let task_entry = summary
+            .pomodoro
+            .per_task
+            .iter()
+            .find(|(text, _)| text.contains("write report") || text.contains("write"));
+        assert!(
+            task_entry.is_some(),
+            "per_task must contain the write report task"
+        );
+        let (_, task_tomatoes) = task_entry.unwrap();
+        assert_eq!(
+            *task_tomatoes, 2,
+            "write report task should have 2 tomatoes"
+        );
+
+        // per_tag: #work should have 2 tomatoes from the done task
+        let work_tomatoes = summary
+            .pomodoro
+            .per_tag
+            .iter()
+            .find(|(t, _)| t == "#work")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(work_tomatoes, 2, "#work tag should have 2 tomatoes");
+
+        // The open task has no tomatoes, so no extra attribution
+        // tasks_created = 2, tasks_completed = 1
+        assert_eq!(summary.tasks_created, 2);
+        assert_eq!(summary.tasks_completed, 1);
+    }
+
+    #[test]
+    fn build_review_excludes_carryover_tomatoes() {
+        // Carryover tasks carry 🍅 earned on a prior day; counting them again
+        // would double-count pomodoros.  build_review must skip their tomatoes,
+        // matching the behaviour of get_activity_stats.
+        //
+        // On-disk format: tomatoes trail the carryover marker, e.g.
+        //   - [x] task text ⟦YYYY-MM-DD⟧ 🍅🍅
+        let dir = temp_log_dir();
+        let path = dir.join("2020-11-01.md");
+        fs::write(
+            &path,
+            "## [09:00:00]\n- [x] real task 🍅\n- [x] carried task ⟦2020-10-31⟧ 🍅🍅\n",
+        )
+        .expect("write");
+
+        let start = NaiveDate::from_ymd_opt(2020, 11, 1).unwrap();
+        let summary = build_review(&dir, start, start).expect("review");
+
+        assert_eq!(
+            summary.tomatoes, 1,
+            "only the non-carryover task's tomato counts; carryover tomatoes must be excluded"
+        );
+    }
+
+    #[test]
     fn get_activity_stats_is_cache_routed() {
         let dir = temp_log_dir();
         let path = dir.join("2020-10-03.md");
@@ -3564,6 +3875,40 @@ mod tests {
             file_read_count(&path) - before,
             1,
             "two distinct searches of an unchanged past file read it from disk once (content cache), despite separate result-cache keys"
+        );
+    }
+
+    #[test]
+    fn collect_tasks_in_range_returns_only_in_range_tasks() {
+        let dir = temp_log_dir();
+
+        // Two in-range files
+        write_log(
+            &dir,
+            "2022-06-01",
+            "## [09:00:00]\n- [ ] task alpha\n- [x] task beta\n",
+        );
+        write_log(&dir, "2022-06-02", "## [10:00:00]\n- [ ] task gamma\n");
+
+        // One out-of-range file — must be excluded
+        write_log(&dir, "2022-05-31", "## [08:00:00]\n- [ ] task excluded\n");
+
+        let start = NaiveDate::from_ymd_opt(2022, 6, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2022, 6, 2).unwrap();
+        let tasks = collect_tasks_in_range(&dir, start, end).expect("collect");
+
+        assert_eq!(tasks.len(), 3, "only in-range tasks returned");
+        assert!(
+            tasks.iter().any(|t| t.text.contains("alpha")),
+            "task alpha present"
+        );
+        assert!(
+            tasks.iter().any(|t| t.text.contains("gamma")),
+            "task gamma present"
+        );
+        assert!(
+            tasks.iter().all(|t| !t.text.contains("excluded")),
+            "out-of-range task must not appear"
         );
     }
 }

@@ -41,6 +41,8 @@ mod popup_size {
     pub const LINKS: (u16, u16) = (60, 60);
     /// Activity graph popup
     pub const ACTIVITY: (u16, u16) = (70, 50);
+    /// Review / insight popup
+    pub const REVIEW: (u16, u16) = (80, 80);
 }
 
 pub fn render_siren_popup(f: &mut Frame, app: &App) {
@@ -201,6 +203,136 @@ pub fn render_activity_popup(f: &mut Frame, app: &App) {
         .split(area)[0];
 
     f.render_widget(List::new(items), inner_area);
+}
+
+pub fn render_review_popup(f: &mut Frame, app: &App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let title = match &app.review_data {
+        Some(summary) => {
+            let range = match (summary.start, summary.end) {
+                (Some(a), Some(b)) if a == b => a.format("%Y-%m-%d").to_string(),
+                (Some(a), Some(b)) => {
+                    format!("{}–{}", a.format("%Y-%m-%d"), b.format("%Y-%m-%d"))
+                }
+                _ => "—".to_string(),
+            };
+            format!(" Review — {} ({}) ", app.review_period.label(), range)
+        }
+        None => format!(" Review — {} ", app.review_period.label()),
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_border_default));
+    let area = centered_rect(popup_size::REVIEW.0, popup_size::REVIEW.1, f.area());
+    let inner = block.inner(area);
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .margin(1)
+        .split(inner);
+    let body_area = sections[0];
+    let footer_area = sections[1];
+
+    let lines = review_body_lines(app, &tokens);
+
+    let max_scroll = lines.len().saturating_sub(body_area.height.max(1) as usize);
+    let scroll = app.review_scroll.min(max_scroll);
+
+    let body = Paragraph::new(Text::from(lines))
+        .style(Style::default().fg(tokens.ui_fg))
+        .wrap(Wrap { trim: false })
+        .scroll((scroll as u16, 0));
+    f.render_widget(body, body_area);
+
+    let footer =
+        Paragraph::new("j/k scroll · Tab cycle period · m export md · c export csv · Esc close")
+            .style(Style::default().fg(tokens.ui_muted));
+    f.render_widget(footer, footer_area);
+}
+
+fn review_body_lines<'a>(app: &App, tokens: &ThemeTokens) -> Vec<Line<'a>> {
+    let Some(summary) = app.review_data.as_ref() else {
+        return vec![Line::from(Span::styled(
+            "No data for this period.",
+            Style::default().fg(tokens.ui_muted),
+        ))];
+    };
+
+    let heading = Style::default()
+        .fg(tokens.ui_accent)
+        .add_modifier(Modifier::BOLD);
+    let muted = Style::default().fg(tokens.ui_muted);
+    let mut lines: Vec<Line> = Vec::new();
+
+    let est_minutes = summary.tomatoes as u64 * app.config.pomodoro.work_minutes;
+    lines.push(Line::from(format!(
+        "Log lines:       {}",
+        summary.log_lines
+    )));
+    lines.push(Line::from(format!(
+        "Tasks created:   {}",
+        summary.tasks_created
+    )));
+    lines.push(Line::from(format!(
+        "Tasks completed: {}",
+        summary.tasks_completed
+    )));
+    lines.push(Line::from(format!(
+        "Pomodoros:       {} (~{} min)",
+        summary.tomatoes, est_minutes
+    )));
+
+    let section = |lines: &mut Vec<Line>, title: &str| {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(title.to_string(), heading)));
+    };
+
+    if !summary.top_tags.is_empty() {
+        section(&mut lines, "Top tags");
+        for (tag, n) in &summary.top_tags {
+            lines.push(Line::from(format!("  {tag} ({n})")));
+        }
+    }
+    if !summary.top_links.is_empty() {
+        section(&mut lines, "Top links");
+        for (link, n) in &summary.top_links {
+            lines.push(Line::from(format!("  [[{link}]] ({n})")));
+        }
+    }
+    if !summary.pomodoro.per_tag.is_empty() {
+        section(&mut lines, "Pomodoros by tag");
+        for (tag, n) in &summary.pomodoro.per_tag {
+            lines.push(Line::from(format!("  {tag}: {n}")));
+        }
+    }
+    if !summary.pomodoro.per_task.is_empty() {
+        section(&mut lines, "Pomodoros by task");
+        for (task, n) in &summary.pomodoro.per_task {
+            lines.push(Line::from(format!("  {task}: {n}")));
+        }
+    }
+    if !summary.per_day.is_empty() {
+        section(&mut lines, "Daily breakdown");
+        lines.push(Line::from(Span::styled(
+            format!("  {:<12} {:>5} {:>5} {:>4}", "Date", "Lines", "Done", "🍅"),
+            muted,
+        )));
+        for d in &summary.per_day {
+            lines.push(Line::from(format!(
+                "  {:<12} {:>5} {:>5} {:>4}",
+                d.date.format("%Y-%m-%d"),
+                d.log_lines,
+                d.tasks_completed,
+                d.tomatoes
+            )));
+        }
+    }
+
+    lines
 }
 
 pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
