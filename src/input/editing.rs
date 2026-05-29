@@ -218,6 +218,7 @@ pub fn handle_editing_mode(app: &mut App, key: KeyEvent) {
         if app.textarea.input(key) {
             markdown::replace_recent_arrow_sequence(&mut app.textarea);
             app.composer_dirty = true;
+            app.maybe_open_link_complete();
         }
         return;
     }

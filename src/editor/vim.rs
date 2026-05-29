@@ -73,6 +73,7 @@ pub(crate) fn handle_editor_insert(app: &mut App, key: event::KeyEvent) {
         markdown::replace_recent_arrow_sequence(&mut app.textarea);
         app.mark_insert_modified();
         app.composer_dirty = true;
+        app.maybe_open_link_complete();
     }
 }
 
@@ -453,6 +454,7 @@ fn set_insert_mode(app: &mut App) {
 }
 
 pub(crate) fn exit_insert_mode(app: &mut App) {
+    app.close_link_complete();
     if let Some(state) = app.block_insert.take() {
         apply_block_insert(app, state);
     }
@@ -529,6 +531,7 @@ fn handle_block_insert_input(app: &mut App, key: event::KeyEvent) {
                 state.inserted_text.pop();
                 app.mark_insert_modified();
                 app.composer_dirty = true;
+                app.maybe_open_link_complete();
             }
         }
         KeyCode::Char(ch)
@@ -541,6 +544,7 @@ fn handle_block_insert_input(app: &mut App, key: event::KeyEvent) {
                 }
                 app.mark_insert_modified();
                 app.composer_dirty = true;
+                app.maybe_open_link_complete();
             }
         }
         _ => {}

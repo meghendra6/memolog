@@ -12,6 +12,12 @@ use chrono::{Duration, Local, NaiveDate, NaiveTime, Timelike};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
+    // The link-complete popup coexists with the composer (it is not an ActivePopup variant) and
+    // must own keys before any other popup check or the editor handler runs while it is open.
+    if app.show_link_complete_popup {
+        handle_link_complete_popup(app, key);
+        return true;
+    }
     if app.is_popup(ActivePopup::GoogleAuth) {
         handle_google_auth_popup(app, key);
         return true;
@@ -123,6 +129,74 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
         return true;
     }
     false
+}
+
+fn handle_link_complete_popup(app: &mut App, key: KeyEvent) {
+    // Esc / cancel: close the popup but leave typed text as-is; do NOT exit Insert mode.
+    if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
+        app.close_link_complete();
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.popup.up) {
+        let len = app.filtered_link_candidates().len();
+        if len == 0 {
+            app.link_complete_state.select(None);
+        } else {
+            let i = match app.link_complete_state.selected() {
+                Some(i) => i.saturating_sub(1),
+                None => 0,
+            };
+            app.link_complete_state.select(Some(i));
+        }
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.popup.down) {
+        let len = app.filtered_link_candidates().len();
+        if len == 0 {
+            app.link_complete_state.select(None);
+        } else {
+            let i = match app.link_complete_state.selected() {
+                Some(i) => (i + 1).min(len - 1),
+                None => 0,
+            };
+            app.link_complete_state.select(Some(i));
+        }
+        return;
+    }
+
+    if key_match(&key, &app.config.keybindings.popup.confirm)
+        || key.code == KeyCode::Enter
+        || key.code == KeyCode::Tab
+    {
+        app.insert_selected_link_target();
+        return;
+    }
+
+    if key.code == KeyCode::Backspace {
+        // Forward the backspace to the textarea, then re-evaluate context: if the user
+        // backspaced past the `[[`, context becomes None and the popup closes.
+        app.textarea.input(key);
+        app.composer_dirty = true;
+        app.maybe_open_link_complete();
+        return;
+    }
+
+    if let KeyCode::Char(_) = key.code
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && !key.modifiers.contains(KeyModifiers::ALT)
+    {
+        // Forward the printable char to the textarea, then refilter. Typing `]` or `|`
+        // makes context None, which closes the popup.
+        app.textarea.input(key);
+        app.composer_dirty = true;
+        app.maybe_open_link_complete();
+        return;
+    }
+
+    // Any other key (cursor motions, etc.): close and swallow.
+    app.close_link_complete();
 }
 
 fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
