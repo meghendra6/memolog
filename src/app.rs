@@ -289,6 +289,11 @@ pub struct App<'a> {
     pub links: Vec<(String, usize)>,
     pub links_list_state: ListState,
     pub links_popup_filter: Option<Vec<String>>,
+    pub show_link_complete_popup: bool,
+    pub link_complete_candidates: Vec<String>, // all targets, loaded once on open
+    pub link_complete_query: String,
+    pub link_complete_anchor_col: usize,
+    pub link_complete_state: ListState,
     pub graph_data: Option<crate::storage::LinkGraph>,
     pub graph_center: Option<String>,
     pub graph_neighbors: Vec<(String, usize)>,
@@ -551,6 +556,11 @@ impl<'a> App<'a> {
             links: Vec::new(),
             links_list_state: ListState::default(),
             links_popup_filter: None,
+            show_link_complete_popup: false,
+            link_complete_candidates: Vec::new(),
+            link_complete_query: String::new(),
+            link_complete_anchor_col: 0,
+            link_complete_state: ListState::default(),
             graph_data: None,
             graph_center: None,
             graph_neighbors: Vec::new(),
@@ -977,6 +987,80 @@ impl<'a> App<'a> {
     pub fn close_command_palette(&mut self) {
         self.active_popup = ActivePopup::None;
         self.command_palette_input.clear();
+    }
+
+    /// Called after each Insert-mode keystroke. Opens/refreshes/closes the link-complete popup
+    /// based on whether the cursor sits in a `[[<query>` context.
+    pub fn maybe_open_link_complete(&mut self) {
+        let (row, col) = self.textarea.cursor();
+        let line = self.textarea.lines().get(row).cloned().unwrap_or_default();
+        match crate::editor::markdown::link_complete_context(&line, col) {
+            Some((anchor, query)) => {
+                if !self.show_link_complete_popup {
+                    // opening: load candidates once
+                    let all = crate::storage::get_all_links(&self.config.data.log_path)
+                        .unwrap_or_default();
+                    self.link_complete_candidates = all.into_iter().map(|(t, _)| t).collect();
+                    if self.link_complete_candidates.is_empty() {
+                        return; // nothing to suggest; don't open
+                    }
+                    self.show_link_complete_popup = true;
+                }
+                self.link_complete_anchor_col = anchor;
+                self.link_complete_query = query;
+                let filtered = self.filtered_link_candidates();
+                self.link_complete_state
+                    .select(if filtered.is_empty() { None } else { Some(0) });
+            }
+            None => self.close_link_complete(),
+        }
+    }
+
+    pub fn filtered_link_candidates(&self) -> Vec<String> {
+        crate::editor::markdown::filter_link_candidates(
+            &self.link_complete_candidates,
+            &self.link_complete_query,
+            8,
+        )
+    }
+
+    pub fn close_link_complete(&mut self) {
+        self.show_link_complete_popup = false;
+        self.link_complete_query.clear();
+        self.link_complete_candidates.clear();
+        self.link_complete_state.select(None);
+    }
+
+    /// Inserts the selected target: replaces the typed query fragment with `target]]`, cursor after `]]`.
+    pub fn insert_selected_link_target(&mut self) {
+        let filtered = self.filtered_link_candidates();
+        let Some(sel) = self.link_complete_state.selected() else {
+            self.close_link_complete();
+            return;
+        };
+        let Some(target) = filtered.get(sel).cloned() else {
+            self.close_link_complete();
+            return;
+        };
+        let (row, col) = self.textarea.cursor();
+        let line = self.textarea.lines().get(row).cloned().unwrap_or_default();
+        let chars: Vec<char> = line.chars().collect();
+        let anchor = self.link_complete_anchor_col.min(chars.len());
+        let col = col.min(chars.len());
+        // rebuild line: prefix [0..anchor) (includes the `[[`) + target + "]]" + suffix [col..)
+        let prefix: String = chars[..anchor].iter().collect();
+        let suffix: String = chars[col..].iter().collect();
+        let new_line = format!("{prefix}{target}]]{suffix}");
+        // new cursor char column = anchor + target.chars().count() + 2 (past ]])
+        let new_col = anchor + target.chars().count() + 2;
+        crate::editor::markdown::replace_line_and_set_cursor(
+            &mut self.textarea,
+            row,
+            new_line,
+            new_col,
+        );
+        self.composer_dirty = true;
+        self.close_link_complete();
     }
 
     fn command_palette_items(&self) -> Vec<CommandPaletteItem> {
@@ -2375,6 +2459,7 @@ impl<'a> App<'a> {
     }
 
     pub fn reset_editor_state(&mut self) {
+        self.close_link_complete();
         self.editor_mode = EditorMode::Normal;
         self.visual_anchor = None;
         self.block_insert = None;
@@ -3534,5 +3619,75 @@ mod tests {
 
         let (done, _tomatoes) = compute_today_task_stats(&today_logs);
         assert_eq!(done, 1, "only today's completed task should count");
+    }
+
+    // ── [[wikilink autocomplete insertion ──────────────────────────────────
+
+    #[test]
+    fn insert_selected_link_target_rewrites_line_and_cursor() {
+        // "go [[Pro" — chars: g(0) o(1) ' '(2) [(3) [(4) P(5) r(6) o(7)
+        // cursor after "Pro" → col 8; anchor right after "[[" → col 5
+        let mut app = App::new();
+        app.textarea = tui_textarea::TextArea::from(vec!["go [[Pro".to_string()]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(0, 8));
+        app.link_complete_candidates = vec!["Project X".to_string()];
+        app.link_complete_query = "Pro".to_string();
+        app.link_complete_anchor_col = 5;
+        app.show_link_complete_popup = true;
+        app.link_complete_state.select(Some(0));
+
+        app.insert_selected_link_target();
+
+        assert_eq!(
+            app.textarea.lines()[0],
+            "go [[Project X]]",
+            "line should have the full target wrapped in [[ ]]"
+        );
+        let (row, col) = app.textarea.cursor();
+        // cursor must land right after "]]": "go [[Project X]]" has 17 chars
+        assert_eq!(
+            (row, col),
+            (0, "go [[Project X]]".chars().count()),
+            "cursor should be right after ])"
+        );
+        assert!(
+            !app.show_link_complete_popup,
+            "popup should close after insertion"
+        );
+    }
+
+    #[test]
+    fn insert_selected_link_target_handles_multibyte() {
+        // "메모 [[프" — chars: 메(0) 모(1) ' '(2) [(3) [(4) 프(5)
+        // cursor after "프" → col 6; anchor right after "[[" → col 5
+        let mut app = App::new();
+        app.textarea = tui_textarea::TextArea::from(vec!["메모 [[프".to_string()]);
+        app.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(0, 6));
+        app.link_complete_candidates = vec!["프로젝트".to_string()];
+        app.link_complete_query = "프".to_string();
+        app.link_complete_anchor_col = 5;
+        app.show_link_complete_popup = true;
+        app.link_complete_state.select(Some(0));
+
+        app.insert_selected_link_target();
+
+        assert_eq!(
+            app.textarea.lines()[0],
+            "메모 [[프로젝트]]",
+            "multibyte: line should have the full target wrapped in [[ ]]"
+        );
+        let (row, col) = app.textarea.cursor();
+        // "메모 [[프로젝트]]" = 메,모,' ',[,[,프,로,젝,트,],] = 11 chars
+        assert_eq!(
+            (row, col),
+            (0, "메모 [[프로젝트]]".chars().count()),
+            "multibyte: cursor should be right after ]]"
+        );
+        assert!(
+            !app.show_link_complete_popup,
+            "popup should close after insertion"
+        );
     }
 }

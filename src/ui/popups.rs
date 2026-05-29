@@ -1216,6 +1216,67 @@ pub fn render_links_popup(f: &mut Frame, app: &mut App) {
     f.render_widget(footer, popup_layout[1]);
 }
 
+pub fn render_link_complete_popup(f: &mut Frame, app: &mut App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
+    let candidates = app.filtered_link_candidates();
+
+    // Small fixed-size overlay near the center, drawn on top of the composer.
+    let width: u16 = 40;
+    let height: u16 = (candidates.len().max(1) as u16 + 2).min(10);
+    let area = centered_rect_fixed(width, height, f.area());
+    f.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Links ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_border_default));
+
+    if candidates.is_empty() {
+        let para = Paragraph::new("no matches")
+            .style(Style::default().fg(tokens.ui_muted))
+            .block(block);
+        f.render_widget(para, area);
+        return;
+    }
+
+    let link_color = tokens.content_link;
+    let items: Vec<ListItem> = candidates
+        .iter()
+        .map(|target| {
+            ListItem::new(Line::from(Span::styled(
+                target.clone(),
+                Style::default().fg(link_color).add_modifier(Modifier::BOLD),
+            )))
+        })
+        .collect();
+
+    let highlight_bg = parse_color(&app.config.theme.text_highlight);
+    let list = List::new(items)
+        .block(block)
+        .highlight_symbol("→ ")
+        .highlight_style(
+            Style::default()
+                .bg(highlight_bg)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    f.render_stateful_widget(list, area, &mut app.link_complete_state);
+}
+
+/// A fixed-size centered rect (in cells, not percentages) clamped to `area`.
+fn centered_rect_fixed(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
 pub fn render_graph_popup(f: &mut Frame, app: &mut App) {
     let tokens = ThemeTokens::from_theme(&app.config.theme);
     let depth = app.graph_history.len();

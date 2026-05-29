@@ -224,6 +224,69 @@ fn outdented_list_prefix(indent_level: usize, marker: &str) -> String {
     }
 }
 
+/// If the cursor at char column `col` on `line` sits inside an open `[[<query>` (no closing `]`,
+/// no second `[`, no `|`, no newline between `[[` and the cursor), returns (anchor_col, query)
+/// where anchor_col is the char column of the first query char (immediately after `[[`).
+pub(crate) fn link_complete_context(line: &str, col: usize) -> Option<(usize, String)> {
+    let chars: Vec<char> = line.chars().collect();
+    let col = col.min(chars.len());
+    let mut i = col;
+    let mut query_rev: Vec<char> = Vec::new();
+    while i > 0 {
+        let c = chars[i - 1];
+        if c == ']' || c == '|' || c == '\n' {
+            return None;
+        }
+        if c == '[' {
+            if i >= 2 && chars[i - 2] == '[' {
+                query_rev.reverse();
+                return Some((i, query_rev.into_iter().collect()));
+            }
+            return None; // a single '[' — not a wikilink opener
+        }
+        query_rev.push(c);
+        i -= 1;
+    }
+    None
+}
+
+/// Case-insensitive filter: prefix matches first, then substring matches; capped to `cap`. Pure.
+pub(crate) fn filter_link_candidates(
+    candidates: &[String],
+    query: &str,
+    cap: usize,
+) -> Vec<String> {
+    let q = query.to_lowercase();
+    if q.is_empty() {
+        return candidates.iter().take(cap).cloned().collect();
+    }
+    let mut prefix: Vec<String> = Vec::new();
+    let mut substr: Vec<String> = Vec::new();
+    for c in candidates {
+        let lc = c.to_lowercase();
+        if lc.starts_with(&q) {
+            prefix.push(c.clone());
+        } else if lc.contains(&q) {
+            substr.push(c.clone());
+        }
+    }
+    prefix.extend(substr);
+    prefix.truncate(cap);
+    prefix
+}
+
+/// Replaces the line at `row` with `new_line` and moves the cursor to char column `new_col`.
+/// Mirrors `replace_recent_arrow_sequence`'s line-replacement + cursor-set approach.
+pub(crate) fn replace_line_and_set_cursor(
+    textarea: &mut TextArea,
+    row: usize,
+    new_line: String,
+    new_col: usize,
+) {
+    replace_current_line(textarea, row, &new_line);
+    textarea.move_cursor(CursorMove::Jump(row as u16, new_col as u16));
+}
+
 fn replace_current_line(textarea: &mut TextArea, row: usize, new_line: &str) {
     textarea.move_cursor(CursorMove::Jump(row as u16, 0));
     let line_len = textarea
@@ -586,6 +649,66 @@ mod tests {
 
         assert_eq!(textarea.lines(), ["- [ ] "]);
         assert_eq!(textarea.cursor(), (0, 6));
+    }
+
+    #[test]
+    fn link_complete_context_detects_open_wikilink() {
+        assert_eq!(
+            link_complete_context("see [[Pro", 9),
+            Some((6, "Pro".to_string()))
+        );
+        assert_eq!(link_complete_context("[[", 2), Some((2, String::new())));
+    }
+
+    #[test]
+    fn link_complete_context_rejects_closed_or_aliased_or_non_wikilink() {
+        // cursor after `]]` — a closing bracket precedes
+        assert_eq!(link_complete_context("[[A]]", 5), None);
+        // alias pipe
+        assert_eq!(link_complete_context("[[A|", 4), None);
+        // no brackets at all
+        assert_eq!(link_complete_context("no brackets", 5), None);
+        // single bracket is not a wikilink opener
+        assert_eq!(link_complete_context("x [ y", 3), None);
+    }
+
+    #[test]
+    fn filter_link_candidates_orders_prefix_before_substring() {
+        let candidates = vec![
+            "Alpha".to_string(),
+            "BetaAl".to_string(),
+            "AlBeta".to_string(),
+        ];
+        assert_eq!(
+            filter_link_candidates(&candidates, "al", 8),
+            vec![
+                "Alpha".to_string(),
+                "AlBeta".to_string(),
+                "BetaAl".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn filter_link_candidates_empty_query_returns_first_cap() {
+        let candidates = vec!["one".to_string(), "two".to_string(), "three".to_string()];
+        assert_eq!(
+            filter_link_candidates(&candidates, "", 2),
+            vec!["one".to_string(), "two".to_string()]
+        );
+    }
+
+    #[test]
+    fn filter_link_candidates_is_case_insensitive_and_respects_cap() {
+        let candidates = vec![
+            "Foo".to_string(),
+            "FOObar".to_string(),
+            "foobaz".to_string(),
+            "nope".to_string(),
+        ];
+        let result = filter_link_candidates(&candidates, "FOO", 2);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result, vec!["Foo".to_string(), "FOObar".to_string()]);
     }
 
     #[test]
