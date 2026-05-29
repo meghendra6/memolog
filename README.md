@@ -15,6 +15,9 @@ This project was forked from https://github.com/sonohoshi/sonomemo.
 - Folding with persistent state stored in the Markdown file
 - Smart ranked search (AND/OR/phrase/exclude/date + fuzzy matching)
 - Vim-style composer (Normal/Insert/Visual) with configurable keybindings
+- Obsidian-style `[[wikilinks]]` with backlinks, inline highlighting, and ego-graph view
+- Review & insight: weekly review with pomodoro tracking and Markdown/CSV export
+- Capture intelligence: natural-language date/time parsing and daily-note templates
 
 ## Quick start
 
@@ -120,6 +123,7 @@ Insert mode shortcuts:
 - `Tab`/`Shift+Tab` indent/outdent
 - Wide terminals show a live markdown preview beside the editor (unless Zen mode is on)
 - Rendered markdown now highlights bold / italic / strikethrough / thematic breaks / blockquotes more clearly
+- Typing `[[` opens a wikilink autocomplete popup suggesting existing link targets. `Enter` or `Tab` inserts the selected target, `Esc` dismisses without inserting.
 
 Normal/Visual mode:
 
@@ -205,6 +209,77 @@ When it completes, MemoLog appends a tomato (🍅) to the task line.
   - Press `:` and run `Save current view` to capture the current focus/filters/search
   - Press `:` and choose `Open saved views` (or a specific saved view) to restore it
 - AI search: prefix your query with `?`, `ai:`, or `ask:` to run a Gemini-assisted search
+
+## Wikilinks and backlinks
+
+MemoLog supports Obsidian-style wikilinks. You can link to any topic or date directly inside a memo entry.
+
+Syntax:
+
+- `[[topic]]` — links to a topic by name
+- `[[target|alias]]` — displays "alias" but links to "target"
+- `[[YYYY-MM-DD]]` — links to a specific date's log file
+
+Topic matching is exact and case-sensitive. `[[rust]]` and `[[Rust]]` are distinct targets.
+
+Inline `[[...]]` syntax is highlighted in the entry viewer using the `[theme] link` color token.
+
+**Links popup (`Shift+L`):**
+
+Press `Shift+L` from the timeline to open the Links popup, which lists all wikilink targets from across your logs.
+
+- Selecting a **topic** opens the backlinks view — the timeline is filtered to all entries that contain `[[topic]]`.
+- Selecting a **date** jumps to that date's log.
+- `j/k` move the selection, `Enter` to follow, `Esc` closes.
+
+From the **memo viewer**, pressing `Shift+L` opens the Links popup filtered to only the wikilinks present in the current entry, making it easy to navigate from one note to its references.
+
+## Wikilink graph
+
+Press `Shift+M` (or use the command palette with "Graph") to open the wikilink ego-graph.
+
+The graph is seeded from the first linked topic in the currently selected timeline entry, falling back to the highest-degree node in the graph. Edges connect topics that co-occur within an entry, and topics are also connected to the date entries they appear in.
+
+Graph popup keys:
+
+- `j/k` move selection through the neighbor list
+- `Enter` re-center the graph on the selected neighbor
+- `Backspace` go back to the previous center
+- `o` open the selected node's backlinks (topic) or jump to the date (date link)
+- `Esc` close
+
+## Review and insight
+
+Press `Shift+R` (or use the command palette with "Review") to open the Review popup, which summarizes your activity for a period.
+
+- `Tab` cycles between Day, Week, and Month views.
+- The review shows log entries written, tasks created and completed, pomodoros completed (count and estimated minutes based on `pomodoro.work_minutes`), top tags and links, pomodoro counts broken down by tag and task, and a per-day table.
+- Carryover tasks are excluded from pomodoro counts.
+
+Export:
+
+- `m` exports a Markdown digest to `<log_path>/exports/`
+- `c` exports a tasks CSV to `<log_path>/exports/`
+
+Navigation: `j/k` scroll the review content, `Esc` closes.
+
+## Capture intelligence
+
+MemoLog can detect natural-language date and time expressions in Quick Capture and new composer entries, automatically adding the appropriate scheduling tokens.
+
+For example, typing "meeting tomorrow 3pm" will add `@sched(...)` and `@time(...)` tokens automatically. This is additive — manually typed tokens are left untouched.
+
+Config: set `[capture] nl_parse = false` to disable (default: `true`).
+
+You can also define a daily-note template that is inserted once when a new day's log file is first created:
+
+```toml
+[capture]
+nl_parse = true
+daily_template = "# {{date}} ({{weekday}})\n"
+```
+
+Available placeholders: `{{date}}`, `{{weekday}}`, `{{date_long}}`. Leave `daily_template` empty (the default) for no template.
 
 ## Gemini AI search (experimental)
 
@@ -331,6 +406,7 @@ todo_wip = "Magenta"
 tag = "Cyan"
 mood = "Blue"
 timestamp = "LightCyan"
+link = "LightMagenta"   # color for inline [[wikilink]] highlights
 ```
 
 Theme presets can be selected via config or the Theme Switcher popup:
@@ -375,6 +451,9 @@ Global
 - `Ctrl+F` go to date (`YYYY-MM-DD`, `today`, `+3d`, `next mon`)
   - In the popup: `←/→` day, `↑/↓` week, `PgUp/PgDn` month, `Home` today, `Ctrl+T` today
 - `t` tags
+- `Shift+L` links / backlinks popup
+- `Shift+R` review & insight
+- `Shift+M` wikilink graph
 - `Ctrl+A` activity
 - `T` theme presets
 - `p` pomodoro
@@ -432,6 +511,7 @@ Composer
 - `Ctrl+Y` toggle editor-only Zen mode
 - `Ctrl+B` toggle inline image preview
 - `Tab/Shift+Tab` indent/outdent
+- `[[` opens wikilink autocomplete (j/k move, Enter/Tab insert, Esc dismiss)
 - `Esc` back
 
 Search

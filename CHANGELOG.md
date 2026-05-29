@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### 한국어
+- 세션 콘텐츠 캐시 및 리더 캐시 라우팅 추가로 로드 성능 개선
+- `ActivePopup` 열거형 리팩터링으로 팝업 상태 관리 단순화
+- Obsidian 스타일 `[[wikilinks]]` 지원: 백링크, 인라인 하이라이트(`[theme] link` 토큰), `[[alias|target]]` 문법
+- `Shift+L` 링크/백링크 팝업 및 메모 뷰어 내 필터링 지원
+- `Shift+M` 위키링크 에고 그래프 뷰 (노드 탐색, 이전 기록, 백링크 열기)
+- `[[` 컴포저 자동완성: 기존 링크 대상 제안 및 Enter/Tab으로 삽입
+- `Shift+R` 리뷰 & 인사이트: 일/주/월 요약, 포모도로 시간 추적, Markdown/CSV 내보내기 (`<log_path>/exports/`)
+- 캡처 인텔리전스: 자연어 날짜/시간 파싱 (`[capture] nl_parse`, 기본값 활성화) 및 일일 노트 템플릿 (`[capture] daily_template`)
+
+### English
+- Session content cache and readers cache routing for improved load performance
+- `ActivePopup` enum refactor simplifying popup state management
+- Obsidian-style `[[wikilinks]]` with backlinks, inline highlight (`[theme] link` token), and `[[target|alias]]` syntax
+- `Shift+L` Links popup with topic→backlinks and date→jump; filtered view from the memo viewer
+- `Shift+M` wikilink ego-graph view: navigate neighbors, go back through history, open backlinks or jump to date
+- `[[` composer autocomplete: suggests existing link targets; Enter/Tab to insert, Esc to dismiss
+- `Shift+R` Review & insight: Day/Week/Month summary, pomodoro time tracking, Markdown and CSV export to `<log_path>/exports/`
+- Capture intelligence: natural-language date/time parsing (`[capture] nl_parse`, on by default) and daily-note templates (`[capture] daily_template`)
+
 ## [1.3.7]
 
 ### 한국어
