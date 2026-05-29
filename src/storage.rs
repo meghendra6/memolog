@@ -104,6 +104,7 @@ pub fn write_atomic_bytes(path: &Path, content: &[u8]) -> io::Result<()> {
 fn write_log_content(path: &Path, content: &str) -> io::Result<()> {
     write_atomic_bytes(path, content.as_bytes())?;
     invalidate_search_cache();
+    invalidate_file_content_cache(path);
     Ok(())
 }
 
@@ -165,6 +166,7 @@ pub fn append_entry_to_date(log_path: &Path, date: NaiveDate, content: &str) -> 
     }
     file.write_all(entry.as_bytes())?;
     invalidate_search_cache();
+    invalidate_file_content_cache(&path);
     Ok(())
 }
 
@@ -199,7 +201,7 @@ pub fn read_entries_for_date_range(
 
         if path.exists() {
             let path_str = path.to_string_lossy().to_string();
-            if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(content) = read_log_file_cached(&path) {
                 let entries = parse_log_content(&content, &path_str);
                 all_entries.extend(entries);
             }
@@ -317,7 +319,7 @@ pub fn read_tasks_for_date_range(
             continue;
         }
         let path_str = path.to_string_lossy().to_string();
-        if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(content) = read_log_file_cached(&path) {
             let tasks = parse_task_content(&content, &path_str);
             for task in tasks {
                 let agenda_date = agenda_date_for_task(&task, date);
@@ -378,7 +380,7 @@ fn read_note_entries(
         if !path.exists() {
             continue;
         }
-        let content = fs::read_to_string(&path)?;
+        let content = read_log_file_cached(&path)?;
         let path_str = path.to_string_lossy().to_string();
 
         for (idx, line) in content.lines().enumerate() {
@@ -472,6 +474,113 @@ fn invalidate_search_cache() {
     {
         guard.clear();
     }
+}
+
+// Past-date log files are small and stable; 512 entries (~1.4 years of daily
+// logs) bounds memory while keeping the working set fully cached. On overflow
+// the whole cache is cleared rather than evicting LRU — simple and rare in practice.
+const FILE_CONTENT_CACHE_MAX_ENTRIES: usize = 512;
+
+struct CachedFileContent {
+    /// Modification time from `fs::metadata` when this entry was filled.
+    mtime: std::time::SystemTime,
+    /// Byte length from `fs::metadata` when this entry was filled.
+    len: u64,
+    /// Full file contents read at fill time.
+    content: String,
+}
+
+static FILE_CONTENT_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedFileContent>>> = OnceLock::new();
+
+fn file_content_cache() -> &'static Mutex<HashMap<PathBuf, CachedFileContent>> {
+    FILE_CONTENT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Removes a single path from the content cache. Called by write paths so an
+/// in-app edit to a past-date file is never served stale, even when the
+/// filesystem mtime granularity is too coarse to detect a same-second write.
+fn invalidate_file_content_cache(path: &Path) {
+    if let Some(cache) = FILE_CONTENT_CACHE.get()
+        && let Ok(mut guard) = cache.lock()
+    {
+        guard.remove(path);
+    }
+}
+
+/// True when `path`'s file name is today's `YYYY-MM-DD.md`.
+fn is_today_log_file(path: &Path) -> bool {
+    let today_name = format!("{}.md", Local::now().format("%Y-%m-%d"));
+    path.file_name().and_then(|s| s.to_str()) == Some(today_name.as_str())
+}
+
+// Per-path disk-read counter. Test-only bookkeeping: a no-op in production so
+// the cache adds zero overhead and never leaks memory outside tests.
+#[cfg(test)]
+static FILE_READ_COUNTS: OnceLock<Mutex<HashMap<PathBuf, u64>>> = OnceLock::new();
+
+#[cfg(test)]
+fn record_file_read(path: &Path) {
+    if let Ok(mut guard) = FILE_READ_COUNTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        *guard.entry(path.to_path_buf()).or_insert(0) += 1;
+    }
+}
+
+#[cfg(not(test))]
+#[inline]
+fn record_file_read(_path: &Path) {}
+
+/// Test helper: how many times `path` was actually read from disk.
+#[cfg(test)]
+fn file_read_count(path: &Path) -> u64 {
+    FILE_READ_COUNTS
+        .get()
+        .and_then(|m| m.lock().ok())
+        .and_then(|guard| guard.get(path).copied())
+        .unwrap_or(0)
+}
+
+/// Reads a log file's content, using an in-memory cache validated by
+/// `(mtime, len)`. Today's file is always read fresh. Callers must only pass
+/// paths that exist (the existing readers already guard with `path.exists()`).
+fn read_log_file_cached(path: &Path) -> io::Result<String> {
+    if is_today_log_file(path) {
+        record_file_read(path);
+        return fs::read_to_string(path);
+    }
+
+    let meta = fs::metadata(path)?;
+    let len = meta.len();
+    let mtime = meta.modified()?;
+
+    if let Ok(guard) = file_content_cache().lock()
+        && let Some(cached) = guard.get(path)
+        && cached.mtime == mtime
+        && cached.len == len
+    {
+        return Ok(cached.content.clone());
+    }
+
+    record_file_read(path);
+    let content = fs::read_to_string(path)?;
+
+    if let Ok(mut guard) = file_content_cache().lock() {
+        if guard.len() >= FILE_CONTENT_CACHE_MAX_ENTRIES {
+            guard.clear();
+        }
+        guard.insert(
+            path.to_path_buf(),
+            CachedFileContent {
+                mtime,
+                len,
+                content: content.clone(),
+            },
+        );
+    }
+
+    Ok(content)
 }
 
 fn collect_markdown_paths_with_snapshot(log_path: &Path) -> (Vec<PathBuf>, SearchSnapshot) {
@@ -3145,6 +3254,110 @@ mod tests {
     }
 
     #[test]
+    fn cached_reader_reads_past_file_once_on_repeat() {
+        let dir = temp_log_dir();
+        let path = dir.join("2020-01-02.md");
+        fs::write(&path, "## [09:00:00]\nhello\n").expect("write");
+
+        let before = file_read_count(&path);
+        let a = read_log_file_cached(&path).expect("read 1");
+        let b = read_log_file_cached(&path).expect("read 2");
+
+        assert_eq!(a, b);
+        assert_eq!(
+            file_read_count(&path) - before,
+            1,
+            "second identical read must be served from cache"
+        );
+    }
+
+    #[test]
+    fn cached_reader_invalidation_forces_reparse() {
+        let dir = temp_log_dir();
+        let path = dir.join("2020-02-03.md");
+        fs::write(&path, "## [09:00:00]\nfoo\n").expect("write");
+
+        let before = file_read_count(&path);
+        let _ = read_log_file_cached(&path).expect("read 1");
+        invalidate_file_content_cache(&path);
+        let _ = read_log_file_cached(&path).expect("read 2");
+
+        assert_eq!(
+            file_read_count(&path) - before,
+            2,
+            "read after invalidation must hit disk again"
+        );
+    }
+
+    #[test]
+    fn cached_reader_detects_external_edit_via_len_change() {
+        let dir = temp_log_dir();
+        let path = dir.join("2020-03-04.md");
+        fs::write(&path, "## [09:00:00]\nshort\n").expect("write");
+
+        let before = file_read_count(&path);
+        let _ = read_log_file_cached(&path).expect("read 1");
+        fs::write(&path, "## [09:00:00]\nmuch longer content here\n").expect("rewrite");
+        let content = read_log_file_cached(&path).expect("read 2");
+
+        assert!(content.contains("much longer"));
+        assert_eq!(
+            file_read_count(&path) - before,
+            2,
+            "changed length must invalidate the cached content"
+        );
+    }
+
+    #[test]
+    fn cached_reader_never_caches_today_file() {
+        let dir = temp_log_dir();
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let path = dir.join(format!("{today}.md"));
+        fs::write(&path, "## [09:00:00]\ntoday\n").expect("write");
+
+        let before = file_read_count(&path);
+        let _ = read_log_file_cached(&path).expect("read 1");
+        let _ = read_log_file_cached(&path).expect("read 2");
+
+        assert_eq!(
+            file_read_count(&path) - before,
+            2,
+            "today's file must always be read fresh"
+        );
+    }
+
+    #[test]
+    fn range_read_uses_cache_then_invalidates_on_write() {
+        let dir = temp_log_dir();
+        let start = NaiveDate::from_ymd_opt(2020, 6, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2020, 6, 1).unwrap();
+        let path = dir.join("2020-06-01.md");
+        fs::write(&path, "## [09:00:00]\n- [ ] task one\nplain note\n").expect("write");
+
+        // First range read populates the cache; second is served from it.
+        let before = file_read_count(&path);
+        let first = read_entries_for_date_range(&dir, start, end).expect("read 1");
+        let cached = read_entries_for_date_range(&dir, start, end).expect("read 2");
+        assert_eq!(first.len(), cached.len());
+        assert_eq!(
+            file_read_count(&path) - before,
+            1,
+            "second range read of an unchanged past file must hit the cache"
+        );
+
+        // A write through the choke point must invalidate the path.
+        let mid = file_read_count(&path);
+        write_log_content(&path, "## [10:00:00]\n- [x] task one\nplain note\n").expect("write");
+        let after = read_entries_for_date_range(&dir, start, end).expect("read 3");
+        assert!(after.iter().any(|e| e.content.contains("- [x] task one")));
+        assert_eq!(
+            file_read_count(&path) - mid,
+            1,
+            "read after write_log_content must hit disk again"
+        );
+    }
+
+    #[test]
     fn parse_log_content_with_pinned_tag() {
         // Correct format: ## [HH:MM:SS] as header, content on next line
         let content =
@@ -3164,5 +3377,31 @@ mod tests {
         // Verify second line is the pinned content
         let second_line = entries[0].content.lines().nth(1).unwrap();
         assert_eq!(second_line, "#Important Task #pinned");
+    }
+
+    #[test]
+    fn append_to_past_date_invalidates_cache() {
+        let dir = temp_log_dir();
+        let date = NaiveDate::from_ymd_opt(2020, 7, 2).unwrap();
+        let path = dir.join("2020-07-02.md");
+        fs::write(&path, "## [09:00:00]\nfirst\n").expect("write");
+
+        // Warm the cache via a range read.
+        let _ = read_entries_for_date_range(&dir, date, date).expect("read 1");
+        let mid = file_read_count(&path);
+
+        // Append through the choke point — must invalidate the cached content.
+        append_entry_to_date(&dir, date, "appended note").expect("append");
+
+        let after = read_entries_for_date_range(&dir, date, date).expect("read 2");
+        assert!(
+            after.iter().any(|e| e.content.contains("appended note")),
+            "re-read after append must reflect the appended content"
+        );
+        assert_eq!(
+            file_read_count(&path) - mid,
+            1,
+            "read after append_entry_to_date must hit disk again"
+        );
     }
 }

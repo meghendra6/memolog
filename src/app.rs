@@ -457,12 +457,16 @@ impl<'a> App<'a> {
         let tasks_state = ListState::default();
         let task_filter = TaskFilter::Open;
 
-        let today_logs =
-            storage::read_today_entries(&config.data.log_path).unwrap_or_else(|_| Vec::new());
-
         let input_mode = InputMode::Navigate;
 
-        // Calculate today's stats from today's logs only
+        // Calculate today's stats from today's logs only, reusing the already-loaded
+        // entries instead of re-reading today's file from disk.
+        let today_name = format!("{}.md", today.format("%Y-%m-%d"));
+        let today_logs: Vec<LogEntry> = all_logs
+            .iter()
+            .filter(|entry| entry_is_from_log_file(entry, &today_name))
+            .cloned()
+            .collect();
         let (today_done_tasks, today_tomatoes) = compute_today_task_stats(&today_logs);
 
         // Calculate streak
@@ -746,9 +750,17 @@ impl<'a> App<'a> {
             self.fold_overrides.retain(|key, _| keep.contains(key));
         }
 
-        // Calculate stats from today's logs only
-        let today_logs =
-            storage::read_today_entries(&self.config.data.log_path).unwrap_or_default();
+        // Calculate stats from today's logs only, reusing the already-loaded
+        // range entries instead of re-reading today's file from disk. If the
+        // range reload above failed, this filters the prior `all_logs` (stale
+        // for one render cycle); the next update_logs call retries.
+        let today_name = format!("{}.md", today.format("%Y-%m-%d"));
+        let today_logs: Vec<LogEntry> = self
+            .all_logs
+            .iter()
+            .filter(|entry| entry_is_from_log_file(entry, &today_name))
+            .cloned()
+            .collect();
         let (done, tomatoes) = compute_today_task_stats(&today_logs);
         self.today_done_tasks = done;
         self.today_tomatoes = tomatoes;
@@ -2479,6 +2491,14 @@ fn split_timestamp_prefix(line: &str) -> (String, String) {
     }
 }
 
+/// True when `entry` belongs to the log file named `file_name` (e.g. "2026-05-29.md").
+fn entry_is_from_log_file(entry: &LogEntry, file_name: &str) -> bool {
+    Path::new(&entry.file_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        == Some(file_name)
+}
+
 /// Computes (done_count, tomato_count) for today's tasks.
 /// Excludes tomatoes from carryover tasks (marked with ⟦date⟧) to ensure
 /// the tomato count resets daily.
@@ -3429,5 +3449,37 @@ mod tests {
                 .expect("read today tasks")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn today_entries_filter_matches_today_file() {
+        let today = Local::now().date_naive();
+        let today_file = format!("/logs/{}.md", today.format("%Y-%m-%d"));
+        let past_file = "/logs/2020-01-01.md".to_string();
+
+        let all_logs = [
+            LogEntry {
+                content: "## [09:00:00]\n- [x] done today\n".to_string(),
+                file_path: today_file.clone(),
+                line_number: 0,
+                end_line: 1,
+            },
+            LogEntry {
+                content: "## [10:00:00]\n- [x] done in the past\n".to_string(),
+                file_path: past_file,
+                line_number: 0,
+                end_line: 1,
+            },
+        ];
+
+        let today_name = format!("{}.md", today.format("%Y-%m-%d"));
+        let today_logs: Vec<LogEntry> = all_logs
+            .iter()
+            .filter(|e| entry_is_from_log_file(e, &today_name))
+            .cloned()
+            .collect();
+
+        let (done, _tomatoes) = compute_today_task_stats(&today_logs);
+        assert_eq!(done, 1, "only today's completed task should count");
     }
 }
