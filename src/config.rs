@@ -359,6 +359,26 @@ pub struct Config {
     pub pomodoro: PomodoroConfig,
     pub google: GoogleConfig,
     pub gemini: GeminiConfig,
+    pub capture: CaptureConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct CaptureConfig {
+    /// When true, Quick Capture / new composer entries get @sched/@time tokens inferred from natural language.
+    pub nl_parse: bool,
+    /// Inline daily-note template inserted once when a new day's log file is first created.
+    /// Empty = no template (default, fully backward compatible). Placeholders: {{date}}, {{weekday}}, {{date_long}}.
+    pub daily_template: String,
+}
+
+impl Default for CaptureConfig {
+    fn default() -> Self {
+        Self {
+            nl_parse: true,
+            daily_template: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
