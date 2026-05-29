@@ -2,10 +2,10 @@ use crate::config::{Config, Theme, onboarding_seen_path, saved_searches_path};
 use crate::integrations::gemini::{AiSearchOutcome, AiSearchResult};
 use crate::integrations::google::{AuthDisplay, AuthPollResult};
 use crate::models::{
-    DatePickerField, EditorMode, EntryIdentity, FoldOverride, FoldState, InputMode, LogEntry,
-    NavigateFocus, PomodoroTarget, Priority, TaskFilter, TaskItem, TaskSchedule, TimelineFilter,
-    count_trailing_tomatoes, is_heading_timestamp_line, is_task_overdue, is_timestamped_line,
-    split_timestamp_line, strip_timestamp_prefix, task_overdue_anchor_date,
+    ActivePopup, DatePickerField, EditorMode, EntryIdentity, FoldOverride, FoldState, InputMode,
+    LogEntry, NavigateFocus, PomodoroTarget, Priority, TaskFilter, TaskItem, TaskSchedule,
+    TimelineFilter, count_trailing_tomatoes, is_heading_timestamp_line, is_task_overdue,
+    is_timestamped_line, split_timestamp_line, strip_timestamp_prefix, task_overdue_anchor_date,
 };
 use crate::saved_views::{
     SavedView, empty_saved_view, load_saved_views, navigate_focus_name, parse_navigate_focus,
@@ -278,16 +278,12 @@ pub struct App<'a> {
     pub today_done_tasks: usize,
     pub today_tomatoes: usize,
     pub last_search_query: Option<String>,
-    pub show_mood_popup: bool,
+    pub active_popup: ActivePopup,
     pub mood_list_state: ListState,
-    pub show_todo_popup: bool,
     pub pending_todos: Vec<String>,
     pub todo_list_state: ListState,
-    pub show_help_popup: bool,
-    pub show_tag_popup: bool,
     pub tags: Vec<(String, usize)>,
     pub tag_list_state: ListState,
-    pub show_links_popup: bool,
     pub links: Vec<(String, usize)>,
     pub links_list_state: ListState,
     pub links_popup_filter: Option<Vec<String>>,
@@ -297,7 +293,6 @@ pub struct App<'a> {
     pub agenda_selected_day: NaiveDate,
     pub agenda_filter: TaskFilter,
     pub agenda_show_unscheduled: bool,
-    pub show_date_picker_popup: bool,
     pub date_picker_field: DatePickerField,
     pub date_picker_schedule: TaskSchedule,
     pub date_picker_default_date: NaiveDate,
@@ -307,55 +302,39 @@ pub struct App<'a> {
     pub date_picker_input_mode: bool,
     pub is_search_result: bool,
     pub should_quit: bool,
-    pub show_exit_popup: bool,
-    pub show_delete_entry_popup: bool,
     pub delete_entry_target: Option<LogEntry>,
 
     // Pomodoro timer state
     pub pomodoro_start: Option<DateTime<Local>>,
     pub pomodoro_end: Option<DateTime<Local>>,
     pub pomodoro_target: Option<PomodoroTarget>,
-    pub show_activity_popup: bool,
     pub activity_data: HashMap<String, (usize, usize)>, // "YYYY-MM-DD" -> (line_count, tomato_count)
     pub streak: (usize, bool),                          // (streak_days, includes_today)
-    pub show_path_popup: bool,
-    pub show_theme_popup: bool,
     pub theme_list_state: ListState,
     pub theme_preview_backup: Option<Theme>,
 
-    pub show_editor_style_popup: bool,
     pub editor_style_list_state: ListState,
 
-    pub show_pomodoro_popup: bool,
     pub pomodoro_minutes_input: String,
     pub pomodoro_pending_task: Option<TaskItem>,
 
-    pub show_memo_preview_popup: bool,
     pub memo_preview_entry: Option<LogEntry>,
     pub memo_preview_scroll: usize,
-    pub show_google_auth_popup: bool,
     pub google_auth_display: Option<AuthDisplay>,
     pub google_auth_receiver: Option<Receiver<AuthPollResult>>,
     pub google_sync_receiver: Option<Receiver<crate::integrations::google::SyncOutcome>>,
-    pub show_ai_response_popup: bool,
     pub ai_response: Option<AiSearchResult>,
     pub ai_response_scroll: usize,
     pub ai_search_receiver: Option<Receiver<AiSearchOutcome>>,
-    pub show_ai_loading_popup: bool,
     pub ai_loading_question: Option<String>,
 
     // Quick capture popup
-    pub show_quick_capture_popup: bool,
     pub quick_capture_input: String,
-    pub show_command_palette_popup: bool,
     pub command_palette_input: String,
     pub command_palette_list_state: ListState,
-    pub show_goto_date_popup: bool,
     pub goto_date_input: String,
-    pub show_saved_view_popup: bool,
     pub saved_views: Vec<SavedView>,
     pub saved_view_list_state: ListState,
-    pub show_save_view_popup: bool,
     pub save_view_input: String,
     pub command_palette_recent_ids: Vec<String>,
 
@@ -376,9 +355,7 @@ pub struct App<'a> {
     pub recent_search_cursor: Option<usize>,
     pub saved_searches: Vec<String>,
     pub saved_search_list_state: ListState,
-    pub show_saved_search_popup: bool,
     pub keybinding_conflicts: Vec<String>,
-    pub show_onboarding_popup: bool,
 
     // History loading state for infinite scroll
     pub loaded_start_date: Option<NaiveDate>,
@@ -400,6 +377,10 @@ pub struct App<'a> {
 }
 
 impl<'a> App<'a> {
+    pub fn is_popup(&self, p: ActivePopup) -> bool {
+        self.active_popup == p
+    }
+
     pub fn new() -> App<'a> {
         let config = Config::load();
         let keybinding_conflicts = config.keybinding_conflicts();
@@ -545,16 +526,18 @@ impl<'a> App<'a> {
             today_done_tasks,
             today_tomatoes,
             last_search_query: None,
-            show_mood_popup,
+            active_popup: if show_onboarding_popup {
+                ActivePopup::Onboarding
+            } else if show_todo_popup {
+                ActivePopup::Todo
+            } else {
+                ActivePopup::None
+            },
             mood_list_state,
-            show_todo_popup,
             pending_todos,
             todo_list_state: ListState::default(),
-            show_help_popup: false,
-            show_tag_popup: false,
             tags: Vec::new(),
             tag_list_state: ListState::default(),
-            show_links_popup: false,
             links: Vec::new(),
             links_list_state: ListState::default(),
             links_popup_filter: None,
@@ -564,7 +547,6 @@ impl<'a> App<'a> {
             agenda_selected_day: today,
             agenda_filter: TaskFilter::Open,
             agenda_show_unscheduled: false,
-            show_date_picker_popup: false,
             date_picker_field: DatePickerField::Scheduled,
             date_picker_schedule: TaskSchedule::default(),
             date_picker_default_date: today,
@@ -574,48 +556,32 @@ impl<'a> App<'a> {
             date_picker_input_mode: false,
             is_search_result: false,
             should_quit: false,
-            show_exit_popup: false,
-            show_delete_entry_popup: false,
             delete_entry_target: None,
             pomodoro_start: None,
             pomodoro_end: None,
             pomodoro_target: None,
-            show_activity_popup: false,
             activity_data: HashMap::new(),
             streak,
-            show_path_popup: false,
-            show_theme_popup: false,
             theme_list_state: ListState::default(),
             theme_preview_backup: None,
-            show_editor_style_popup: false,
             editor_style_list_state: ListState::default(),
-            show_pomodoro_popup: false,
             pomodoro_minutes_input: String::new(),
             pomodoro_pending_task: None,
-            show_memo_preview_popup: false,
             memo_preview_entry: None,
             memo_preview_scroll: 0,
-            show_google_auth_popup: false,
             google_auth_display: None,
             google_auth_receiver: None,
             google_sync_receiver: None,
-            show_ai_response_popup: false,
             ai_response: None,
             ai_response_scroll: 0,
             ai_search_receiver: None,
-            show_ai_loading_popup: false,
             ai_loading_question: None,
-            show_quick_capture_popup: false,
             quick_capture_input: String::new(),
-            show_command_palette_popup: false,
             command_palette_input: String::new(),
             command_palette_list_state: ListState::default(),
-            show_goto_date_popup: false,
             goto_date_input: String::new(),
-            show_saved_view_popup: false,
             saved_views,
             saved_view_list_state,
-            show_save_view_popup: false,
             save_view_input: String::new(),
             command_palette_recent_ids: Vec::new(),
             pending_nav_key: None,
@@ -631,9 +597,7 @@ impl<'a> App<'a> {
             recent_search_cursor: None,
             saved_searches,
             saved_search_list_state,
-            show_saved_search_popup: false,
             keybinding_conflicts,
-            show_onboarding_popup,
             loaded_start_date: Some(effective_start),
             earliest_available_date,
             is_loading_more: false,
@@ -947,7 +911,7 @@ impl<'a> App<'a> {
             self.toast("No saved searches yet. Press Ctrl+S in Search mode to save.");
             return;
         }
-        self.show_saved_search_popup = true;
+        self.active_popup = ActivePopup::SavedSearch;
         self.saved_search_list_state.select(Some(0));
     }
 
@@ -960,7 +924,7 @@ impl<'a> App<'a> {
         };
         self.set_search_input(&query);
         self.recent_search_cursor = None;
-        self.show_saved_search_popup = false;
+        self.active_popup = ActivePopup::None;
         true
     }
 
@@ -974,7 +938,7 @@ impl<'a> App<'a> {
         let removed = self.saved_searches.remove(i);
         if self.saved_searches.is_empty() {
             self.saved_search_list_state.select(None);
-            self.show_saved_search_popup = false;
+            self.active_popup = ActivePopup::None;
         } else {
             let next = i.min(self.saved_searches.len() - 1);
             self.saved_search_list_state.select(Some(next));
@@ -987,13 +951,13 @@ impl<'a> App<'a> {
         if self.input_mode != InputMode::Navigate {
             return;
         }
-        self.show_command_palette_popup = true;
+        self.active_popup = ActivePopup::CommandPalette;
         self.command_palette_input.clear();
         self.sync_command_palette_selection();
     }
 
     pub fn close_command_palette(&mut self) {
-        self.show_command_palette_popup = false;
+        self.active_popup = ActivePopup::None;
         self.command_palette_input.clear();
     }
 
@@ -1281,7 +1245,7 @@ impl<'a> App<'a> {
             CommandPaletteAction::GoToDate => self.open_goto_date_popup(),
             CommandPaletteAction::Search => self.transition_to(InputMode::Search),
             CommandPaletteAction::QuickCapture => {
-                self.show_quick_capture_popup = true;
+                self.active_popup = ActivePopup::QuickCapture;
                 self.quick_capture_input.clear();
             }
             CommandPaletteAction::OpenInbox => {
@@ -1295,7 +1259,7 @@ impl<'a> App<'a> {
             CommandPaletteAction::ToggleFocusMode => self.toggle_focus_mode(),
             CommandPaletteAction::OpenAgenda => crate::actions::focus_agenda_panel(self),
             CommandPaletteAction::OpenConfig => crate::actions::open_config_in_composer(self),
-            CommandPaletteAction::OpenLogDir => self.show_path_popup = true,
+            CommandPaletteAction::OpenLogDir => self.active_popup = ActivePopup::Path,
             CommandPaletteAction::ThemeSwitcher => crate::actions::open_theme_switcher(self),
             CommandPaletteAction::EditorStyle => crate::actions::open_editor_style_switcher(self),
             CommandPaletteAction::Activity => crate::actions::open_activity_popup(self),
@@ -1322,13 +1286,12 @@ impl<'a> App<'a> {
             self.toast("No saved views or saved searches yet.");
             return;
         }
-        self.show_saved_view_popup = true;
+        self.active_popup = ActivePopup::SavedView;
         self.sync_saved_view_selection();
     }
 
     pub fn open_save_view_popup(&mut self) {
-        self.show_saved_view_popup = false;
-        self.show_save_view_popup = true;
+        self.active_popup = ActivePopup::SaveView;
         self.save_view_input = self.suggest_saved_view_name();
     }
 
@@ -1430,7 +1393,7 @@ impl<'a> App<'a> {
         self.apply_task_filter(true);
         self.refresh_agenda();
         self.set_agenda_selected_day(self.agenda_selected_day);
-        self.show_saved_view_popup = false;
+        self.active_popup = ActivePopup::None;
         self.toast(format!("Loaded view: {}", view.name));
         true
     }
@@ -1450,7 +1413,7 @@ impl<'a> App<'a> {
             return false;
         };
         self.run_search_query(&query);
-        self.show_saved_view_popup = false;
+        self.active_popup = ActivePopup::None;
         self.toast("Loaded saved search.");
         true
     }
@@ -1837,7 +1800,7 @@ impl<'a> App<'a> {
     }
 
     pub fn open_goto_date_popup(&mut self) {
-        self.show_goto_date_popup = true;
+        self.active_popup = ActivePopup::GotoDate;
         self.goto_date_input = self.goto_date_anchor().format("%Y-%m-%d").to_string();
     }
 
@@ -2186,7 +2149,7 @@ impl<'a> App<'a> {
         self.date_picker_default_duration = default_duration;
         self.date_picker_input.clear();
         self.date_picker_input_mode = false;
-        self.show_date_picker_popup = true;
+        self.active_popup = ActivePopup::DatePicker;
     }
 
     pub fn date_picker_effective_date(&self, field: DatePickerField) -> NaiveDate {
@@ -3134,7 +3097,7 @@ mod tests {
     #[test]
     fn app_does_not_show_mood_popup_on_startup() {
         let app = App::new();
-        assert!(!app.show_mood_popup);
+        assert_ne!(app.active_popup, ActivePopup::Mood);
     }
 
     #[test]
@@ -3336,7 +3299,7 @@ mod tests {
 
         app.open_goto_date_popup();
 
-        assert!(app.show_goto_date_popup);
+        assert_eq!(app.active_popup, ActivePopup::GotoDate);
         assert_eq!(app.goto_date_input, "2025-12-22");
     }
 

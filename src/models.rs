@@ -7,6 +7,36 @@ pub enum InputMode {
     Search,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ActivePopup {
+    #[default]
+    None,
+    Mood,
+    Todo,
+    Help,
+    Tag,
+    Links,
+    DatePicker,
+    Exit,
+    DeleteEntry,
+    Activity,
+    Path,
+    Theme,
+    EditorStyle,
+    Pomodoro,
+    MemoPreview,
+    GoogleAuth,
+    AiResponse,
+    AiLoading,
+    QuickCapture,
+    CommandPalette,
+    GotoDate,
+    SavedView,
+    SaveView,
+    SavedSearch,
+    Onboarding,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DatePickerField {
     Scheduled,

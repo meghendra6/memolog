@@ -5,112 +5,112 @@ use crate::{
     date_input::{parse_duration_input, parse_relative_date_input, parse_time_input},
     editor::markdown,
     input::editing,
-    models::{self, DatePickerField, InputMode, Mood},
+    models::{self, ActivePopup, DatePickerField, InputMode, Mood},
     storage,
 };
 use chrono::{Duration, Local, NaiveDate, NaiveTime, Timelike};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
-    if app.show_google_auth_popup {
+    if app.is_popup(ActivePopup::GoogleAuth) {
         handle_google_auth_popup(app, key);
         return true;
     }
-    if app.show_theme_popup {
+    if app.is_popup(ActivePopup::Theme) {
         handle_theme_switcher_popup(app, key);
         return true;
     }
-    if app.show_editor_style_popup {
+    if app.is_popup(ActivePopup::EditorStyle) {
         handle_editor_style_popup(app, key);
         return true;
     }
-    if app.show_onboarding_popup {
+    if app.is_popup(ActivePopup::Onboarding) {
         handle_onboarding_popup(app, key);
         return true;
     }
-    if app.show_help_popup {
+    if app.is_popup(ActivePopup::Help) {
         if key.code == KeyCode::Esc || key_match(&key, &app.config.keybindings.global.help) {
-            app.show_help_popup = false;
+            app.active_popup = ActivePopup::None;
         }
         return true;
     }
-    if app.show_command_palette_popup {
+    if app.is_popup(ActivePopup::CommandPalette) {
         handle_command_palette_popup(app, key);
         return true;
     }
-    if app.show_date_picker_popup {
+    if app.is_popup(ActivePopup::DatePicker) {
         handle_date_picker_popup(app, key);
         return true;
     }
-    if app.show_memo_preview_popup {
+    if app.is_popup(ActivePopup::MemoPreview) {
         handle_memo_preview_popup(app, key);
         return true;
     }
-    if app.show_ai_response_popup {
+    if app.is_popup(ActivePopup::AiResponse) {
         handle_ai_response_popup(app, key);
         return true;
     }
-    if app.show_ai_loading_popup {
+    if app.is_popup(ActivePopup::AiLoading) {
         handle_ai_loading_popup(app, key);
         return true;
     }
 
-    if app.show_exit_popup {
+    if app.is_popup(ActivePopup::Exit) {
         handle_exit_popup(app, key);
         return true;
     }
-    if app.show_delete_entry_popup {
+    if app.is_popup(ActivePopup::DeleteEntry) {
         handle_delete_entry_popup(app, key);
         return true;
     }
 
-    if app.show_pomodoro_popup {
+    if app.is_popup(ActivePopup::Pomodoro) {
         handle_pomodoro_popup(app, key);
         return true;
     }
 
-    if app.show_mood_popup {
+    if app.is_popup(ActivePopup::Mood) {
         handle_mood_popup(app, key);
         return true;
     }
-    if app.show_todo_popup {
+    if app.is_popup(ActivePopup::Todo) {
         handle_todo_popup(app, key);
         return true;
     }
-    if app.show_tag_popup {
+    if app.is_popup(ActivePopup::Tag) {
         handle_tag_popup(app, key);
         return true;
     }
-    if app.show_links_popup {
+    if app.is_popup(ActivePopup::Links) {
         handle_links_popup(app, key);
         return true;
     }
-    if app.show_saved_search_popup {
+    if app.is_popup(ActivePopup::SavedSearch) {
         handle_saved_search_popup(app, key);
         return true;
     }
-    if app.show_save_view_popup {
+    if app.is_popup(ActivePopup::SaveView) {
         handle_save_view_popup(app, key);
         return true;
     }
-    if app.show_saved_view_popup {
+    if app.is_popup(ActivePopup::SavedView) {
         handle_saved_view_popup(app, key);
         return true;
     }
-    if app.show_activity_popup {
+    if app.is_popup(ActivePopup::Activity) {
         // Close on any key press
-        app.show_activity_popup = false;
+        app.active_popup = ActivePopup::None;
         return true;
     }
-    if app.show_path_popup {
+    if app.is_popup(ActivePopup::Path) {
         handle_path_popup(app, key);
         return true;
     }
-    if app.show_goto_date_popup {
+    if app.is_popup(ActivePopup::GotoDate) {
         handle_goto_date_popup(app, key);
         return true;
     }
-    if app.show_quick_capture_popup {
+    if app.is_popup(ActivePopup::QuickCapture) {
         handle_quick_capture_popup(app, key);
         return true;
     }
@@ -120,14 +120,14 @@ pub fn handle_popup_events(app: &mut App, key: KeyEvent) -> bool {
 fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
     let key_code = key_code_for_shortcuts(&key);
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
-        app.show_memo_preview_popup = false;
+        app.active_popup = ActivePopup::None;
         app.memo_preview_entry = None;
         return;
     }
 
     if matches!(key_code, KeyCode::Char('e') | KeyCode::Char('E')) {
         if let Some(entry) = app.memo_preview_entry.clone() {
-            app.show_memo_preview_popup = false;
+            app.active_popup = ActivePopup::None;
             app.memo_preview_entry = None;
             app.start_edit_entry(&entry);
         }
@@ -146,7 +146,7 @@ fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.global.links) {
         if let Some(entry) = app.memo_preview_entry.clone() {
             let targets = crate::links::distinct_targets(&entry.content);
-            app.show_memo_preview_popup = false;
+            app.active_popup = ActivePopup::None;
             app.memo_preview_entry = None;
             crate::actions::open_links_popup_filtered(app, targets);
         }
@@ -167,7 +167,7 @@ fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
 fn handle_ai_response_popup(app: &mut App, key: KeyEvent) {
     let key_code = key_code_for_shortcuts(&key);
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
-        app.show_ai_response_popup = false;
+        app.active_popup = ActivePopup::None;
         app.ai_response = None;
         return;
     }
@@ -199,7 +199,7 @@ fn handle_ai_response_popup(app: &mut App, key: KeyEvent) {
 
 fn handle_ai_loading_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
-        app.show_ai_loading_popup = false;
+        app.active_popup = ActivePopup::None;
     }
 }
 
@@ -211,13 +211,13 @@ fn handle_date_picker_popup(app: &mut App, key: KeyEvent) {
     }
 
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
-        app.show_date_picker_popup = false;
+        app.active_popup = ActivePopup::None;
         return;
     }
 
     if key_match(&key, &app.config.keybindings.popup.confirm) {
         apply_date_picker_field(app);
-        app.show_date_picker_popup = false;
+        app.active_popup = ActivePopup::None;
         return;
     }
 
@@ -269,7 +269,7 @@ fn handle_date_picker_popup(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Backspace | KeyCode::Delete => {
             remove_date_picker_field(app);
-            app.show_date_picker_popup = false;
+            app.active_popup = ActivePopup::None;
         }
         KeyCode::Tab => {
             app.date_picker_field = cycle_date_picker_field(app.date_picker_field, 1);
@@ -511,16 +511,16 @@ fn handle_exit_popup(app: &mut App, key: KeyEvent) {
     let key_code = key_code_for_shortcuts(&key);
     match key_code {
         KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
-            app.show_exit_popup = false;
+            app.active_popup = ActivePopup::None;
             app.commit_insert_group();
             editing::submit_composer(app);
         }
         KeyCode::Char('d') | KeyCode::Char('D') => {
-            app.show_exit_popup = false;
+            app.active_popup = ActivePopup::None;
             editing::discard_composer(app);
         }
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-            app.show_exit_popup = false;
+            app.active_popup = ActivePopup::None;
         }
         _ => {}
     }
@@ -540,9 +540,9 @@ fn handle_delete_entry_popup(app: &mut App, key: KeyEvent) {
         } else {
             app.toast("No entry selected.");
         }
-        app.show_delete_entry_popup = false;
+        app.active_popup = ActivePopup::None;
     } else if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
-        app.show_delete_entry_popup = false;
+        app.active_popup = ActivePopup::None;
         app.delete_entry_target = None;
     }
 }
@@ -584,10 +584,11 @@ fn handle_mood_popup(app: &mut App, key: KeyEvent) {
             }
             app.update_logs();
         }
+        // Close the mood popup first; check_carryover may then open the todo popup.
+        app.active_popup = ActivePopup::None;
         check_carryover(app);
-        app.show_mood_popup = false;
     } else if key_match(&key, &app.config.keybindings.popup.cancel) {
-        app.show_mood_popup = false;
+        app.active_popup = ActivePopup::None;
         app.transition_to(InputMode::Navigate);
     }
 }
@@ -600,7 +601,7 @@ fn check_carryover(app: &mut App) {
         {
             if !todos.is_empty() {
                 app.pending_todos = todos;
-                app.show_todo_popup = true;
+                app.active_popup = ActivePopup::Todo;
             } else {
                 app.transition_to(InputMode::Navigate);
                 let _ = storage::mark_carryover_done(&app.config.data.log_path);
@@ -628,11 +629,11 @@ fn handle_todo_popup(app: &mut App, key: KeyEvent) {
             app.toast(format!("Carried over {} task(s)", app.pending_todos.len()));
         }
         app.update_logs();
-        app.show_todo_popup = false;
+        app.active_popup = ActivePopup::None;
         app.transition_to(InputMode::Navigate);
         let _ = storage::mark_carryover_done(&app.config.data.log_path);
     } else if key_match(&key, &app.config.keybindings.popup.cancel) {
-        app.show_todo_popup = false;
+        app.active_popup = ActivePopup::None;
         app.transition_to(InputMode::Navigate);
         let _ = storage::mark_carryover_done(&app.config.data.log_path);
     }
@@ -692,10 +693,10 @@ fn handle_tag_popup(app: &mut App, key: KeyEvent) {
                 }
             }
         }
-        app.show_tag_popup = false;
+        app.active_popup = ActivePopup::None;
         app.transition_to(InputMode::Navigate);
     } else if key_match(&key, &app.config.keybindings.popup.cancel) {
-        app.show_tag_popup = false;
+        app.active_popup = ActivePopup::None;
         app.transition_to(InputMode::Navigate);
     }
 }
@@ -724,7 +725,7 @@ fn handle_links_popup(app: &mut App, key: KeyEvent) {
             && i < app.links.len()
         {
             let target = app.links[i].0.clone();
-            app.show_links_popup = false;
+            app.active_popup = ActivePopup::None;
             app.links_popup_filter = None;
             match crate::links::link_kind(&target) {
                 crate::links::LinkKind::Date(date) => {
@@ -758,12 +759,12 @@ fn handle_links_popup(app: &mut App, key: KeyEvent) {
                 }
             }
         } else {
-            app.show_links_popup = false;
+            app.active_popup = ActivePopup::None;
             app.links_popup_filter = None;
             app.transition_to(InputMode::Navigate);
         }
     } else if key_match(&key, &app.config.keybindings.popup.cancel) {
-        app.show_links_popup = false;
+        app.active_popup = ActivePopup::None;
         app.links_popup_filter = None;
         app.transition_to(InputMode::Navigate);
     }
@@ -772,7 +773,7 @@ fn handle_links_popup(app: &mut App, key: KeyEvent) {
 fn handle_theme_switcher_popup(app: &mut App, key: KeyEvent) {
     let presets = ThemePreset::all();
     if presets.is_empty() {
-        app.show_theme_popup = false;
+        app.active_popup = ActivePopup::None;
         return;
     }
 
@@ -803,19 +804,19 @@ fn handle_theme_switcher_popup(app: &mut App, key: KeyEvent) {
             Err(_) => app.toast("Failed to save theme preset."),
         }
         app.theme_preview_backup = None;
-        app.show_theme_popup = false;
+        app.active_popup = ActivePopup::None;
     } else if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
         if let Some(previous) = app.theme_preview_backup.take() {
             app.config.theme = previous;
         }
-        app.show_theme_popup = false;
+        app.active_popup = ActivePopup::None;
     }
 }
 
 fn handle_editor_style_popup(app: &mut App, key: KeyEvent) {
     let styles = EditorStyle::all();
     if styles.is_empty() {
-        app.show_editor_style_popup = false;
+        app.active_popup = ActivePopup::None;
         return;
     }
 
@@ -842,15 +843,15 @@ fn handle_editor_style_popup(app: &mut App, key: KeyEvent) {
             Ok(_) => app.toast(format!("Editor style set to {}.", style.name())),
             Err(_) => app.toast("Failed to save editor style."),
         }
-        app.show_editor_style_popup = false;
+        app.active_popup = ActivePopup::None;
     } else if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
-        app.show_editor_style_popup = false;
+        app.active_popup = ActivePopup::None;
     }
 }
 
 fn handle_pomodoro_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
-        app.show_pomodoro_popup = false;
+        app.active_popup = ActivePopup::None;
         app.pomodoro_pending_task = None;
         return;
     }
@@ -859,7 +860,7 @@ fn handle_pomodoro_popup(app: &mut App, key: KeyEvent) {
         let task = match app.pomodoro_pending_task.take() {
             Some(t) => t,
             None => {
-                app.show_pomodoro_popup = false;
+                app.active_popup = ActivePopup::None;
                 app.toast("No task selected.");
                 return;
             }
@@ -884,7 +885,7 @@ fn handle_pomodoro_popup(app: &mut App, key: KeyEvent) {
         });
         app.pomodoro_alert_expiry = None;
         app.pomodoro_alert_message = None;
-        app.show_pomodoro_popup = false;
+        app.active_popup = ActivePopup::None;
         app.toast(format!("Pomodoro started: {}m · {}", mins, task.text));
         return;
     }
@@ -914,10 +915,10 @@ fn handle_path_popup(app: &mut App, key: KeyEvent) {
             app.toast(format!("Failed to open folder: {}", e));
         }
 
-        app.show_path_popup = false;
+        app.active_popup = ActivePopup::None;
         app.transition_to(InputMode::Navigate);
     } else if key_match(&key, &app.config.keybindings.popup.cancel) {
-        app.show_path_popup = false;
+        app.active_popup = ActivePopup::None;
         app.transition_to(InputMode::Navigate);
     }
 }
@@ -933,7 +934,7 @@ fn handle_google_auth_popup(app: &mut App, key: KeyEvent) {
     }
 
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
-        app.show_google_auth_popup = false;
+        app.active_popup = ActivePopup::None;
     }
 }
 
@@ -941,7 +942,7 @@ fn handle_goto_date_popup(app: &mut App, key: KeyEvent) {
     let key_code = key_code_for_shortcuts(&key);
     match key_code {
         KeyCode::Esc => {
-            app.show_goto_date_popup = false;
+            app.active_popup = ActivePopup::None;
             app.goto_date_input.clear();
         }
         KeyCode::Enter => {
@@ -954,7 +955,7 @@ fn handle_goto_date_popup(app: &mut App, key: KeyEvent) {
             };
 
             if let Some(date) = parsed {
-                app.show_goto_date_popup = false;
+                app.active_popup = ActivePopup::None;
                 app.goto_date_input.clear();
                 app.jump_to_date(date);
             } else {
@@ -1027,7 +1028,7 @@ fn shift_goto_popup_months(app: &mut App, delta_months: i32) {
 
 fn handle_saved_search_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
-        app.show_saved_search_popup = false;
+        app.active_popup = ActivePopup::None;
         return;
     }
 
@@ -1113,7 +1114,7 @@ fn handle_command_palette_popup(app: &mut App, key: KeyEvent) {
 
 fn handle_saved_view_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
-        app.show_saved_view_popup = false;
+        app.active_popup = ActivePopup::None;
         return;
     }
 
@@ -1146,7 +1147,7 @@ fn handle_saved_view_popup(app: &mut App, key: KeyEvent) {
 
 fn handle_save_view_popup(app: &mut App, key: KeyEvent) {
     if key.code == KeyCode::Esc {
-        app.show_save_view_popup = false;
+        app.active_popup = ActivePopup::None;
         app.save_view_input.clear();
         return;
     }
@@ -1158,7 +1159,7 @@ fn handle_save_view_popup(app: &mut App, key: KeyEvent) {
                 Ok(true) => {
                     let display_name = name.trim().to_string();
                     app.toast(format!("Saved view: {display_name}"));
-                    app.show_save_view_popup = false;
+                    app.active_popup = ActivePopup::None;
                     app.save_view_input.clear();
                 }
                 Ok(false) => app.toast("Enter a view name."),
@@ -1185,22 +1186,21 @@ fn handle_onboarding_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.global.help)
         || matches!(key.code, KeyCode::Char('?'))
     {
-        app.show_onboarding_popup = false;
-        app.show_help_popup = true;
+        app.active_popup = ActivePopup::Help;
         return;
     }
     if key_match(&key, &app.config.keybindings.popup.confirm)
         || key_match(&key, &app.config.keybindings.popup.cancel)
         || key.code == KeyCode::Esc
     {
-        app.show_onboarding_popup = false;
+        app.active_popup = ActivePopup::None;
     }
 }
 
 fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
-            app.show_quick_capture_popup = false;
+            app.active_popup = ActivePopup::None;
             app.quick_capture_input.clear();
         }
         KeyCode::Enter => {
@@ -1212,7 +1212,7 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
                     app.update_logs();
                 }
             }
-            app.show_quick_capture_popup = false;
+            app.active_popup = ActivePopup::None;
             app.quick_capture_input.clear();
         }
         KeyCode::Backspace => {
@@ -1278,6 +1278,7 @@ mod tests {
         quick_capture_inbox_content,
     };
     use crate::app::App;
+    use crate::models::ActivePopup;
     use chrono::Local;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::fs;
@@ -1298,7 +1299,7 @@ mod tests {
 
     fn make_app_with_input(input: &str) -> App<'static> {
         let mut app = App::new();
-        app.show_goto_date_popup = true;
+        app.active_popup = ActivePopup::GotoDate;
         app.goto_date_input = input.to_string();
         app
     }
@@ -1369,7 +1370,7 @@ mod tests {
         let log_dir = temp_quick_capture_log_dir();
         let mut app = App::new();
         app.config.data.log_path = log_dir.clone();
-        app.show_quick_capture_popup = true;
+        app.active_popup = ActivePopup::QuickCapture;
         app.quick_capture_input = "call dentist".to_string();
 
         handle_quick_capture_popup(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -1377,7 +1378,7 @@ mod tests {
         let today_file = log_dir.join(format!("{}.md", Local::now().format("%Y-%m-%d")));
         let contents = fs::read_to_string(today_file).expect("read quick capture log");
         assert!(contents.contains("call dentist #inbox"));
-        assert!(!app.show_quick_capture_popup);
+        assert_eq!(app.active_popup, ActivePopup::None);
         assert!(app.quick_capture_input.is_empty());
     }
 
@@ -1412,13 +1413,15 @@ mod tests {
     #[test]
     fn saved_view_new_switches_input_to_save_view_popup() {
         let mut app = App::new();
-        app.show_saved_view_popup = true;
+        app.active_popup = ActivePopup::SavedView;
         app.open_save_view_popup();
 
-        assert!(app.show_save_view_popup);
-        assert!(!app.show_saved_view_popup);
+        assert_eq!(app.active_popup, ActivePopup::SaveView);
+        assert_ne!(app.active_popup, ActivePopup::SavedView);
 
-        app.show_saved_view_popup = true;
+        // With a single active popup, the SaveView popup remains active here.
+        // (Previously both save-view and saved-view booleans were set, and the
+        // dispatch cascade gave the save-view handler precedence.)
         let prior = app.save_view_input.clone();
         let _ = handle_popup_events(
             &mut app,

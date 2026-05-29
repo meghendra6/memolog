@@ -10,8 +10,8 @@ use ratatui::{
 use crate::app::{App, PLACEHOLDER_COMPOSE};
 use crate::config::{EditorConfig, Theme, ThemePreset, ThemeToastOverrides, ThemeUiOverrides};
 use crate::models::{
-    AgendaItemKind, EditorMode, InputMode, NavigateFocus, VisualKind, is_heading_timestamp_line,
-    is_task_overdue, is_timestamped_line, split_timestamp_line,
+    ActivePopup, AgendaItemKind, EditorMode, InputMode, NavigateFocus, VisualKind,
+    is_heading_timestamp_line, is_task_overdue, is_timestamped_line, split_timestamp_line,
 };
 use image::ImageReader;
 use ratatui::style::Stylize;
@@ -1084,61 +1084,61 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     render_status_bar(f, status_area, app, &tokens);
 
     // Render popups (order matters: later ones appear on top)
-    if app.show_activity_popup {
+    if app.is_popup(ActivePopup::Activity) {
         render_activity_popup(f, app);
     }
 
-    if app.show_mood_popup {
+    if app.is_popup(ActivePopup::Mood) {
         render_mood_popup(f, app);
     }
 
-    if app.show_todo_popup {
+    if app.is_popup(ActivePopup::Todo) {
         render_todo_popup(f, app);
     }
 
-    if app.show_tag_popup {
+    if app.is_popup(ActivePopup::Tag) {
         render_tag_popup(f, app);
     }
-    if app.show_links_popup {
+    if app.is_popup(ActivePopup::Links) {
         render_links_popup(f, app);
     }
-    if app.show_saved_search_popup {
+    if app.is_popup(ActivePopup::SavedSearch) {
         render_saved_search_popup(f, app);
     }
-    if app.show_saved_view_popup {
+    if app.is_popup(ActivePopup::SavedView) {
         render_saved_view_popup(f, app);
     }
-    if app.show_save_view_popup {
+    if app.is_popup(ActivePopup::SaveView) {
         render_save_view_popup(f, app);
     }
-    if app.show_command_palette_popup {
+    if app.is_popup(ActivePopup::CommandPalette) {
         render_command_palette_popup(f, app);
     }
 
-    if app.show_date_picker_popup {
+    if app.is_popup(ActivePopup::DatePicker) {
         render_date_picker_popup(f, app);
     }
 
-    if app.show_help_popup {
+    if app.is_popup(ActivePopup::Help) {
         render_help_popup(f, app);
     }
-    if app.show_google_auth_popup {
+    if app.is_popup(ActivePopup::GoogleAuth) {
         render_google_auth_popup(f, app);
     }
-    if app.show_theme_popup {
+    if app.is_popup(ActivePopup::Theme) {
         render_theme_switcher_popup(f, app);
     }
-    if app.show_editor_style_popup {
+    if app.is_popup(ActivePopup::EditorStyle) {
         render_editor_style_popup(f, app);
     }
-    if app.show_delete_entry_popup {
+    if app.is_popup(ActivePopup::DeleteEntry) {
         render_delete_entry_popup(f);
     }
-    if app.show_exit_popup {
+    if app.is_popup(ActivePopup::Exit) {
         render_exit_popup(f, app);
     }
 
-    if app.show_pomodoro_popup {
+    if app.is_popup(ActivePopup::Pomodoro) {
         render_pomodoro_popup(f, app);
     }
 
@@ -1146,30 +1146,30 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         render_siren_popup(f, app);
     }
 
-    if app.show_path_popup {
+    if app.is_popup(ActivePopup::Path) {
         render_path_popup(f, app);
     }
 
-    if app.show_goto_date_popup {
+    if app.is_popup(ActivePopup::GotoDate) {
         render_goto_date_popup(f, app);
     }
 
-    if app.show_memo_preview_popup {
+    if app.is_popup(ActivePopup::MemoPreview) {
         render_memo_preview_popup(f, app);
     }
 
-    if app.show_ai_loading_popup {
+    if app.is_popup(ActivePopup::AiLoading) {
         render_ai_loading_popup(f, app);
     }
 
-    if app.show_ai_response_popup {
+    if app.is_popup(ActivePopup::AiResponse) {
         render_ai_response_popup(f, app);
     }
 
-    if app.show_quick_capture_popup {
+    if app.is_popup(ActivePopup::QuickCapture) {
         render_quick_capture_popup(f, app);
     }
-    if app.show_onboarding_popup {
+    if app.is_popup(ActivePopup::Onboarding) {
         render_onboarding_popup(f, app);
     }
 }
