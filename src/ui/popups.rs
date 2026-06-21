@@ -12,7 +12,7 @@ use crate::ui::theme::ThemeTokens;
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, Timelike};
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
@@ -344,43 +344,66 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
 
     let preview = memo_preview_doc(entry);
     let tokens = ThemeTokens::from_theme(&app.config.theme);
-    let block = Block::default()
-        .title(" Open Memo ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(tokens.ui_border_default));
-    let area = centered_rect(94, 88, f.area());
-    let inner = block.inner(area);
-    f.render_widget(Clear, area);
-    f.render_widget(block, area);
+    let reading = app.memo_reading_mode;
 
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .split(inner);
+    // Reading mode is distraction-free: fullscreen with no border/title and a wider,
+    // centered prose column. Normal mode keeps the framed popup with a meta header.
+    let (inner, show_meta) = if reading {
+        let area = f.area();
+        f.render_widget(Clear, area);
+        (area, false)
+    } else {
+        let block = Block::default()
+            .title(" Open Memo ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(tokens.ui_border_default));
+        let area = centered_rect(94, 88, f.area());
+        let inner = block.inner(area);
+        f.render_widget(Clear, area);
+        f.render_widget(block, area);
+        (inner, true)
+    };
 
-    let meta_area = sections[0];
-    let content_area = sections[1];
-    let footer_area = sections[2];
-    let prose_width = content_area.width.saturating_sub(4).clamp(32, 112);
-    let meta_column = centered_column(meta_area, prose_width);
+    let sections = if show_meta {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .split(inner)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(inner)
+    };
+
+    let (content_area, footer_area) = if show_meta {
+        let meta_area = sections[0];
+        let meta_width = sections[1].width.saturating_sub(4).clamp(32, 112);
+        let meta_column = centered_column(meta_area, meta_width);
+        let meta_rule = "─".repeat(meta_column.width.max(1) as usize);
+        let meta = Paragraph::new(vec![
+            Line::from(Span::styled(
+                preview.meta_line.clone(),
+                Style::default().fg(tokens.ui_muted),
+            )),
+            Line::from(Span::styled(
+                meta_rule,
+                Style::default().fg(tokens.ui_border_default),
+            )),
+        ]);
+        f.render_widget(meta, meta_column);
+        (sections[1], sections[2])
+    } else {
+        (sections[0], sections[1])
+    };
+
+    let max_prose = if reading { 100 } else { 112 };
+    let prose_width = content_area.width.saturating_sub(4).clamp(32, max_prose);
     let prose_area = centered_column(content_area, prose_width);
-
-    let meta_rule = "─".repeat(meta_column.width.max(1) as usize);
-    let meta = Paragraph::new(vec![
-        Line::from(Span::styled(
-            preview.meta_line.clone(),
-            Style::default().fg(tokens.ui_muted),
-        )),
-        Line::from(Span::styled(
-            meta_rule,
-            Style::default().fg(tokens.ui_border_default),
-        )),
-    ]);
-    f.render_widget(meta, meta_column);
 
     let width = prose_area.width.max(1) as usize;
     let theme_preset = super::resolve_theme_preset(&app.config);
@@ -413,9 +436,20 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
         .scroll((scroll as u16, 0));
     f.render_widget(paragraph, prose_area);
 
-    let footer = Paragraph::new(memo_preview_footer(app, scroll, max_scroll))
-        .style(Style::default().fg(tokens.ui_muted));
-    f.render_widget(footer, footer_area);
+    if reading {
+        let footer = Paragraph::new(memo_reading_footer(app, scroll, max_scroll))
+            .alignment(Alignment::Center)
+            .style(
+                Style::default()
+                    .fg(tokens.ui_muted)
+                    .add_modifier(Modifier::DIM),
+            );
+        f.render_widget(footer, footer_area);
+    } else {
+        let footer = Paragraph::new(memo_preview_footer(app, scroll, max_scroll))
+            .style(Style::default().fg(tokens.ui_muted));
+        f.render_widget(footer, footer_area);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -478,9 +512,22 @@ fn memo_preview_footer(app: &App, scroll: usize, max_scroll: usize) -> String {
         format!("{}/{}", scroll + 1, max_scroll + 1)
     };
     format!(
-        "{} close · E edit · {} scroll · PgUp/PgDn jump · {}",
+        "{} close · E edit · z reading · {} scroll · PgUp/PgDn jump · {}",
         fmt_keys(&app.config.keybindings.popup.cancel),
         scroll_keys,
+        status
+    )
+}
+
+fn memo_reading_footer(app: &App, scroll: usize, max_scroll: usize) -> String {
+    let status = if max_scroll == 0 {
+        "full".to_string()
+    } else {
+        format!("{}/{}", scroll + 1, max_scroll + 1)
+    };
+    format!(
+        "z exit reading · {} close · {}",
+        fmt_keys(&app.config.keybindings.popup.cancel),
         status
     )
 }
@@ -635,6 +682,7 @@ pub fn render_ai_response_popup(f: &mut Frame, app: &App) {
                     line_in_code_block,
                     None,
                     Style::default(),
+                    code_bg,
                 )));
             }
         }

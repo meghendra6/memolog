@@ -53,6 +53,7 @@ pub fn parse_markdown_spans(
     in_code_block: bool,
     search_regex: Option<&regex::Regex>,
     search_style: Style,
+    code_bg: Option<Color>,
 ) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
 
@@ -126,23 +127,16 @@ pub fn parse_markdown_spans(
         return spans;
     }
 
-    // TODO checkboxes at line start.
-    // Keep display width comparable to the original "- [ ] " / "- [x] " prefix for cleaner wrapping.
-    let (content, todo_prefix) = if let Some(stripped) = content.strip_prefix("- [ ] ") {
-        let color = parse_color(&theme.todo_wip);
-        spans.push(Span::styled("• [ ] ", Style::default().fg(color)));
-        (stripped, true)
-    } else if let Some(stripped) = content.strip_prefix("- [x] ") {
-        let color = parse_color(&theme.todo_done);
-        spans.push(Span::styled("• [✓] ", Style::default().fg(color)));
-        (stripped, true)
-    } else if let Some(stripped) = content.strip_prefix("- [X] ") {
-        let color = parse_color(&theme.todo_done);
-        spans.push(Span::styled("• [✓] ", Style::default().fg(color)));
-        (stripped, true)
-    } else {
-        (content, false)
-    };
+    // TODO checkboxes at line start. Supports CommonMark `[ ]`/`[x]` plus Obsidian-style
+    // status markers `[/]` in-progress, `[-]` cancelled, `[>]` deferred, `[!]` important.
+    // Each renders as a 6-column "• [g] " prefix so wrapping stays aligned.
+    let (content, todo_prefix) =
+        if let Some((marker, style, rest)) = checkbox_marker(content, theme) {
+            spans.push(Span::styled(marker, style));
+            (rest, true)
+        } else {
+            (content, false)
+        };
 
     let (content, todo_prefix) = if todo_prefix {
         (content, todo_prefix)
@@ -201,15 +195,18 @@ pub fn parse_markdown_spans(
     }
 
     // Inline code: split on backticks and style code segments.
+    // When a code background is supplied (the rich viewer), render code as a "chip"
+    // with a subtle background for clearer delimitation; elsewhere it stays bg-less.
     let mut is_code = false;
     for segment in content.split('`') {
         if is_code {
-            spans.push(Span::styled(
-                segment.to_string(),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
+            let mut code_style = Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD);
+            if let Some(bg) = code_bg {
+                code_style = code_style.bg(bg);
+            }
+            spans.push(Span::styled(segment.to_string(), code_style));
         } else {
             spans.extend(parse_inline_markdown(
                 segment,
@@ -234,6 +231,36 @@ fn bullet_for_level(leading_spaces: usize) -> char {
         2 => '▪',
         _ => '▫',
     }
+}
+
+/// Recognizes a leading checkbox marker `- [g] ` (CommonMark plus Obsidian status glyphs)
+/// and returns the styled display marker `• [g] `, its style, and the remaining text.
+/// Returns `None` when `content` does not start with a recognized checkbox.
+fn checkbox_marker<'a>(content: &'a str, theme: &Theme) -> Option<(String, Style, &'a str)> {
+    let bytes = content.as_bytes();
+    if bytes.len() < 6 || !content.starts_with("- [") || bytes[4] != b']' || bytes[5] != b' ' {
+        return None;
+    }
+    let (glyph, style) = match bytes[3] as char {
+        ' ' => ("[ ]", Style::default().fg(parse_color(&theme.todo_wip))),
+        'x' | 'X' => ("[✓]", Style::default().fg(parse_color(&theme.todo_done))),
+        '/' => ("[◐]", Style::default().fg(parse_color(&theme.mood))),
+        '-' => (
+            "[~]",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::CROSSED_OUT),
+        ),
+        '>' => ("[→]", Style::default().fg(parse_color(&theme.timestamp))),
+        '!' => (
+            "[!]",
+            Style::default()
+                .fg(parse_color(&theme.todo_wip))
+                .add_modifier(Modifier::BOLD),
+        ),
+        _ => return None,
+    };
+    Some((format!("• {glyph} "), style, &content[6..]))
 }
 
 fn split_priority_marker(text: &str) -> Option<(Priority, &str)> {
@@ -774,25 +801,22 @@ fn normalize_leading_whitespace(text: &str) -> (String, &str) {
     (out, rest)
 }
 
-fn split_list_marker(text: &str) -> (&'static str, &str) {
-    if let Some(rest) = text.strip_prefix("- [ ] ") {
-        return ("- [ ] ", rest);
-    }
-    if let Some(rest) = text.strip_prefix("- [x] ") {
-        return ("- [x] ", rest);
-    }
-    if let Some(rest) = text.strip_prefix("- [X] ") {
-        return ("- [X] ", rest);
+fn split_list_marker(text: &str) -> (&str, &str) {
+    // Any "- [g] " checkbox marker (6 columns). Keep the real slice so the first wrapped
+    // line still carries the original status glyph for re-rendering.
+    let bytes = text.as_bytes();
+    if bytes.len() >= 6 && text.starts_with("- [") && bytes[4] == b']' && bytes[5] == b' ' {
+        return (&text[..6], &text[6..]);
     }
 
     if let Some(rest) = text.strip_prefix("- ") {
-        return ("- ", rest);
+        return (&text[..2], rest);
     }
     if let Some(rest) = text.strip_prefix("* ") {
-        return ("* ", rest);
+        return (&text[..2], rest);
     }
     if let Some(rest) = text.strip_prefix("+ ") {
-        return ("+ ", rest);
+        return (&text[..2], rest);
     }
 
     ("", text)
@@ -809,6 +833,36 @@ mod tests {
     }
 
     #[test]
+    fn parse_markdown_spans_renders_extended_checkboxes() {
+        let theme = Theme::default();
+        for (src, glyph) in [
+            ("- [ ] todo", "• [ ] "),
+            ("- [x] done", "• [✓] "),
+            ("- [X] done", "• [✓] "),
+            ("- [/] wip", "• [◐] "),
+            ("- [-] cancelled", "• [~] "),
+            ("- [>] deferred", "• [→] "),
+            ("- [!] important", "• [!] "),
+        ] {
+            let spans = parse_markdown_spans(src, &theme, false, None, Style::default(), None);
+            assert_eq!(
+                spans.first().map(|s| s.content.as_ref()),
+                Some(glyph),
+                "marker for {src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_markdown_spans_unknown_checkbox_status_is_plain_bullet() {
+        let theme = Theme::default();
+        let spans =
+            parse_markdown_spans("- [?] weird", &theme, false, None, Style::default(), None);
+        // Unknown status is not treated as a checkbox; the literal "[?]" stays in the body.
+        assert!(span_text(&spans).contains("[?] weird"));
+    }
+
+    #[test]
     fn parse_markdown_spans_supports_emphasis_variants() {
         let spans = parse_markdown_spans(
             "**bold** *italic* ~~gone~~",
@@ -816,6 +870,7 @@ mod tests {
             false,
             None,
             Style::default(),
+            None,
         );
 
         assert!(spans.iter().any(|span| {
@@ -838,6 +893,7 @@ mod tests {
             false,
             None,
             Style::default(),
+            None,
         );
 
         assert!(spans.iter().any(|span| {
@@ -849,7 +905,14 @@ mod tests {
 
     #[test]
     fn parse_markdown_spans_renders_thematic_break_as_rule() {
-        let spans = parse_markdown_spans("---", &Theme::default(), false, None, Style::default());
+        let spans = parse_markdown_spans(
+            "---",
+            &Theme::default(),
+            false,
+            None,
+            Style::default(),
+            None,
+        );
 
         assert_eq!(spans.len(), 1);
         assert!(spans[0].content.as_ref().contains('─'));
@@ -863,6 +926,7 @@ mod tests {
             false,
             None,
             Style::default(),
+            None,
         );
 
         assert_eq!(spans.first().map(|span| span.content.as_ref()), Some("▎ "));
@@ -877,6 +941,7 @@ mod tests {
             false,
             None,
             Style::default(),
+            None,
         );
 
         assert_eq!(span_text(&spans), "_text_");
@@ -895,6 +960,7 @@ mod tests {
             false,
             None,
             Style::default(),
+            None,
         );
 
         assert_eq!(span_text(&spans), "_literal_ italic");
@@ -915,6 +981,7 @@ mod tests {
             false,
             None,
             Style::default(),
+            None,
         );
 
         assert_eq!(span_text(&spans), "prefix italic suffix");
@@ -929,6 +996,7 @@ mod tests {
             false,
             None,
             Style::default(),
+            None,
         );
         let link_color = crate::ui::color_parser::parse_color(&theme.link);
         let has_link_span = spans
@@ -943,8 +1011,14 @@ mod tests {
     #[test]
     fn parse_markdown_spans_wikilink_shows_alias() {
         let theme = Theme::default();
-        let spans =
-            parse_markdown_spans("[[Target|Display]]", &theme, false, None, Style::default());
+        let spans = parse_markdown_spans(
+            "[[Target|Display]]",
+            &theme,
+            false,
+            None,
+            Style::default(),
+            None,
+        );
         let link_color = crate::ui::color_parser::parse_color(&theme.link);
         // The alias is shown, the raw target is not.
         assert!(

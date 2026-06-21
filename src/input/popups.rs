@@ -204,6 +204,13 @@ fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
         app.active_popup = ActivePopup::None;
         app.memo_preview_entry = None;
+        app.memo_reading_mode = false;
+        return;
+    }
+
+    // Toggle distraction-free reading mode (hide chrome, fullscreen centered prose).
+    if matches!(key_code, KeyCode::Char('z') | KeyCode::Char('Z')) {
+        app.memo_reading_mode = !app.memo_reading_mode;
         return;
     }
 
@@ -211,6 +218,7 @@ fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
         if let Some(entry) = app.memo_preview_entry.clone() {
             app.active_popup = ActivePopup::None;
             app.memo_preview_entry = None;
+            app.memo_reading_mode = false;
             app.start_edit_entry(&entry);
         }
         return;
@@ -230,6 +238,7 @@ fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
             let targets = crate::links::distinct_targets(&entry.content);
             app.active_popup = ActivePopup::None;
             app.memo_preview_entry = None;
+            app.memo_reading_mode = false;
             crate::actions::open_links_popup_filtered(app, targets);
         }
         return;
@@ -1066,6 +1075,7 @@ fn handle_pomodoro_popup(app: &mut App, key: KeyEvent) {
         app.pomodoro_alert_expiry = None;
         app.pomodoro_alert_message = None;
         app.active_popup = ActivePopup::None;
+        app.begin_pomodoro_focus_session();
         app.toast(format!("Pomodoro started: {}m · {}", mins, task.text));
         return;
     }

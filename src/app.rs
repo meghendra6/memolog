@@ -242,6 +242,11 @@ pub struct App<'a> {
     pub navigate_focus: NavigateFocus,
     pub last_navigate_focus: Option<NavigateFocus>,
     pub focus_mode: bool,
+    /// When false, panel borders/titles and the status bar are hidden for a maximally
+    /// distraction-free workspace. Toggled by the `toggle_chrome` keybinding.
+    pub ui_chrome_visible: bool,
+    /// Saved chrome-visibility state to restore when a pomodoro-linked focus session ends.
+    pub focus_session_restore: Option<bool>,
     pub textarea: TextArea<'a>,
     pub textarea_viewport_row: u16,
     pub textarea_viewport_col: u16,
@@ -335,6 +340,9 @@ pub struct App<'a> {
 
     pub memo_preview_entry: Option<LogEntry>,
     pub memo_preview_scroll: usize,
+    /// Distraction-free reading mode for the memo viewer: hides meta/footer chrome and
+    /// renders the prose centered and fullscreen. Reset whenever the viewer closes.
+    pub memo_reading_mode: bool,
     pub google_auth_display: Option<AuthDisplay>,
     pub google_auth_receiver: Option<Receiver<AuthPollResult>>,
     pub google_sync_receiver: Option<Receiver<crate::integrations::google::SyncOutcome>>,
@@ -521,6 +529,8 @@ impl<'a> App<'a> {
             navigate_focus: NavigateFocus::Timeline,
             last_navigate_focus: None,
             focus_mode: false,
+            ui_chrome_visible: true,
+            focus_session_restore: None,
             textarea,
             textarea_viewport_row: 0,
             textarea_viewport_col: 0,
@@ -614,6 +624,7 @@ impl<'a> App<'a> {
             pomodoro_pending_task: None,
             memo_preview_entry: None,
             memo_preview_scroll: 0,
+            memo_reading_mode: false,
             google_auth_display: None,
             google_auth_receiver: None,
             google_sync_receiver: None,
@@ -2404,6 +2415,23 @@ impl<'a> App<'a> {
         if self.focus_mode { "ON" } else { "OFF" }
     }
 
+    /// Starts a distraction-free focus session if `[pomodoro] auto_focus_session` is on:
+    /// remembers the current chrome visibility and hides chrome. No-op otherwise or if a
+    /// session is already active.
+    pub fn begin_pomodoro_focus_session(&mut self) {
+        if self.config.pomodoro.auto_focus_session && self.focus_session_restore.is_none() {
+            self.focus_session_restore = Some(self.ui_chrome_visible);
+            self.ui_chrome_visible = false;
+        }
+    }
+
+    /// Restores the chrome visibility saved when the focus session began. No-op if none.
+    pub fn end_pomodoro_focus_session(&mut self) {
+        if let Some(chrome) = self.focus_session_restore.take() {
+            self.ui_chrome_visible = chrome;
+        }
+    }
+
     pub fn navigate_focus_label(&self) -> &'static str {
         match self.navigate_focus {
             NavigateFocus::Timeline => "Timeline",
@@ -3194,6 +3222,35 @@ fn mark_onboarding_seen_if_needed() -> bool {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn pomodoro_focus_session_hides_and_restores_chrome_when_enabled() {
+        let mut app = App::new();
+        app.config.pomodoro.auto_focus_session = true;
+        app.ui_chrome_visible = true;
+
+        app.begin_pomodoro_focus_session();
+        assert!(!app.ui_chrome_visible, "chrome hidden during focus session");
+        assert_eq!(app.focus_session_restore, Some(true));
+
+        app.end_pomodoro_focus_session();
+        assert!(app.ui_chrome_visible, "chrome restored after session");
+        assert_eq!(app.focus_session_restore, None);
+    }
+
+    #[test]
+    fn pomodoro_focus_session_is_noop_when_disabled() {
+        let mut app = App::new();
+        app.config.pomodoro.auto_focus_session = false;
+        app.ui_chrome_visible = true;
+
+        app.begin_pomodoro_focus_session();
+        assert!(
+            app.ui_chrome_visible,
+            "chrome unchanged when feature is off"
+        );
+        assert_eq!(app.focus_session_restore, None);
+    }
 
     static TEST_LOG_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 

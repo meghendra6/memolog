@@ -37,6 +37,7 @@ pub fn tick(app: &mut App) {
 
         let alert_seconds = app.config.pomodoro.alert_seconds.max(1) as i64;
         app.pomodoro_alert_expiry = Some(Local::now() + Duration::seconds(alert_seconds));
+        app.end_pomodoro_focus_session();
     }
 
     if let Some(expiry) = app.pomodoro_alert_expiry
@@ -211,6 +212,7 @@ fn handle_day_rollover(app: &mut App) {
     app.pomodoro_target = None;
     app.pomodoro_alert_expiry = None;
     app.pomodoro_alert_message = None;
+    app.end_pomodoro_focus_session();
     if app.active_popup == ActivePopup::Pomodoro {
         app.active_popup = ActivePopup::None;
     }
