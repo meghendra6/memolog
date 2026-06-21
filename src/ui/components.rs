@@ -67,13 +67,16 @@ pub fn parse_markdown_spans(
         return spans;
     }
 
+    // Theme-derived inline Markdown colors (defaults preserve the legacy hard-coded look).
+    let heading_color = parse_color(&theme.heading);
+    let code_color = parse_color(&theme.code);
+    let list_marker_color = parse_color(&theme.list_marker);
+
     // Fenced code blocks: render as-is with a distinct style.
     if in_code_block || content.starts_with("```") {
         spans.push(Span::styled(
             content.to_string(),
-            Style::default()
-                .fg(Color::LightCyan)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(code_color).add_modifier(Modifier::BOLD),
         ));
         return spans;
     }
@@ -83,7 +86,7 @@ pub fn parse_markdown_spans(
         spans.push(Span::styled(
             stripped.to_string(),
             Style::default()
-                .fg(Color::White)
+                .fg(heading_color)
                 .add_modifier(Modifier::BOLD),
         ));
         return spans;
@@ -104,7 +107,7 @@ pub fn parse_markdown_spans(
         spans.push(Span::styled(
             THEMATIC_BREAK_DISPLAY.to_string(),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(list_marker_color)
                 .add_modifier(Modifier::DIM),
         ));
         return spans;
@@ -145,7 +148,7 @@ pub fn parse_markdown_spans(
         spans.push(Span::styled(
             format!("{bullet} "),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(list_marker_color)
                 .add_modifier(Modifier::BOLD),
         ));
         (stripped, false)
@@ -154,7 +157,7 @@ pub fn parse_markdown_spans(
         spans.push(Span::styled(
             format!("{bullet} "),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(list_marker_color)
                 .add_modifier(Modifier::BOLD),
         ));
         (stripped, false)
@@ -163,7 +166,7 @@ pub fn parse_markdown_spans(
         spans.push(Span::styled(
             format!("{bullet} "),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(list_marker_color)
                 .add_modifier(Modifier::BOLD),
         ));
         (stripped, false)
@@ -171,7 +174,7 @@ pub fn parse_markdown_spans(
         spans.push(Span::styled(
             marker,
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(list_marker_color)
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" ".to_string()));
@@ -200,9 +203,7 @@ pub fn parse_markdown_spans(
     let mut is_code = false;
     for segment in content.split('`') {
         if is_code {
-            let mut code_style = Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD);
+            let mut code_style = Style::default().fg(code_color).add_modifier(Modifier::BOLD);
             if let Some(bg) = code_bg {
                 code_style = code_style.bg(bg);
             }
@@ -248,7 +249,7 @@ fn checkbox_marker<'a>(content: &'a str, theme: &Theme) -> Option<(String, Style
         '-' => (
             "[~]",
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(parse_color(&theme.list_marker))
                 .add_modifier(Modifier::CROSSED_OUT),
         ),
         '>' => ("[→]", Style::default().fg(parse_color(&theme.timestamp))),
@@ -575,7 +576,7 @@ fn parse_words(
             spans.push(Span::styled(
                 word[start..end].to_string(),
                 Style::default()
-                    .fg(Color::Blue)
+                    .fg(parse_color(&theme.url))
                     .add_modifier(Modifier::UNDERLINED),
             ));
 
@@ -830,6 +831,42 @@ mod tests {
 
     fn span_text(spans: &[ratatui::text::Span<'_>]) -> String {
         spans.iter().map(|span| span.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn parse_markdown_spans_uses_theme_colors_for_inline_elements() {
+        use crate::ui::color_parser::parse_color;
+        let theme = Theme {
+            heading: "Red".to_string(),
+            code: "Green".to_string(),
+            list_marker: "Blue".to_string(),
+            url: "Magenta".to_string(),
+            ..Theme::default()
+        };
+
+        let heading = parse_markdown_spans("# Title", &theme, false, None, Style::default(), None);
+        assert_eq!(heading[0].style.fg, Some(parse_color("Red")));
+
+        let code = parse_markdown_spans("a `x` b", &theme, false, None, Style::default(), None);
+        assert!(
+            code.iter()
+                .any(|s| s.content.as_ref() == "x" && s.style.fg == Some(parse_color("Green")))
+        );
+
+        let bullet = parse_markdown_spans("- item", &theme, false, None, Style::default(), None);
+        assert_eq!(bullet[0].style.fg, Some(parse_color("Blue")));
+
+        let url = parse_markdown_spans(
+            "see https://example.com now",
+            &theme,
+            false,
+            None,
+            Style::default(),
+            None,
+        );
+        assert!(url.iter().any(
+            |s| s.content.contains("example.com") && s.style.fg == Some(parse_color("Magenta"))
+        ));
     }
 
     #[test]

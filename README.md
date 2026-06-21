@@ -421,8 +421,16 @@ todo_wip = "Magenta"
 tag = "Cyan"
 mood = "Blue"
 timestamp = "LightCyan"
-link = "LightMagenta"   # color for inline [[wikilink]] highlights
+link = "LightMagenta"     # color for inline [[wikilink]] highlights
+heading = "White"         # Markdown heading text
+code = "Yellow"           # inline and fenced code
+list_marker = "DarkGray"  # bullets, ordered markers, thematic breaks
+url = "Blue"              # http(s) links
 ```
+
+The `heading`, `code`, `list_marker`, and `url` tokens control inline Markdown rendering
+across the timeline, tasks, agenda, and viewer; the built-in presets set harmonized values
+for each.
 
 Theme presets can be selected via config or the Theme Switcher popup:
 

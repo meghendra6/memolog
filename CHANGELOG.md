@@ -22,6 +22,7 @@
 - Chrome 토글(`\`): 패널 테두리/타이틀과 상태바를 숨겨 최대 집중 작업 공간 확보
 - 컴팩트 상태바 옵션(`[ui] minimal_status_bar`): 모드/포커스/스트릭/진행도만 표시
 - 포모도로 집중 세션(`[pomodoro] auto_focus_session`): 타이머 시작 시 크롬을 자동으로 숨기고 종료 시 복원
+- 인라인 마크다운 렌더링 테마화: 제목/코드/리스트 마커/URL 색상을 `[theme] heading`/`code`/`list_marker`/`url` 토큰으로 분리해 타임라인·태스크·아젠다·뷰어 전반에서 프리셋이 색을 제어(기본값은 기존 외관 유지, 5개 프리셋 모두 조화 값 지정)
 
 ### English
 - Note lines that carry only schedule metadata (e.g. a bare `@sched(...)`/`@time(...)`) now appear in the agenda with a `(scheduled)`/`(reminder)` placeholder instead of being silently dropped
@@ -43,6 +44,7 @@
 - Chrome toggle (`\`): hide panel borders/titles and the status bar for a maximally distraction-free workspace
 - Compact status bar option (`[ui] minimal_status_bar`): show only mode/focus/streak/progress
 - Pomodoro focus session (`[pomodoro] auto_focus_session`): starting a timer auto-hides chrome and restores it when the timer ends
+- Theme-aware inline Markdown rendering: heading/code/list-marker/URL colors are now driven by `[theme] heading`/`code`/`list_marker`/`url` tokens across the timeline, tasks, agenda, and viewer (defaults preserve the previous look; all five presets ship harmonized values)
 
 ## [1.4.0]
 

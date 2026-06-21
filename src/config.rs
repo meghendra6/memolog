@@ -840,6 +840,11 @@ pub struct Theme {
     pub mood: String,
     pub timestamp: String,
     pub link: String,
+    /// Inline rendering colors for Markdown elements (timeline/tasks/agenda/viewer).
+    pub heading: String,
+    pub code: String,
+    pub list_marker: String,
+    pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ui: Option<ThemeUiOverrides>,
 }
@@ -858,6 +863,11 @@ impl Default for Theme {
             mood: "Magenta".to_string(),
             timestamp: "Blue".to_string(),
             link: "LightMagenta".to_string(),
+            // Defaults preserve the previously hard-coded inline Markdown colors exactly.
+            heading: "White".to_string(),
+            code: "Yellow".to_string(),
+            list_marker: "DarkGray".to_string(),
+            url: "Blue".to_string(),
             ui: None,
         }
     }
@@ -871,7 +881,7 @@ impl Theme {
         use crate::ui::color_parser::parse_color_checked;
         let mut bad = Vec::new();
 
-        let required: [(&str, &str); 11] = [
+        let required: [(&str, &str); 15] = [
             ("border_default", self.border_default.as_str()),
             ("border_editing", self.border_editing.as_str()),
             ("border_search", self.border_search.as_str()),
@@ -883,6 +893,10 @@ impl Theme {
             ("mood", self.mood.as_str()),
             ("timestamp", self.timestamp.as_str()),
             ("link", self.link.as_str()),
+            ("heading", self.heading.as_str()),
+            ("code", self.code.as_str()),
+            ("list_marker", self.list_marker.as_str()),
+            ("url", self.url.as_str()),
         ];
         for (name, value) in required {
             if parse_color_checked(value).is_none() {
@@ -1060,6 +1074,10 @@ impl Theme {
                 mood: "255,121,198".to_string(),
                 timestamp: "98,114,164".to_string(),
                 link: "189,147,249".to_string(),
+                heading: "248,248,242".to_string(),
+                code: "241,250,140".to_string(),
+                list_marker: "98,114,164".to_string(),
+                url: "139,233,253".to_string(),
                 ui: Some(ThemeUiOverrides {
                     fg: Some("248,248,242".to_string()),
                     bg: Some("40,42,54".to_string()),
@@ -1086,6 +1104,10 @@ impl Theme {
                 mood: "211,54,130".to_string(),
                 timestamp: "38,139,210".to_string(),
                 link: "108,113,196".to_string(),
+                heading: "147,161,161".to_string(),
+                code: "181,137,0".to_string(),
+                list_marker: "88,110,117".to_string(),
+                url: "38,139,210".to_string(),
                 ui: Some(ThemeUiOverrides {
                     fg: Some("131,148,150".to_string()),
                     bg: Some("0,43,54".to_string()),
@@ -1112,6 +1134,10 @@ impl Theme {
                 mood: "211,54,130".to_string(),
                 timestamp: "147,161,161".to_string(),
                 link: "211,54,130".to_string(),
+                heading: "7,54,66".to_string(),
+                code: "181,137,0".to_string(),
+                list_marker: "147,161,161".to_string(),
+                url: "38,139,210".to_string(),
                 ui: Some(ThemeUiOverrides {
                     fg: Some("101,123,131".to_string()),
                     bg: Some("253,246,227".to_string()),
@@ -1138,6 +1164,10 @@ impl Theme {
                 mood: "180,142,173".to_string(),
                 timestamp: "94,129,172".to_string(),
                 link: "180,142,173".to_string(),
+                heading: "236,239,244".to_string(),
+                code: "235,203,139".to_string(),
+                list_marker: "76,86,106".to_string(),
+                url: "136,192,208".to_string(),
                 ui: Some(ThemeUiOverrides {
                     fg: Some("216,222,233".to_string()),
                     bg: Some("46,52,64".to_string()),
@@ -1164,6 +1194,10 @@ impl Theme {
                 mood: "200,200,200".to_string(),
                 timestamp: "160,160,160".to_string(),
                 link: "150,150,150".to_string(),
+                heading: "240,240,240".to_string(),
+                code: "224,192,64".to_string(),
+                list_marker: "128,128,128".to_string(),
+                url: "200,200,200".to_string(),
                 ui: Some(ThemeUiOverrides {
                     fg: Some("240,240,240".to_string()),
                     bg: Some("16,16,16".to_string()),
