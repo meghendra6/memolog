@@ -18,7 +18,7 @@ This project was forked from https://github.com/sonohoshi/sonomemo.
 - Obsidian-style `[[wikilinks]]` with backlinks, inline highlighting, and ego-graph view
 - Review & insight: weekly review with pomodoro tracking and Markdown/CSV export
 - Capture intelligence: natural-language date/time parsing and daily-note templates
-- Rich Markdown viewer: GFM tables, syntax-highlighted code blocks, heading hierarchy, and a distraction-free reading mode (`z`)
+- Rich Markdown viewer: GFM tables (zebra-striped), syntax-highlighted code blocks, heading hierarchy, inline `[text](url)` links, Obsidian `> [!callout]` blocks, and a distraction-free reading mode (`z`) with a reading-progress bar
 
 ## Quick start
 
@@ -99,7 +99,7 @@ Agenda controls (when focused):
 - `]` snooze selected task by +1 day
 - `}` snooze selected task by +1 week
 - `p` start/stop pomodoro
-- In the memo viewer: `j/k` scroll, `PgUp/PgDn` jump, `e` edit, `z` reading mode, `Esc` close
+- In the memo viewer: `j/k` scroll, `g/G` (or Home/End) top/bottom, `d/u` half-page, `PgUp/PgDn` jump, `J/K` previous/next memo, `y` copy, `e` edit, `z` reading mode, `Esc` close
 - `e` open source entry
 
 ## Composer (editing)
@@ -123,7 +123,7 @@ Insert mode shortcuts:
 - `Ctrl+B` toggle inline image preview
 - `Tab`/`Shift+Tab` indent/outdent
 - Wide terminals show a live markdown preview beside the editor (unless Zen mode is on)
-- Rendered markdown highlights bold / italic / strikethrough / thematic breaks / blockquotes, renders GFM tables as box-drawing grids, shows per-level heading styling, an emphasized code-block language badge, and inline-code background "chips"
+- Rendered markdown highlights bold / italic / strikethrough / thematic breaks / blockquotes, renders GFM tables as zebra-striped box-drawing grids, styles `[text](url)` links and `> [!callout]` blocks, shows per-level heading styling, an emphasized code-block language badge, and inline-code background "chips"
 - Extended task checkboxes render distinct glyphs: `[ ]` todo, `[x]` done, `[/]` in-progress, `[-]` cancelled, `[>]` deferred, `[!]` important (Obsidian-compatible)
 - Typing `[[` opens a wikilink autocomplete popup suggesting existing link targets. `Enter` or `Tab` inserts the selected target, `Esc` dismisses without inserting.
 
