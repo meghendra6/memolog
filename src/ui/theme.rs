@@ -154,6 +154,10 @@ mod tests {
             mood: "Magenta".to_string(),
             timestamp: "LightCyan".to_string(),
             link: "LightMagenta".to_string(),
+            heading: "White".to_string(),
+            code: "Yellow".to_string(),
+            list_marker: "DarkGray".to_string(),
+            url: "Blue".to_string(),
             ui: None,
         };
 
