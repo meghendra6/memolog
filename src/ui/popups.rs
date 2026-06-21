@@ -15,7 +15,10 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
 };
 use std::path::Path;
 use syntect::easy::HighlightLines;
@@ -337,12 +340,18 @@ fn review_body_lines<'a>(app: &App, tokens: &ThemeTokens) -> Vec<Line<'a>> {
     lines
 }
 
-pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
+pub fn render_memo_preview_popup(f: &mut Frame, app: &mut App) {
+    // Borrow the entry only long enough to build the (owned) preview doc and image
+    // dir; the borrow ends here so `app.memo_preview_max_scroll` can be written below
+    // without cloning the (potentially large) memo body each frame.
     let Some(entry) = app.memo_preview_entry.as_ref() else {
         return;
     };
-
     let preview = memo_preview_doc(entry);
+    let image_base_dir = Path::new(&entry.file_path)
+        .parent()
+        .map(|parent| parent.to_path_buf());
+
     let tokens = ThemeTokens::from_theme(&app.config.theme);
     let reading = app.memo_reading_mode;
 
@@ -364,6 +373,8 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
         (inner, true)
     };
 
+    // Reading mode adds a small calm top margin so prose is not glued to the top edge.
+    let top_pad = (inner.height / 12).clamp(1, 4);
     let sections = if show_meta {
         Layout::default()
             .direction(Direction::Vertical)
@@ -376,7 +387,11 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
     } else {
         Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .constraints([
+                Constraint::Length(top_pad),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
             .split(inner)
     };
 
@@ -398,7 +413,7 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
         f.render_widget(meta, meta_column);
         (sections[1], sections[2])
     } else {
-        (sections[0], sections[1])
+        (sections[1], sections[2])
     };
 
     let max_prose = if reading { 100 } else { 112 };
@@ -421,13 +436,14 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
         syntax_set,
         syntax_theme,
         code_bg,
-        app.memo_preview_entry
-            .as_ref()
-            .and_then(|entry| std::path::Path::new(&entry.file_path).parent()),
+        image_base_dir.as_deref(),
     )
     .lines;
 
     let max_scroll = lines.len().saturating_sub(prose_area.height as usize);
+    // Expose the real max scroll so the key handler can clamp jumps (g/G, d/u, PgDn)
+    // and keep `memo_preview_scroll` honest rather than drifting past the end.
+    app.memo_preview_max_scroll = max_scroll;
     let scroll = app.memo_preview_scroll.min(max_scroll);
 
     let paragraph = Paragraph::new(Text::from(lines))
@@ -435,6 +451,18 @@ pub fn render_memo_preview_popup(f: &mut Frame, app: &App) {
         .wrap(Wrap { trim: false })
         .scroll((scroll as u16, 0));
     f.render_widget(paragraph, prose_area);
+
+    // Framed mode gets a glanceable scrollbar on the content gutter; reading mode stays
+    // chrome-free and relies on the centered progress footer instead.
+    if !reading && max_scroll > 0 {
+        let mut sb_state = ScrollbarState::new(max_scroll).position(scroll);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_style(Style::default().fg(tokens.ui_border_default))
+            .thumb_style(Style::default().fg(tokens.ui_accent));
+        f.render_stateful_widget(scrollbar, content_area, &mut sb_state);
+    }
 
     if reading {
         let footer = Paragraph::new(memo_reading_footer(app, scroll, max_scroll))
@@ -500,35 +528,31 @@ fn memo_preview_doc(entry: &LogEntry) -> MemoPreviewDoc {
     }
 }
 
+/// An ambient reading-progress cue: an 8-cell bar plus a percentage, or `full` when
+/// the memo fits the viewport. Reads as "how much is left" at a glance. Pure.
+fn reading_progress(scroll: usize, max_scroll: usize) -> String {
+    if max_scroll == 0 {
+        return "full".to_string();
+    }
+    let pct = (scroll * 100) / max_scroll;
+    let filled = (scroll * 8) / max_scroll;
+    let empty = 8 - filled;
+    format!("[{}{}] {pct}%", "█".repeat(filled), "░".repeat(empty))
+}
+
 fn memo_preview_footer(app: &App, scroll: usize, max_scroll: usize) -> String {
-    let scroll_keys = format!(
-        "{} / {}",
-        fmt_keys(&app.config.keybindings.popup.up),
-        fmt_keys(&app.config.keybindings.popup.down)
-    );
-    let status = if max_scroll == 0 {
-        "full".to_string()
-    } else {
-        format!("{}/{}", scroll + 1, max_scroll + 1)
-    };
     format!(
-        "{} close · E edit · z reading · {} scroll · PgUp/PgDn jump · {}",
+        "{} close · E edit · y copy · z reading · J/K prev/next · g/G/d/u scroll · {}",
         fmt_keys(&app.config.keybindings.popup.cancel),
-        scroll_keys,
-        status
+        reading_progress(scroll, max_scroll),
     )
 }
 
 fn memo_reading_footer(app: &App, scroll: usize, max_scroll: usize) -> String {
-    let status = if max_scroll == 0 {
-        "full".to_string()
-    } else {
-        format!("{}/{}", scroll + 1, max_scroll + 1)
-    };
     format!(
-        "z exit reading · {} close · {}",
+        "z exit · {} close · J/K prev/next · g/G top/bottom · {}",
         fmt_keys(&app.config.keybindings.popup.cancel),
-        status
+        reading_progress(scroll, max_scroll),
     )
 }
 
@@ -2963,7 +2987,7 @@ fn fmt_keys(keys: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_thematic_break, memo_preview_doc, visual_help_lines};
+    use super::{is_thematic_break, memo_preview_doc, reading_progress, visual_help_lines};
     use crate::config::Theme;
     use crate::models::{LogEntry, VisualKind};
     use crate::ui::theme::ThemeTokens;
@@ -2992,6 +3016,17 @@ mod tests {
         assert!(combined.contains("y yank"));
         assert!(combined.contains("d/x delete"));
         assert!(combined.contains("Esc normal"));
+    }
+
+    #[test]
+    fn reading_progress_reports_percentage_and_bar() {
+        assert_eq!(reading_progress(0, 0), "full");
+        let start = reading_progress(0, 100);
+        assert!(start.contains("0%") && start.contains('░') && !start.contains('█'));
+        let mid = reading_progress(50, 100);
+        assert!(mid.contains("50%") && mid.matches('█').count() == 4);
+        let end = reading_progress(100, 100);
+        assert!(end.contains("100%") && end.matches('█').count() == 8);
     }
 
     #[test]

@@ -340,9 +340,18 @@ pub struct App<'a> {
 
     pub memo_preview_entry: Option<LogEntry>,
     pub memo_preview_scroll: usize,
+    /// Max scroll offset of the currently rendered memo viewer, refreshed each frame so
+    /// the key handler can clamp jump/page motions instead of letting scroll drift.
+    pub memo_preview_max_scroll: usize,
     /// Distraction-free reading mode for the memo viewer: hides meta/footer chrome and
     /// renders the prose centered and fullscreen. Reset whenever the viewer closes.
     pub memo_reading_mode: bool,
+    /// True when the open viewer was launched from the timeline, enabling in-place
+    /// next/prev (J/K) stepping through `logs` without closing the popup.
+    pub memo_preview_from_timeline: bool,
+    /// Last viewed entry + scroll, so reopening the same memo restores the reading spot.
+    pub last_preview_identity: Option<EntryIdentity>,
+    pub last_preview_scroll: usize,
     pub google_auth_display: Option<AuthDisplay>,
     pub google_auth_receiver: Option<Receiver<AuthPollResult>>,
     pub google_sync_receiver: Option<Receiver<crate::integrations::google::SyncOutcome>>,
@@ -624,7 +633,11 @@ impl<'a> App<'a> {
             pomodoro_pending_task: None,
             memo_preview_entry: None,
             memo_preview_scroll: 0,
+            memo_preview_max_scroll: 0,
             memo_reading_mode: false,
+            memo_preview_from_timeline: false,
+            last_preview_identity: None,
+            last_preview_scroll: 0,
             google_auth_display: None,
             google_auth_receiver: None,
             google_sync_receiver: None,
@@ -897,6 +910,13 @@ impl<'a> App<'a> {
     pub fn toast(&mut self, message: impl Into<String>) {
         self.toast_message = Some(message.into());
         self.toast_expiry = Some(Local::now() + Duration::seconds(2));
+    }
+
+    /// Copies text to the system clipboard and confirms with a toast. Mirrors the
+    /// editor yank path; silently no-ops on empty text or an unavailable clipboard.
+    pub fn copy_text_to_clipboard(&mut self, text: &str) {
+        copy_to_clipboard(text);
+        self.toast("Copied memo to clipboard");
     }
 
     pub fn clear_search_match_metadata(&mut self) {

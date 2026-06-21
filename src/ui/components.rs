@@ -133,9 +133,14 @@ pub fn parse_markdown_spans(
     // TODO checkboxes at line start. Supports CommonMark `[ ]`/`[x]` plus Obsidian-style
     // status markers `[/]` in-progress, `[-]` cancelled, `[>]` deferred, `[!]` important.
     // Each renders as a 6-column "• [g] " prefix so wrapping stays aligned.
+    // When a checkbox is matched, `body_modifier` carries an optional de-emphasis
+    // style for the task body (done items recede, cancelled items strike through)
+    // so completed work stops competing with open work for attention.
+    let mut body_modifier = Modifier::empty();
     let (content, todo_prefix) =
-        if let Some((marker, style, rest)) = checkbox_marker(content, theme) {
+        if let Some((marker, style, modifier, rest)) = checkbox_marker(content, theme) {
             spans.push(Span::styled(marker, style));
+            body_modifier = modifier;
             (rest, true)
         } else {
             (content, false)
@@ -200,6 +205,7 @@ pub fn parse_markdown_spans(
     // Inline code: split on backticks and style code segments.
     // When a code background is supplied (the rich viewer), render code as a "chip"
     // with a subtle background for clearer delimitation; elsewhere it stays bg-less.
+    let body_start = spans.len();
     let mut is_code = false;
     for segment in content.split('`') {
         if is_code {
@@ -220,6 +226,16 @@ pub fn parse_markdown_spans(
         is_code = !is_code;
     }
 
+    // De-emphasize the body of completed/cancelled tasks (the glyph and any
+    // priority chip keep full weight; only the task text recedes).
+    if !body_modifier.is_empty() {
+        let tail = spans.split_off(body_start);
+        spans.extend(patch_spans_style(
+            tail,
+            Style::default().add_modifier(body_modifier),
+        ));
+    }
+
     spans
 }
 
@@ -235,33 +251,55 @@ fn bullet_for_level(leading_spaces: usize) -> char {
 }
 
 /// Recognizes a leading checkbox marker `- [g] ` (CommonMark plus Obsidian status glyphs)
-/// and returns the styled display marker `• [g] `, its style, and the remaining text.
-/// Returns `None` when `content` does not start with a recognized checkbox.
-fn checkbox_marker<'a>(content: &'a str, theme: &Theme) -> Option<(String, Style, &'a str)> {
+/// and returns the styled display marker `• [g] `, its style, an optional body-text
+/// modifier (done items dim, cancelled items strike through so finished work recedes),
+/// and the remaining text. Returns `None` when `content` is not a recognized checkbox.
+fn checkbox_marker<'a>(
+    content: &'a str,
+    theme: &Theme,
+) -> Option<(String, Style, Modifier, &'a str)> {
     let bytes = content.as_bytes();
     if bytes.len() < 6 || !content.starts_with("- [") || bytes[4] != b']' || bytes[5] != b' ' {
         return None;
     }
-    let (glyph, style) = match bytes[3] as char {
-        ' ' => ("[ ]", Style::default().fg(parse_color(&theme.todo_wip))),
-        'x' | 'X' => ("[✓]", Style::default().fg(parse_color(&theme.todo_done))),
-        '/' => ("[◐]", Style::default().fg(parse_color(&theme.mood))),
+    let (glyph, style, body) = match bytes[3] as char {
+        ' ' => (
+            "[ ]",
+            Style::default().fg(parse_color(&theme.todo_wip)),
+            Modifier::empty(),
+        ),
+        'x' | 'X' => (
+            "[✓]",
+            Style::default().fg(parse_color(&theme.todo_done)),
+            Modifier::DIM,
+        ),
+        '/' => (
+            "[◐]",
+            Style::default().fg(parse_color(&theme.mood)),
+            Modifier::empty(),
+        ),
         '-' => (
             "[~]",
             Style::default()
                 .fg(parse_color(&theme.list_marker))
                 .add_modifier(Modifier::CROSSED_OUT),
+            Modifier::CROSSED_OUT | Modifier::DIM,
         ),
-        '>' => ("[→]", Style::default().fg(parse_color(&theme.timestamp))),
+        '>' => (
+            "[→]",
+            Style::default().fg(parse_color(&theme.timestamp)),
+            Modifier::empty(),
+        ),
         '!' => (
             "[!]",
             Style::default()
                 .fg(parse_color(&theme.todo_wip))
                 .add_modifier(Modifier::BOLD),
+            Modifier::empty(),
         ),
         _ => return None,
     };
-    Some((format!("• {glyph} "), style, &content[6..]))
+    Some((format!("• {glyph} "), style, body, &content[6..]))
 }
 
 fn split_priority_marker(text: &str) -> Option<(Priority, &str)> {
@@ -334,6 +372,64 @@ fn parse_inline_markdown(
     let mut cursor = 0usize;
 
     while cursor < text.len() {
+        // CommonMark inline links `[label](url)`: render the label in the link color
+        // (underlined) and hide the raw URL so prose reads cleanly. Checked before the
+        // wikilink branch so a link preceding a `[[wikilink]]` is not word-split, but
+        // `[[` openers and `![image](..)` are deliberately skipped here.
+        if let Some(rel) = text[cursor..].find('[') {
+            let open = cursor + rel;
+            let after_open = &text[open + 1..];
+            let is_wikilink = after_open.starts_with('[');
+            let is_image = open > 0 && text.as_bytes()[open - 1] == b'!';
+            if !is_wikilink
+                && !is_image
+                && let Some(close_rel) = after_open.find(']')
+            {
+                let label_end = open + 1 + close_rel;
+                let after_label = &text[label_end + 1..];
+                if let Some(stripped) = after_label.strip_prefix('(')
+                    && let Some(paren_rel) = matching_link_paren(stripped)
+                {
+                    let url_start = label_end + 2;
+                    let url_end = url_start + paren_rel;
+                    let label = &text[open + 1..label_end];
+                    let url = &text[url_start..url_end];
+                    // Reject a label that swallowed another `[` (malformed/nested), so
+                    // we degrade to literal text instead of rendering a wrong link.
+                    if !label.is_empty()
+                        && !label.contains('[')
+                        && !label.contains('\n')
+                        && !url.contains('\n')
+                    {
+                        if open > cursor {
+                            spans.extend(parse_words(
+                                &text[cursor..open],
+                                theme,
+                                todo_prefix,
+                                search_regex,
+                                search_style,
+                            ));
+                        }
+                        let link_color = parse_color(&theme.link);
+                        spans.extend(patch_spans_style(
+                            parse_inline_markdown(
+                                label,
+                                theme,
+                                todo_prefix,
+                                search_regex,
+                                search_style,
+                            ),
+                            Style::default()
+                                .fg(link_color)
+                                .add_modifier(Modifier::UNDERLINED),
+                        ));
+                        cursor = url_end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
         // Wikilinks `[[target]]` / `[[target|alias]]` take precedence so multi-word
         // targets are not split by the word tokenizer.
         if let Some(rel) = text[cursor..].find("[[")
@@ -482,6 +578,26 @@ fn is_escaped_markdown_delimiter(text: &str, idx: usize) -> bool {
 fn is_valid_emphasis(inner: &str) -> bool {
     let trimmed = inner.trim();
     !trimmed.is_empty() && trimmed == inner
+}
+
+/// Finds the byte offset of the `)` that closes a link URL opened by `(`, honoring
+/// balanced parens inside the URL (e.g. `…/Rust_(programming_language)`). `url` is the
+/// text right after the opening `(`. Returns `None` if the parens never balance.
+fn matching_link_paren(url: &str) -> Option<usize> {
+    let mut depth = 1usize;
+    for (i, ch) in url.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn split_blockquote_marker(line: &str) -> Option<(usize, &str)> {
@@ -1064,5 +1180,130 @@ mod tests {
                 .any(|s| s.content.contains("Display") && s.style.fg == Some(link_color))
         );
         assert!(!spans.iter().any(|s| s.content.contains("Target|")));
+    }
+
+    #[test]
+    fn parse_markdown_spans_styles_inline_markdown_link() {
+        let theme = Theme::default(); // theme.link defaults to "LightMagenta"
+        let link_color = crate::ui::color_parser::parse_color(&theme.link);
+        let spans = parse_markdown_spans(
+            "read [the docs](https://example.com) today",
+            &theme,
+            false,
+            None,
+            Style::default(),
+            None,
+        );
+        // The label words are shown in the link color (underlined); the raw URL and
+        // the bracket/paren syntax are not rendered literally.
+        assert!(spans.iter().any(|s| {
+            s.content.as_ref().contains("docs")
+                && s.style.fg == Some(link_color)
+                && s.style.add_modifier.contains(Modifier::UNDERLINED)
+        }));
+        let rendered = span_text(&spans);
+        assert!(rendered.contains("the docs"));
+        assert!(!rendered.contains("https://example.com"));
+        assert!(!rendered.contains("]("));
+    }
+
+    #[test]
+    fn parse_markdown_spans_inline_link_preserves_nested_emphasis() {
+        let theme = Theme::default();
+        let spans = parse_markdown_spans(
+            "[a **bold** word](https://example.com)",
+            &theme,
+            false,
+            None,
+            Style::default(),
+            None,
+        );
+        assert!(spans.iter().any(|s| {
+            s.content.as_ref() == "bold" && s.style.add_modifier.contains(Modifier::BOLD)
+        }));
+    }
+
+    #[test]
+    fn parse_markdown_spans_inline_link_handles_parenthesized_url() {
+        let theme = Theme::default();
+        let spans = parse_markdown_spans(
+            "[Rust](https://en.wikipedia.org/wiki/Rust_(programming_language)) rocks",
+            &theme,
+            false,
+            None,
+            Style::default(),
+            None,
+        );
+        let rendered = span_text(&spans);
+        // The whole balanced-paren URL is consumed (hidden); no stray ')' leaks, and the
+        // trailing prose survives.
+        assert!(!rendered.contains("wikipedia"));
+        assert!(!rendered.contains(')'));
+        assert!(rendered.contains("Rust"));
+        assert!(rendered.contains("rocks"));
+    }
+
+    #[test]
+    fn parse_markdown_spans_image_syntax_is_not_link_styled() {
+        let theme = Theme::default();
+        let link_color = crate::ui::color_parser::parse_color(&theme.link);
+        let spans = parse_markdown_spans(
+            "![alt](image.png)",
+            &theme,
+            false,
+            None,
+            Style::default(),
+            None,
+        );
+        assert!(
+            !spans
+                .iter()
+                .any(|s| s.content.as_ref() == "alt" && s.style.fg == Some(link_color))
+        );
+    }
+
+    #[test]
+    fn parse_markdown_spans_bracket_without_parens_is_literal() {
+        let theme = Theme::default();
+        let spans = parse_markdown_spans(
+            "a [draft] note",
+            &theme,
+            false,
+            None,
+            Style::default(),
+            None,
+        );
+        assert!(span_text(&spans).contains("[draft]"));
+    }
+
+    #[test]
+    fn parse_markdown_spans_dims_completed_task_body() {
+        let theme = Theme::default();
+        let done = parse_markdown_spans("- [x] done", &theme, false, None, Style::default(), None);
+        assert!(done.iter().any(|s| {
+            s.content.as_ref().contains("done") && s.style.add_modifier.contains(Modifier::DIM)
+        }));
+
+        let open = parse_markdown_spans("- [ ] todo", &theme, false, None, Style::default(), None);
+        assert!(open.iter().all(|s| {
+            !(s.content.as_ref().contains("todo") && s.style.add_modifier.contains(Modifier::DIM))
+        }));
+    }
+
+    #[test]
+    fn parse_markdown_spans_strikes_cancelled_task_body() {
+        let theme = Theme::default();
+        let spans = parse_markdown_spans(
+            "- [-] cancelled",
+            &theme,
+            false,
+            None,
+            Style::default(),
+            None,
+        );
+        assert!(spans.iter().any(|s| {
+            s.content.as_ref().contains("cancelled")
+                && s.style.add_modifier.contains(Modifier::CROSSED_OUT)
+        }));
     }
 }

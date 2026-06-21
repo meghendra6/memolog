@@ -23,6 +23,16 @@
 - 컴팩트 상태바 옵션(`[ui] minimal_status_bar`): 모드/포커스/스트릭/진행도만 표시
 - 포모도로 집중 세션(`[pomodoro] auto_focus_session`): 타이머 시작 시 크롬을 자동으로 숨기고 종료 시 복원
 - 인라인 마크다운 렌더링 테마화: 제목/코드/리스트 마커/URL 색상을 `[theme] heading`/`code`/`list_marker`/`url` 토큰으로 분리해 타임라인·태스크·아젠다·뷰어 전반에서 프리셋이 색을 제어(기본값은 기존 외관 유지, 5개 프리셋 모두 조화 값 지정)
+- 인라인 마크다운 링크 `[텍스트](url)` 렌더링: 라벨을 링크 색상·밑줄로 표시하고 원본 URL은 숨겨 본문 가독성 향상(`[[위키링크]]`/`![이미지]`는 그대로 유지)
+- 완료/취소 태스크 본문을 흐리게(완료 `[x]` 디밍, 취소 `[-]` 디밍+취소선) 처리해 열린 작업이 먼저 눈에 들어오도록 개선
+- Obsidian/GFM 콜아웃 `> [!note]`/`[!warning]`/`[!tip]` 등을 글리프+의미 색상 헤더로 렌더링(미지원 종류는 일반 인용문으로 폴백)
+- 메모 뷰어 표에 줄무늬(zebra)와 헤더 밴드 추가로 조밀한 표의 스캔 용이성 향상
+- 제목 계층 강화: H1은 강조색·전체 폭 밑줄, H2는 절반 폭 밑줄, H3+는 밑줄 없음
+- 코드 블록 닫는 테두리가 언어 라벨을 다시 표시해 긴 블록도 닫힌 프레임으로 읽힘
+- Reading Mode에 차분한 상단 여백과 읽기 진행률 막대(`[████░░░░] 62%`) 추가, 일반 뷰어에는 스크롤바 표시
+- 메모 뷰어 단축키 추가: `y` 클립보드 복사, `J`/`K` 타임라인 이전/다음 메모로 이동(닫지 않고, 각 메모의 스크롤 위치 기억), `g`/`G`·Home/End 처음·끝, `d`/`u` 반 페이지 스크롤
+- 메모를 닫았다 다시 열면 마지막으로 읽던 스크롤 위치를 복원
+- 상태바 포커스 표시를 패널과 동일한 `●` 글리프(강조색)로 통일, 스트릭/진행도 색상을 테마 토큰으로 변경, 태스크 패널 힌트의 잘못된 `5 overdue` 고정 문구 제거
 
 ### English
 - Note lines that carry only schedule metadata (e.g. a bare `@sched(...)`/`@time(...)`) now appear in the agenda with a `(scheduled)`/`(reminder)` placeholder instead of being silently dropped
@@ -45,6 +55,16 @@
 - Compact status bar option (`[ui] minimal_status_bar`): show only mode/focus/streak/progress
 - Pomodoro focus session (`[pomodoro] auto_focus_session`): starting a timer auto-hides chrome and restores it when the timer ends
 - Theme-aware inline Markdown rendering: heading/code/list-marker/URL colors are now driven by `[theme] heading`/`code`/`list_marker`/`url` tokens across the timeline, tasks, agenda, and viewer (defaults preserve the previous look; all five presets ship harmonized values)
+- Inline Markdown links `[text](url)` now render with the label in the link color (underlined) and the raw URL hidden for cleaner prose (`[[wikilinks]]` and `![images]` are left untouched; parenthesized URLs are matched correctly)
+- Completed/cancelled task bodies are de-emphasized in the viewer and lists (done `[x]` dimmed, cancelled `[-]` dimmed + struck through) so open work stands out
+- Obsidian/GFM callouts `> [!note]`/`[!warning]`/`[!tip]`/… render as a glyphed, semantically colored header instead of a literal `[!kind]` token (unknown kinds fall back to a normal quote)
+- Memo-viewer tables gain zebra striping and a header band so dense tables stay scannable
+- Stronger heading hierarchy: H1 uses the accent color with a full-width rule, H2 a half-width rule, H3+ no rule
+- The code-block closing border now echoes the language label so long blocks read as a closed frame
+- Reading Mode gains a calm top margin and an ambient reading-progress bar (`[████░░░░] 62%`); the framed viewer shows a scrollbar
+- New memo-viewer keys: `y` copy to clipboard, `J`/`K` step to the previous/next timeline memo in place (without closing, remembering each memo's scroll spot), `g`/`G` and Home/End jump to top/bottom, `d`/`u` half-page scroll
+- Reopening a memo restores the scroll position you left it at
+- The status-bar focus indicator now uses the panels' `●` glyph in the accent color; the streak and task-progress indicators use theme tokens; the bogus hardcoded `5 overdue` literal in the tasks hint is gone
 
 ## [1.4.0]
 

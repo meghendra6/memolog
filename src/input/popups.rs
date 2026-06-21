@@ -200,8 +200,14 @@ fn handle_link_complete_popup(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
+    const HALF_PAGE: usize = 10;
     let key_code = key_code_for_shortcuts(&key);
     if key_match(&key, &app.config.keybindings.popup.cancel) || key.code == KeyCode::Esc {
+        // Remember the reading spot so reopening the same memo resumes where we left off.
+        if let Some(entry) = app.memo_preview_entry.as_ref() {
+            app.last_preview_identity = Some(crate::models::EntryIdentity::from(entry));
+            app.last_preview_scroll = app.memo_preview_scroll;
+        }
         app.active_popup = ActivePopup::None;
         app.memo_preview_entry = None;
         app.memo_reading_mode = false;
@@ -229,7 +235,10 @@ fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
         return;
     }
     if key_match(&key, &app.config.keybindings.popup.down) {
-        app.memo_preview_scroll = app.memo_preview_scroll.saturating_add(1);
+        app.memo_preview_scroll = app
+            .memo_preview_scroll
+            .saturating_add(1)
+            .min(app.memo_preview_max_scroll);
         return;
     }
 
@@ -244,12 +253,41 @@ fn handle_memo_preview_popup(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Copy the raw Markdown of the entry to the clipboard (non-destructive: stays open).
+    if matches!(key_code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+        if let Some(entry) = app.memo_preview_entry.clone() {
+            app.copy_text_to_clipboard(&entry.content);
+        }
+        return;
+    }
+
+    // Step to the next/previous timeline entry in place (no-op for task/agenda previews).
+    if matches!(key_code, KeyCode::Char('J')) {
+        crate::actions::step_timeline_preview(app, true);
+        return;
+    }
+    if matches!(key_code, KeyCode::Char('K')) {
+        crate::actions::step_timeline_preview(app, false);
+        return;
+    }
+
+    // Pager motions: top/bottom (g/G, Home/End), half-page (d/u), page (PgUp/PgDn).
+    // Downward motions clamp to the last-rendered max so scroll never drifts past the end.
+    let max = app.memo_preview_max_scroll;
     match key_code {
+        KeyCode::Home | KeyCode::Char('g') => app.memo_preview_scroll = 0,
+        KeyCode::End | KeyCode::Char('G') => app.memo_preview_scroll = max,
+        KeyCode::Char('d') => {
+            app.memo_preview_scroll = app.memo_preview_scroll.saturating_add(HALF_PAGE).min(max);
+        }
+        KeyCode::Char('u') => {
+            app.memo_preview_scroll = app.memo_preview_scroll.saturating_sub(HALF_PAGE);
+        }
         KeyCode::PageUp => {
             app.memo_preview_scroll = app.memo_preview_scroll.saturating_sub(5);
         }
         KeyCode::PageDown => {
-            app.memo_preview_scroll = app.memo_preview_scroll.saturating_add(5);
+            app.memo_preview_scroll = app.memo_preview_scroll.saturating_add(5).min(max);
         }
         _ => {}
     }

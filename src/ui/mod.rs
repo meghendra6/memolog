@@ -978,7 +978,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             ""
         };
         let tasks_hint = if is_tasks_focused {
-            " · Space toggle · Shift+P priority · 5 overdue · p pomodoro"
+            " · Space toggle · Shift+P priority · p pomodoro"
         } else {
             ""
         };
@@ -2047,8 +2047,9 @@ fn render_heading_lines(
             Style::default()
                 .fg(tokens.ui_accent)
                 .add_modifier(Modifier::BOLD),
+            // H1 is the document's dominant level: accent + bold so it clearly outranks H2.
             Style::default()
-                .fg(tokens.ui_fg)
+                .fg(tokens.ui_accent)
                 .add_modifier(Modifier::BOLD),
         ),
         2 => (
@@ -2087,9 +2088,16 @@ fn render_heading_lines(
         ]));
     }
 
-    if level <= 2 {
+    // Differentiate the underline by level so H1 and H2 read distinctly: H1 keeps a
+    // full-width rule, H2 a shorter half-width rule, H3+ none.
+    let rule_len = match level {
+        1 => Some(width.clamp(10, 36)),
+        2 => Some((width / 2).clamp(8, 20)),
+        _ => None,
+    };
+    if let Some(len) = rule_len {
         out.push(Line::from(Span::styled(
-            "─".repeat(width.clamp(10, 36)),
+            "─".repeat(len),
             Style::default()
                 .fg(tokens.ui_muted)
                 .add_modifier(Modifier::DIM),
@@ -2259,21 +2267,36 @@ fn render_table_lines(
 
     for (row_idx, row) in table.rows.iter().enumerate() {
         let is_header = row_idx == 0;
-        let cell_style = if is_header {
+        // Banding: header gets a selection-tinted band; body rows alternate a subtle
+        // cursorline tint so dense tables stay scannable. The in-row vertical borders
+        // share the band so it reads as a continuous stripe, not broken at separators.
+        let row_bg = if is_header {
+            Some(tokens.ui_selection_bg)
+        } else if row_idx % 2 == 0 {
+            Some(tokens.ui_cursorline_bg)
+        } else {
+            None
+        };
+        let mut cell_style = if is_header {
             Style::default()
                 .fg(tokens.ui_accent)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(tokens.ui_fg)
         };
+        let mut row_border_style = border_style;
+        if let Some(bg) = row_bg {
+            cell_style = cell_style.bg(bg);
+            row_border_style = row_border_style.bg(bg);
+        }
         let mut spans: Vec<Span<'static>> = Vec::with_capacity(ncols * 2 + 1);
         for (col, w) in col_w.iter().enumerate() {
-            spans.push(Span::styled("│".to_string(), border_style));
+            spans.push(Span::styled("│".to_string(), row_border_style));
             let align = table.aligns.get(col).copied().unwrap_or(ColumnAlign::Left);
             let content = format_table_cell(table_cell(row, col), *w, align);
             spans.push(Span::styled(format!(" {content} "), cell_style));
         }
-        spans.push(Span::styled("│".to_string(), border_style));
+        spans.push(Span::styled("│".to_string(), row_border_style));
         out.push(Line::from(spans));
 
         if is_header {
@@ -2362,6 +2385,41 @@ fn split_blockquote(line: &str) -> Option<(usize, &str)> {
     }
 }
 
+/// Detects an Obsidian/GFM callout header `[!kind] optional title` at the start of a
+/// blockquote body. Returns `(kind, title)` with the title trimmed. Pure.
+fn parse_callout(body: &str) -> Option<(&str, &str)> {
+    let rest = body.trim_start().strip_prefix("[!")?;
+    let end = rest.find(']')?;
+    let kind = &rest[..end];
+    if kind.is_empty() || !kind.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    // Drop an optional `+`/`-` fold hint right after the kind, then the title.
+    let title = rest[end + 1..].trim_start_matches(['+', '-']).trim();
+    Some((kind, title))
+}
+
+/// Maps a callout kind to a glyph, a semantic theme color, and a display label.
+/// Unknown kinds return `None` so the caller falls back to a generic quote.
+fn callout_style(
+    kind: &str,
+    tokens: &theme::ThemeTokens,
+) -> Option<(&'static str, Color, &'static str)> {
+    let style = match kind.to_ascii_lowercase().as_str() {
+        "note" | "info" => ("ℹ", tokens.ui_toast_info, "Note"),
+        "tip" | "hint" | "success" | "check" | "done" => ("✔", tokens.ui_toast_success, "Tip"),
+        "warning" | "caution" | "attention" => ("⚠", tokens.ui_toast_error, "Warning"),
+        "danger" | "error" | "bug" | "fail" | "failure" => ("✖", tokens.ui_toast_error, "Danger"),
+        "important" => ("★", tokens.ui_accent, "Important"),
+        "question" | "faq" | "help" => ("?", tokens.ui_toast_info, "Question"),
+        "example" => ("➤", tokens.ui_accent, "Example"),
+        "quote" | "cite" => ("❝", tokens.ui_muted, "Quote"),
+        "todo" => ("☐", tokens.ui_accent, "Todo"),
+        _ => return None,
+    };
+    Some(style)
+}
+
 fn render_blockquote_lines(
     out: &mut Vec<Line<'static>>,
     body: &str,
@@ -2371,6 +2429,27 @@ fn render_blockquote_lines(
     tokens: &theme::ThemeTokens,
     code_bg: Option<Color>,
 ) {
+    // Obsidian/GFM callouts (`> [!warning] Heads up`) render as a colored, glyphed
+    // header instead of a literal `[!warning]` token inside a generic quote.
+    if depth == 1
+        && let Some((kind, title)) = parse_callout(body)
+        && let Some((glyph, color, label)) = callout_style(kind, tokens)
+    {
+        let header_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+        let mut spans = vec![
+            Span::styled("▎ ".to_string(), header_style),
+            Span::styled(format!("{glyph} {label}"), header_style),
+        ];
+        if !title.is_empty() {
+            spans.push(Span::styled(
+                format!("  {title}"),
+                Style::default().fg(color),
+            ));
+        }
+        out.push(Line::from(spans));
+        return;
+    }
+
     // Indent nested quotes (depth > 1) so the nesting reads visually; a single-level
     // quote keeps its flush "▎ " bar. prefix_width below keeps wrapped lines aligned.
     let prefix = format!(
@@ -2709,11 +2788,6 @@ fn render_code_block_border(
         border_style = border_style.bg(bg);
     }
 
-    if !opening {
-        return Line::from(Span::styled("╰────".to_string(), border_style));
-    }
-
-    // Opening border: emphasize the language badge (accent) against the dim frame.
     let label = language
         .filter(|lang| !lang.is_empty())
         .map(|lang| {
@@ -2725,17 +2799,29 @@ fn render_code_block_border(
             }
         })
         .unwrap_or_else(|| "code".to_string());
-    let mut label_style = Style::default()
-        .fg(tokens.ui_accent)
-        .add_modifier(Modifier::BOLD);
-    if let Some(bg) = code_bg {
-        label_style = label_style.bg(bg);
+
+    if opening {
+        // Opening border: emphasize the language badge (accent) against the dim frame.
+        let mut label_style = Style::default()
+            .fg(tokens.ui_accent)
+            .add_modifier(Modifier::BOLD);
+        if let Some(bg) = code_bg {
+            label_style = label_style.bg(bg);
+        }
+        Line::from(vec![
+            Span::styled("╭─ ".to_string(), border_style),
+            Span::styled(label, label_style),
+            Span::styled(" ─".to_string(), border_style),
+        ])
+    } else {
+        // Closing border echoes the language, dimmed, so a long block reads as a
+        // closed frame symmetric with the opening badge.
+        Line::from(vec![
+            Span::styled("╰─ ".to_string(), border_style),
+            Span::styled(label, border_style),
+            Span::styled(" ─".to_string(), border_style),
+        ])
     }
-    Line::from(vec![
-        Span::styled("╭─ ".to_string(), border_style),
-        Span::styled(label, label_style),
-        Span::styled(" ─".to_string(), border_style),
-    ])
 }
 
 fn render_code_block_line(
@@ -4068,10 +4154,12 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         },
         InputMode::Search => "SEARCH",
     };
+    // Echo the panels' active-focus glyph (●) so the status bar speaks the same
+    // visual language; the glyph carries the meaning, so the "Focus:" word is dropped.
     let focus_label = match app.navigate_focus {
-        NavigateFocus::Timeline => "Focus:Timeline",
-        NavigateFocus::Agenda => "Focus:Agenda",
-        NavigateFocus::Tasks => "Focus:Tasks",
+        NavigateFocus::Timeline => "● Timeline",
+        NavigateFocus::Agenda => "● Agenda",
+        NavigateFocus::Tasks => "● Tasks",
     };
     let focus_mode_label = if app.input_mode == InputMode::Navigate {
         format!("FocusMode:{}", app.focus_mode_label())
@@ -4128,7 +4216,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         ),
         Span::styled(
             format!(" {focus_label} "),
-            Style::default().fg(tokens.ui_muted),
+            Style::default().fg(tokens.ui_accent),
         ),
         Span::styled(
             format!(" {focus_mode_label} "),
@@ -4168,11 +4256,11 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
     }
     left_spans.push(Span::styled(
         streak_label,
-        Style::default().fg(Color::Yellow),
+        Style::default().fg(tokens.ui_accent),
     ));
     left_spans.push(Span::styled(
         progress_label,
-        Style::default().fg(Color::Cyan),
+        Style::default().fg(tokens.ui_toast_success),
     ));
 
     let mut right_plain = String::new();
@@ -4426,7 +4514,8 @@ mod tests {
     use super::render_markdown_view;
     use super::status_focus_hint;
     use super::{
-        ColumnAlign, format_table_cell, parse_markdown_table, render_table_lines, split_table_cells,
+        ColumnAlign, callout_style, format_table_cell, parse_callout, parse_markdown_table,
+        render_code_block_border, render_heading_lines, render_table_lines, split_table_cells,
     };
     use crate::config::{EditorConfig, Theme};
     use crate::ui::theme::ThemeTokens;
@@ -4859,5 +4948,133 @@ mod tests {
         assert!(raster.rows.iter().all(|row| row.len() == 8));
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn parse_callout_detects_kind_and_title() {
+        assert_eq!(
+            parse_callout("[!warning] Heads up"),
+            Some(("warning", "Heads up"))
+        );
+        assert_eq!(parse_callout("[!NOTE]"), Some(("NOTE", "")));
+        assert_eq!(parse_callout("[!tip]+ Foldable"), Some(("tip", "Foldable")));
+        assert_eq!(parse_callout("just a quote"), None);
+        assert_eq!(parse_callout("[!123] bad"), None);
+    }
+
+    #[test]
+    fn callout_style_maps_known_kinds_and_rejects_unknown() {
+        let tokens = ThemeTokens::from_theme(&Theme::default());
+        let (glyph, _color, label) = callout_style("warning", &tokens).expect("known kind");
+        assert_eq!(glyph, "⚠");
+        assert_eq!(label, "Warning");
+        assert!(callout_style("foobar", &tokens).is_none());
+    }
+
+    #[test]
+    fn render_markdown_view_renders_callout_header() {
+        let tokens = ThemeTokens::from_theme(&Theme::default());
+        let lines = render_markdown_view(
+            "> [!warning] Heads up\n> body line",
+            60,
+            None,
+            &Theme::default(),
+            &EditorConfig::default(),
+            &tokens,
+            &SyntaxSet::load_defaults_newlines(),
+            &ThemeSet::load_defaults().themes["base16-ocean.dark"],
+            None,
+            None,
+        )
+        .lines;
+        let rendered: Vec<String> = lines.iter().map(line_to_string).collect();
+        // The callout header shows glyph + label + title, not the literal token.
+        assert!(
+            rendered
+                .iter()
+                .any(|l| l.contains("⚠ Warning") && l.contains("Heads up")),
+            "callout header missing: {rendered:?}"
+        );
+        assert!(
+            !rendered.iter().any(|l| l.contains("[!warning]")),
+            "raw callout token should not be rendered: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn render_heading_lines_differentiates_h1_and_h2_rules() {
+        let tokens = ThemeTokens::from_theme(&Theme::default());
+        let mut h1 = Vec::new();
+        render_heading_lines(&mut h1, "Title", 1, 60, &tokens);
+        let mut h2 = Vec::new();
+        render_heading_lines(&mut h2, "Title", 2, 60, &tokens);
+        let h1_rule = line_to_string(h1.last().unwrap());
+        let h2_rule = line_to_string(h2.last().unwrap());
+        assert!(h1_rule.chars().all(|c| c == '─'));
+        assert!(h2_rule.chars().all(|c| c == '─'));
+        assert!(
+            h1_rule.chars().count() > h2_rule.chars().count(),
+            "H1 rule ({}) should be longer than H2 rule ({})",
+            h1_rule.chars().count(),
+            h2_rule.chars().count()
+        );
+
+        // H3 has no rule line.
+        let mut h3 = Vec::new();
+        render_heading_lines(&mut h3, "Title", 3, 60, &tokens);
+        assert!(
+            h3.iter()
+                .all(|l| !line_to_string(l).chars().all(|c| c == '─')),
+            "H3 should not emit a rule"
+        );
+    }
+
+    #[test]
+    fn render_table_lines_bands_header_and_alternating_rows() {
+        let tokens = ThemeTokens::from_theme(&Theme::default());
+        let lines_in = vec![
+            "| A | B |",
+            "| --- | --- |",
+            "| 1 | 2 |",
+            "| 3 | 4 |",
+            "| 5 | 6 |",
+        ];
+        let table = parse_markdown_table(&lines_in, 0).expect("table");
+        let mut out = Vec::new();
+        render_table_lines(&mut out, &table, 80, &tokens);
+        // Header band uses selection_bg; the 2nd data row is zebra-tinted with cursorline_bg.
+        let header_row = out
+            .iter()
+            .find(|l| line_to_string(l).contains("A"))
+            .expect("header row");
+        assert!(
+            header_row
+                .spans
+                .iter()
+                .any(|s| s.style.bg == Some(tokens.ui_selection_bg))
+        );
+        let banded_row = out
+            .iter()
+            .find(|l| line_to_string(l).contains("3"))
+            .expect("second data row");
+        assert!(
+            banded_row
+                .spans
+                .iter()
+                .any(|s| s.style.bg == Some(tokens.ui_cursorline_bg))
+        );
+    }
+
+    #[test]
+    fn render_code_block_border_closing_echoes_language() {
+        let tokens = ThemeTokens::from_theme(&Theme::default());
+        let closing = line_to_string(&render_code_block_border(
+            false,
+            Some("rust"),
+            &tokens,
+            None,
+        ));
+        assert!(closing.contains("rust"), "closing border: {closing:?}");
+        assert!(closing.starts_with('╰'));
     }
 }

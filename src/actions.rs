@@ -9,11 +9,53 @@ use crate::{
 use chrono::{Duration, Local};
 use std::fs;
 
-fn show_memo_preview(app: &mut App, entry: models::LogEntry) {
+fn show_memo_preview(app: &mut App, entry: models::LogEntry, from_timeline: bool) {
+    // Restore the reading spot when reopening the same memo; otherwise start at the top.
+    let id = EntryIdentity::from(&entry);
+    app.memo_preview_scroll = match &app.last_preview_identity {
+        Some(prev) if *prev == id => app.last_preview_scroll,
+        _ => 0,
+    };
     app.memo_preview_entry = Some(entry);
-    app.memo_preview_scroll = 0;
     app.memo_reading_mode = false;
+    app.memo_preview_from_timeline = from_timeline;
     app.active_popup = ActivePopup::MemoPreview;
+}
+
+/// Steps to the next/previous timeline entry from inside the viewer without closing it,
+/// keeping the timeline selection and any reading mode in sync. No-op unless the viewer
+/// was opened from the timeline.
+pub fn step_timeline_preview(app: &mut App, forward: bool) {
+    if !app.memo_preview_from_timeline || app.logs.is_empty() {
+        return;
+    }
+    let current = app.logs_state.selected().unwrap_or(0);
+    let next = if forward {
+        (current + 1).min(app.logs.len() - 1)
+    } else {
+        current.saturating_sub(1)
+    };
+    if next == current {
+        return;
+    }
+    let Some(entry) = app.logs.get(next).cloned() else {
+        return;
+    };
+    // Resume the spot in the entry we are about to enter if it matches the last one we
+    // left, then remember the entry we are leaving — so peeking next/prev and stepping
+    // back keeps each entry's reading position.
+    let next_id = EntryIdentity::from(&entry);
+    let resume = match &app.last_preview_identity {
+        Some(prev) if *prev == next_id => app.last_preview_scroll,
+        _ => 0,
+    };
+    if let Some(left) = app.memo_preview_entry.as_ref() {
+        app.last_preview_identity = Some(EntryIdentity::from(left));
+        app.last_preview_scroll = app.memo_preview_scroll;
+    }
+    app.logs_state.select(Some(next));
+    app.memo_preview_entry = Some(entry);
+    app.memo_preview_scroll = resume;
 }
 
 pub fn open_tag_popup(app: &mut App) {
@@ -351,7 +393,7 @@ pub fn open_agenda_preview(app: &mut App) {
     };
 
     match storage::read_entry_containing_line(&item.file_path, item.line_number) {
-        Ok(Some(entry)) => show_memo_preview(app, entry),
+        Ok(Some(entry)) => show_memo_preview(app, entry, false),
         Ok(None) => app.toast("Memo not found."),
         Err(_) => app.toast("Failed to load memo."),
     }
@@ -368,7 +410,7 @@ pub fn open_task_preview(app: &mut App) {
     };
 
     match storage::read_entry_containing_line(&task.file_path, task.line_number) {
-        Ok(Some(entry)) => show_memo_preview(app, entry),
+        Ok(Some(entry)) => show_memo_preview(app, entry, false),
         Ok(None) => app.toast("Memo not found."),
         Err(_) => app.toast("Failed to load memo."),
     }
@@ -384,7 +426,7 @@ pub fn open_timeline_preview(app: &mut App) {
         return;
     };
 
-    show_memo_preview(app, entry);
+    show_memo_preview(app, entry, true);
 }
 
 pub fn toggle_agenda_task(app: &mut App) {
@@ -662,10 +704,15 @@ fn submit_ai_search(app: &mut App, question: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{open_agenda_preview, open_task_preview, open_timeline_preview};
+    use super::{
+        open_agenda_preview, open_task_preview, open_timeline_preview, step_timeline_preview,
+    };
     use crate::{
         app::App,
-        models::{ActivePopup, AgendaItem, AgendaItemKind, LogEntry, TaskItem, TaskSchedule},
+        models::{
+            ActivePopup, AgendaItem, AgendaItemKind, EntryIdentity, LogEntry, TaskItem,
+            TaskSchedule,
+        },
     };
     use chrono::NaiveDate;
     use std::{
@@ -768,5 +815,113 @@ mod tests {
         assert_eq!(app.active_popup, ActivePopup::MemoPreview);
         assert!(preview.content.contains("MEETING: 프로젝트 점검 #work"));
         assert_eq!(preview.line_number, 0);
+    }
+
+    fn two_timeline_entries() -> Vec<LogEntry> {
+        vec![
+            LogEntry {
+                content: "## [09:00:00]\nfirst".to_string(),
+                file_path: "2025-12-16.md".to_string(),
+                line_number: 0,
+                end_line: 1,
+            },
+            LogEntry {
+                content: "## [10:00:00]\nsecond".to_string(),
+                file_path: "2025-12-16.md".to_string(),
+                line_number: 2,
+                end_line: 3,
+            },
+        ]
+    }
+
+    #[test]
+    fn timeline_preview_restores_scroll_for_same_entry() {
+        let mut app = App::new();
+        app.logs = two_timeline_entries();
+        app.logs_state.select(Some(0));
+        app.last_preview_identity = Some(EntryIdentity {
+            file_path: "2025-12-16.md".to_string(),
+            line_number: 0,
+        });
+        app.last_preview_scroll = 5;
+
+        open_timeline_preview(&mut app);
+        assert_eq!(app.memo_preview_scroll, 5, "same entry resumes its scroll");
+    }
+
+    #[test]
+    fn timeline_preview_resets_scroll_for_different_entry() {
+        let mut app = App::new();
+        app.logs = two_timeline_entries();
+        app.logs_state.select(Some(0));
+        app.last_preview_identity = Some(EntryIdentity {
+            file_path: "other.md".to_string(),
+            line_number: 9,
+        });
+        app.last_preview_scroll = 5;
+
+        open_timeline_preview(&mut app);
+        assert_eq!(
+            app.memo_preview_scroll, 0,
+            "a different entry starts at the top"
+        );
+    }
+
+    #[test]
+    fn step_timeline_preview_moves_and_resets_scroll() {
+        let mut app = App::new();
+        app.logs = two_timeline_entries();
+        app.logs_state.select(Some(0));
+        open_timeline_preview(&mut app);
+        app.memo_preview_scroll = 4;
+
+        step_timeline_preview(&mut app, true);
+        assert_eq!(app.logs_state.selected(), Some(1));
+        assert_eq!(
+            app.memo_preview_entry.as_ref().map(|e| e.line_number),
+            Some(2)
+        );
+        assert_eq!(app.memo_preview_scroll, 0);
+
+        // Stepping past the end stays clamped; stepping back returns to the first entry.
+        step_timeline_preview(&mut app, true);
+        assert_eq!(app.logs_state.selected(), Some(1));
+        step_timeline_preview(&mut app, false);
+        assert_eq!(app.logs_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn step_timeline_preview_resumes_scroll_on_return() {
+        let mut app = App::new();
+        app.logs = two_timeline_entries();
+        app.logs_state.select(Some(0));
+        open_timeline_preview(&mut app);
+        app.memo_preview_scroll = 6;
+
+        step_timeline_preview(&mut app, true); // -> second entry, starts at top
+        assert_eq!(app.memo_preview_scroll, 0);
+
+        step_timeline_preview(&mut app, false); // -> back to first entry, resumes
+        assert_eq!(app.logs_state.selected(), Some(0));
+        assert_eq!(
+            app.memo_preview_scroll, 6,
+            "returning to an entry resumes its spot"
+        );
+    }
+
+    #[test]
+    fn step_timeline_preview_noop_when_not_from_timeline() {
+        let mut app = App::new();
+        app.logs = two_timeline_entries();
+        app.logs_state.select(Some(0));
+        app.memo_preview_entry = Some(app.logs[0].clone());
+        app.memo_preview_from_timeline = false;
+
+        step_timeline_preview(&mut app, true);
+        assert_eq!(app.logs_state.selected(), Some(0));
+        assert_eq!(
+            app.memo_preview_entry.as_ref().map(|e| e.line_number),
+            Some(0)
+        );
     }
 }
