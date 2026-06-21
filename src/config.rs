@@ -521,6 +521,9 @@ pub struct UiConfig {
     pub line_numbers: bool,
     /// Input poll interval in milliseconds (default: 250)
     pub poll_interval_ms: u64,
+    /// Render a compact status bar (mode/focus/streak/progress only), dropping the
+    /// date/context/search/file labels and the contextual key hints.
+    pub minimal_status_bar: bool,
 }
 
 impl Default for UiConfig {
@@ -530,6 +533,7 @@ impl Default for UiConfig {
             editor_style: None,
             line_numbers: true,
             poll_interval_ms: 250,
+            minimal_status_bar: false,
         }
     }
 }
@@ -553,6 +557,7 @@ pub struct GlobalBindings {
     pub help: Vec<String>,
     pub command_palette: Vec<String>,
     pub focus_mode_toggle: Vec<String>,
+    pub toggle_chrome: Vec<String>,
     pub focus_timeline: Vec<String>,
     pub focus_tasks: Vec<String>,
     pub focus_composer: Vec<String>,
@@ -582,6 +587,7 @@ impl Default for GlobalBindings {
             help: vec!["?".to_string()],
             command_palette: vec![":".to_string()],
             focus_mode_toggle: vec!["z".to_string()],
+            toggle_chrome: vec!["\\".to_string()],
             focus_timeline: Vec::new(),
             focus_tasks: Vec::new(),
             focus_composer: vec!["i".to_string()],
@@ -1184,6 +1190,9 @@ pub struct PomodoroConfig {
     pub long_break_minutes: u64,
     pub long_break_every: u64,
     pub alert_seconds: u64,
+    /// When true, starting a pomodoro hides UI chrome (borders/status bar) for a
+    /// distraction-free focus session, restored automatically when the timer ends.
+    pub auto_focus_session: bool,
 }
 
 impl Default for PomodoroConfig {
@@ -1194,6 +1203,7 @@ impl Default for PomodoroConfig {
             long_break_minutes: 15,
             long_break_every: 4,
             alert_seconds: 5,
+            auto_focus_session: false,
         }
     }
 }

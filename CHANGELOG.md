@@ -14,6 +14,14 @@
 - 캡처 시 자동 추가된 토큰을 토스트로 표시 (예: `added @sched(...) @time(...)`)
 - 컴포저 Visual 모드 `o`로 선택 영역의 반대쪽 끝으로 커서 이동 (앵커 교체)
 - `[editor] link_complete_max_items` 설정 추가 (위키링크 자동완성 표시 개수, 기본 12)
+- 메모 뷰어가 GFM 표를 정렬·폭 보정된 박스 드로잉 그리드로 렌더링
+- 메모 뷰어 Reading Mode 추가: `z`로 전체화면·중앙 정렬·크롬 숨김 집중 읽기 (Esc 닫기)
+- Navigate 모드에서 포커스되지 않은 패널 내용을 흐리게(dim) 처리해 집중도 향상 (focus_mode에서는 제외)
+- 마크다운 뷰어 가독성 개선: 제목 레벨별 색/강조 차등화, 코드 블록 언어 배지 강조, 인라인 코드 배경 칩, 중첩 인용문 들여쓰기
+- 확장 체크박스 상태 렌더링: `[/]` 진행중(◐), `[-]` 취소(~, 취소선), `[>]` 연기(→), `[!]` 중요(! 강조) — Obsidian 호환
+- Chrome 토글(`\`): 패널 테두리/타이틀과 상태바를 숨겨 최대 집중 작업 공간 확보
+- 컴팩트 상태바 옵션(`[ui] minimal_status_bar`): 모드/포커스/스트릭/진행도만 표시
+- 포모도로 집중 세션(`[pomodoro] auto_focus_session`): 타이머 시작 시 크롬을 자동으로 숨기고 종료 시 복원
 
 ### English
 - Note lines that carry only schedule metadata (e.g. a bare `@sched(...)`/`@time(...)`) now appear in the agenda with a `(scheduled)`/`(reminder)` placeholder instead of being silently dropped
@@ -27,6 +35,14 @@
 - The capture toast now names the tokens it inferred (e.g. `added @sched(...) @time(...)`)
 - Vim Visual mode `o` swaps the cursor to the opposite end of the selection
 - New `[editor] link_complete_max_items` setting (wikilink autocomplete cap, default 12)
+- The memo viewer now renders GFM tables as alignment-aware, width-clamped box-drawing grids
+- New Reading Mode in the memo viewer: `z` toggles a fullscreen, centered, chrome-free focus view (Esc to close)
+- In Navigate mode, unfocused panel content is dimmed so attention settles on the active panel (skipped in focus_mode)
+- Markdown viewer readability: per-level heading styling, an emphasized code-block language badge, inline-code background "chips", and indented nested blockquotes
+- Extended checkbox states render distinct glyphs: `[/]` in-progress (◐), `[-]` cancelled (~, struck through), `[>]` deferred (→), `[!]` important (!) — Obsidian-compatible
+- Chrome toggle (`\`): hide panel borders/titles and the status bar for a maximally distraction-free workspace
+- Compact status bar option (`[ui] minimal_status_bar`): show only mode/focus/streak/progress
+- Pomodoro focus session (`[pomodoro] auto_focus_session`): starting a timer auto-hides chrome and restores it when the timer ends
 
 ## [1.4.0]
 

@@ -12,6 +12,7 @@ use std::fs;
 fn show_memo_preview(app: &mut App, entry: models::LogEntry) {
     app.memo_preview_entry = Some(entry);
     app.memo_preview_scroll = 0;
+    app.memo_reading_mode = false;
     app.active_popup = ActivePopup::MemoPreview;
 }
 
@@ -478,6 +479,7 @@ pub fn open_or_toggle_pomodoro_for_selected_task(app: &mut App) {
         app.pomodoro_end = None;
         app.pomodoro_start = None;
         app.pomodoro_target = None;
+        app.end_pomodoro_focus_session();
         app.toast("Pomodoro stopped.");
         return;
     }

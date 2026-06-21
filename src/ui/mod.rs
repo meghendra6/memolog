@@ -52,11 +52,15 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     let syntax_set = syntax_set();
     let syntax_theme = select_syntax_theme(syntax_theme_set(), &tokens, theme_preset);
     let code_bg = code_block_background(&tokens);
+    // Distraction-free chrome toggle: hide the status bar (reclaiming its row) and, below,
+    // render panels without borders/titles.
+    let chrome = app.ui_chrome_visible;
+    let status_height = if chrome { 1 } else { 0 };
     let (main_area, search_area, status_area) = match app.input_mode {
         InputMode::Editing => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .constraints([Constraint::Min(1), Constraint::Length(status_height)])
                 .split(f.area());
             (chunks[0], None, chunks[1])
         }
@@ -66,7 +70,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 .constraints([
                     Constraint::Min(1),
                     Constraint::Length(5),
-                    Constraint::Length(1),
+                    Constraint::Length(status_height),
                 ])
                 .split(f.area());
             (chunks[0], Some(chunks[1]), chunks[2])
@@ -74,7 +78,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         InputMode::Navigate => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .constraints([Constraint::Min(1), Constraint::Length(status_height)])
                 .split(f.area());
             (chunks[0], None, chunks[1])
         }
@@ -159,15 +163,19 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         // Render pinned section if it exists
         if let Some(pinned_rect) = pinned_area {
             let pinned_title = format!(" 📌 Pinned ({}) ", pinned_entries.len());
-            let pinned_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(tokens.ui_muted))
-                .title(Line::from(Span::styled(
-                    pinned_title,
-                    Style::default()
-                        .fg(tokens.ui_accent)
-                        .add_modifier(Modifier::BOLD),
-                )));
+            let pinned_block = if chrome {
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(tokens.ui_muted))
+                    .title(Line::from(Span::styled(
+                        pinned_title,
+                        Style::default()
+                            .fg(tokens.ui_accent)
+                            .add_modifier(Modifier::BOLD),
+                    )))
+            } else {
+                Block::default().borders(Borders::NONE)
+            };
 
             let pinned_inner = pinned_block.inner(pinned_rect);
             let pinned_width = pinned_inner.width.saturating_sub(1).max(1) as usize;
@@ -508,6 +516,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                             line_in_code_block,
                             highlight_here,
                             search_style,
+                            None,
                         ));
                     }
                     lines.push(Line::from(spans));
@@ -758,13 +767,17 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         } else {
             Style::default().fg(tokens.ui_muted)
         };
-        let timeline_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(timeline_border_color))
-            .title(Line::from(Span::styled(
-                timeline_title,
-                timeline_title_style,
-            )));
+        let timeline_block = if chrome {
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(timeline_border_color))
+                .title(Line::from(Span::styled(
+                    timeline_title,
+                    timeline_title_style,
+                )))
+        } else {
+            Block::default().borders(Borders::NONE)
+        };
 
         let highlight_bg = tokens.ui_selection_bg;
         let logs_highlight_style = if is_timeline_focused {
@@ -773,6 +786,15 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().bg(tokens.ui_cursorline_bg)
+        };
+
+        // Dim the content of panels the user is not focused on so attention settles on the
+        // active panel. Skipped in focus_mode (unfocused panels are already hidden there).
+        let dim_unfocused = navigate_mode && !app.focus_mode;
+        let timeline_content_style = if dim_unfocused && !is_timeline_focused {
+            Style::default().add_modifier(Modifier::DIM)
+        } else {
+            Style::default()
         };
 
         // When the selected entry is tall (taller than viewport), render it as a Paragraph
@@ -786,13 +808,14 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 let paragraph = Paragraph::new(selected_text)
                     .block(timeline_block)
                     .scroll((scroll_offset, 0))
-                    .style(logs_highlight_style);
+                    .style(logs_highlight_style.patch(timeline_content_style));
 
                 f.render_widget(paragraph, timeline_area);
             } else {
                 // Fallback to list rendering
                 let logs_list = List::new(list_items)
                     .block(timeline_block)
+                    .style(timeline_content_style)
                     .highlight_symbol("")
                     .highlight_style(logs_highlight_style);
                 app.timeline_ui_state.select(ui_selected_index);
@@ -802,13 +825,21 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             // Normal list rendering for non-tall entries
             let logs_list = List::new(list_items)
                 .block(timeline_block)
+                .style(timeline_content_style)
                 .highlight_symbol("")
                 .highlight_style(logs_highlight_style);
             app.timeline_ui_state.select(ui_selected_index);
             f.render_stateful_widget(logs_list, timeline_area, &mut app.timeline_ui_state);
         }
 
-        render_agenda_panel(f, app, agenda_area, is_agenda_focused, &tokens);
+        render_agenda_panel(
+            f,
+            app,
+            agenda_area,
+            is_agenda_focused,
+            dim_unfocused && !is_agenda_focused,
+            &tokens,
+        );
 
         // Right panel: Today's tasks
         let tasks_inner = Block::default().borders(Borders::ALL).inner(tasks_area);
@@ -908,6 +939,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                             false,
                             None,
                             Style::default(),
+                            None,
                         ))
                     })
                     .collect();
@@ -969,10 +1001,14 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         } else {
             Style::default().fg(tokens.ui_muted)
         };
-        let tasks_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(tasks_border_color))
-            .title(Line::from(Span::styled(tasks_title, tasks_title_style)));
+        let tasks_block = if chrome {
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(tasks_border_color))
+                .title(Line::from(Span::styled(tasks_title, tasks_title_style)))
+        } else {
+            Block::default().borders(Borders::NONE)
+        };
 
         let highlight_bg = tokens.ui_selection_bg;
         let todo_highlight_style = if is_tasks_focused {
@@ -983,8 +1019,14 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             Style::default().bg(tokens.ui_cursorline_bg)
         };
 
+        let tasks_content_style = if dim_unfocused && !is_tasks_focused {
+            Style::default().add_modifier(Modifier::DIM)
+        } else {
+            Style::default()
+        };
         let todo_list = List::new(todos)
             .block(tasks_block)
+            .style(tasks_content_style)
             .highlight_symbol("")
             .highlight_style(todo_highlight_style);
         f.render_stateful_widget(todo_list, tasks_area, &mut app.tasks_state);
@@ -1617,8 +1659,15 @@ fn build_protocol_preview_layout(
     let mut code_highlighter: Option<HighlightLines> = None;
     let mut code_language: Option<String> = None;
 
-    for (idx, raw_line) in text.lines().enumerate() {
+    let source_lines: Vec<&str> = text.lines().collect();
+    let mut skip_lines = 0usize;
+    for (idx, &raw_line) in source_lines.iter().enumerate() {
         rendered.source_line_offsets.push(rendered.lines.len());
+        if skip_lines > 0 {
+            // Lines already consumed by a multi-line block (e.g. a GFM table).
+            skip_lines -= 1;
+            continue;
+        }
         let trimmed = raw_line.trim();
         let trimmed_start = raw_line.trim_start();
         let is_fence = trimmed_start.starts_with("```");
@@ -1699,7 +1748,15 @@ fn build_protocol_preview_layout(
         }
 
         if let Some((depth, body)) = split_blockquote(trimmed_start) {
-            render_blockquote_lines(&mut rendered.lines, body, depth, width, theme, tokens);
+            render_blockquote_lines(
+                &mut rendered.lines,
+                body,
+                depth,
+                width,
+                theme,
+                tokens,
+                code_bg,
+            );
             continue;
         }
 
@@ -1725,6 +1782,16 @@ fn build_protocol_preview_layout(
             continue;
         }
 
+        if let Some(table) = parse_markdown_table(&source_lines, idx) {
+            if !rendered.lines.is_empty() {
+                push_markdown_blank_line(&mut rendered.lines);
+            }
+            render_table_lines(&mut rendered.lines, &table, width, tokens);
+            push_markdown_blank_line(&mut rendered.lines);
+            skip_lines = table.consumed.saturating_sub(1);
+            continue;
+        }
+
         for line in wrap_markdown_line(raw_line, width) {
             rendered.lines.push(Line::from(parse_markdown_spans(
                 &line,
@@ -1732,6 +1799,7 @@ fn build_protocol_preview_layout(
                 false,
                 None,
                 Style::default(),
+                code_bg,
             )));
         }
     }
@@ -1788,8 +1856,15 @@ pub(super) fn render_markdown_view(
     let mut code_highlighter: Option<HighlightLines> = None;
     let mut code_language: Option<String> = None;
 
-    for (idx, raw_line) in text.lines().enumerate() {
+    let source_lines: Vec<&str> = text.lines().collect();
+    let mut skip_lines = 0usize;
+    for (idx, &raw_line) in source_lines.iter().enumerate() {
         rendered.source_line_offsets.push(rendered.lines.len());
+        if skip_lines > 0 {
+            // Lines already consumed by a multi-line block (e.g. a GFM table).
+            skip_lines -= 1;
+            continue;
+        }
         let trimmed = raw_line.trim();
         let trimmed_start = raw_line.trim_start();
         let is_fence = trimmed_start.starts_with("```");
@@ -1870,7 +1945,15 @@ pub(super) fn render_markdown_view(
         }
 
         if let Some((depth, body)) = split_blockquote(trimmed_start) {
-            render_blockquote_lines(&mut rendered.lines, body, depth, width, theme, tokens);
+            render_blockquote_lines(
+                &mut rendered.lines,
+                body,
+                depth,
+                width,
+                theme,
+                tokens,
+                code_bg,
+            );
             continue;
         }
 
@@ -1887,6 +1970,16 @@ pub(super) fn render_markdown_view(
             continue;
         }
 
+        if let Some(table) = parse_markdown_table(&source_lines, idx) {
+            if !rendered.lines.is_empty() {
+                push_markdown_blank_line(&mut rendered.lines);
+            }
+            render_table_lines(&mut rendered.lines, &table, width, tokens);
+            push_markdown_blank_line(&mut rendered.lines);
+            skip_lines = table.consumed.saturating_sub(1);
+            continue;
+        }
+
         for line in wrap_markdown_line(raw_line, width) {
             rendered.lines.push(Line::from(parse_markdown_spans(
                 &line,
@@ -1894,6 +1987,7 @@ pub(super) fn render_markdown_view(
                 false,
                 None,
                 Style::default(),
+                code_bg,
             )));
         }
     }
@@ -1946,17 +2040,39 @@ fn render_heading_lines(
     let marker_width = UnicodeWidthStr::width(marker);
     let available = width.saturating_sub(marker_width).max(1);
     let wrapped = textwrap::wrap(heading_text, available);
-    let marker_style = Style::default()
-        .fg(tokens.ui_accent)
-        .add_modifier(Modifier::BOLD);
-    let text_style = if level <= 2 {
-        Style::default()
-            .fg(tokens.ui_fg)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(tokens.ui_fg)
-            .add_modifier(Modifier::ITALIC)
+    // Visual hierarchy by level: H1/H2 accent markers + bold text, H3 a muted italic
+    // marker + italic text, H4+ fully muted. This makes nesting readable at a glance.
+    let (marker_style, text_style) = match level {
+        1 => (
+            Style::default()
+                .fg(tokens.ui_accent)
+                .add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(tokens.ui_fg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        2 => (
+            Style::default().fg(tokens.ui_accent),
+            Style::default()
+                .fg(tokens.ui_fg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        3 => (
+            Style::default()
+                .fg(tokens.ui_muted)
+                .add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(tokens.ui_fg)
+                .add_modifier(Modifier::ITALIC),
+        ),
+        _ => (
+            Style::default()
+                .fg(tokens.ui_muted)
+                .add_modifier(Modifier::DIM),
+            Style::default()
+                .fg(tokens.ui_muted)
+                .add_modifier(Modifier::ITALIC),
+        ),
     };
 
     for (idx, part) in wrapped.iter().enumerate() {
@@ -1979,6 +2095,255 @@ fn render_heading_lines(
                 .add_modifier(Modifier::DIM),
         )));
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColumnAlign {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MarkdownTable {
+    /// Column alignments parsed from the separator row.
+    aligns: Vec<ColumnAlign>,
+    /// Row cells; `rows[0]` is the header. Short rows are padded with empty cells at render time.
+    rows: Vec<Vec<String>>,
+    /// Number of columns (max of header/separator/any row).
+    ncols: usize,
+    /// Number of source lines this table consumed (header + separator + body rows).
+    consumed: usize,
+}
+
+/// Detects a GFM table starting at `lines[start]`: a header row containing `|`
+/// immediately followed by a separator row (e.g. `| --- | :--: |`). Returns `None`
+/// when the strict separator guard fails, so `---` thematic breaks are never misread.
+fn parse_markdown_table(lines: &[&str], start: usize) -> Option<MarkdownTable> {
+    let header = lines.get(start)?;
+    if !header.contains('|') {
+        return None;
+    }
+    let separator = lines.get(start + 1)?;
+    if !separator.contains('|') {
+        return None;
+    }
+    let sep_cells = split_table_cells(separator);
+    if sep_cells.is_empty() || !sep_cells.iter().all(|cell| is_table_separator_cell(cell)) {
+        return None;
+    }
+
+    let aligns: Vec<ColumnAlign> = sep_cells
+        .iter()
+        .map(|cell| alignment_of_cell(cell))
+        .collect();
+    let header_cells = split_table_cells(header);
+    let mut ncols = header_cells.len().max(aligns.len());
+    let mut rows = vec![header_cells];
+    let mut consumed = 2;
+
+    let mut i = start + 2;
+    while let Some(line) = lines.get(i) {
+        if line.trim().is_empty() || !line.contains('|') {
+            break;
+        }
+        let cells = split_table_cells(line);
+        ncols = ncols.max(cells.len());
+        rows.push(cells);
+        consumed += 1;
+        i += 1;
+    }
+
+    Some(MarkdownTable {
+        aligns,
+        rows,
+        ncols,
+        consumed,
+    })
+}
+
+/// Splits a table row into trimmed cells, honoring `\|` as a literal pipe and
+/// stripping the optional leading/trailing pipe.
+fn split_table_cells(row: &str) -> Vec<String> {
+    let trimmed = row.trim();
+    let trimmed = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let trimmed = trimmed.strip_suffix('|').unwrap_or(trimmed);
+
+    let mut cells = Vec::new();
+    let mut current = String::new();
+    let mut chars = trimmed.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && chars.peek() == Some(&'|') {
+            current.push('|');
+            chars.next();
+        } else if ch == '|' {
+            cells.push(current.trim().to_string());
+            current = String::new();
+        } else {
+            current.push(ch);
+        }
+    }
+    cells.push(current.trim().to_string());
+    cells
+}
+
+/// A separator cell is `:?-+:?` (dashes with optional alignment colons).
+fn is_table_separator_cell(cell: &str) -> bool {
+    let trimmed = cell.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let body = trimmed.strip_prefix(':').unwrap_or(trimmed);
+    let body = body.strip_suffix(':').unwrap_or(body);
+    !body.is_empty() && body.chars().all(|ch| ch == '-')
+}
+
+fn alignment_of_cell(cell: &str) -> ColumnAlign {
+    let trimmed = cell.trim();
+    let left = trimmed.starts_with(':');
+    let right = trimmed.ends_with(':');
+    match (left, right) {
+        (true, true) => ColumnAlign::Center,
+        (false, true) => ColumnAlign::Right,
+        _ => ColumnAlign::Left,
+    }
+}
+
+/// Renders a parsed table as box-drawing lines that fit within `width`.
+fn render_table_lines(
+    out: &mut Vec<Line<'static>>,
+    table: &MarkdownTable,
+    width: usize,
+    tokens: &theme::ThemeTokens,
+) {
+    let ncols = table.ncols.max(1);
+
+    // Natural column widths from content.
+    let mut col_w = vec![1usize; ncols];
+    for row in &table.rows {
+        for (col, w) in col_w.iter_mut().enumerate() {
+            *w = (*w).max(UnicodeWidthStr::width(table_cell(row, col)));
+        }
+    }
+
+    // Shrink the widest columns until the whole table fits the available width.
+    // Chrome = one vertical per column boundary (ncols + 1) plus two padding spaces per column.
+    let chrome = ncols * 3 + 1;
+    let available = width.saturating_sub(chrome);
+    if available >= ncols {
+        let mut total: usize = col_w.iter().sum();
+        while total > available {
+            let Some(widest) = col_w
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, w)| **w)
+                .map(|(i, _)| i)
+            else {
+                break;
+            };
+            if col_w[widest] <= 1 {
+                break;
+            }
+            col_w[widest] -= 1;
+            total -= 1;
+        }
+    }
+
+    let border_style = Style::default()
+        .fg(tokens.ui_muted)
+        .add_modifier(Modifier::DIM);
+    out.push(Line::from(Span::styled(
+        table_border_line(&col_w, '┌', '┬', '┐'),
+        border_style,
+    )));
+
+    for (row_idx, row) in table.rows.iter().enumerate() {
+        let is_header = row_idx == 0;
+        let cell_style = if is_header {
+            Style::default()
+                .fg(tokens.ui_accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(tokens.ui_fg)
+        };
+        let mut spans: Vec<Span<'static>> = Vec::with_capacity(ncols * 2 + 1);
+        for (col, w) in col_w.iter().enumerate() {
+            spans.push(Span::styled("│".to_string(), border_style));
+            let align = table.aligns.get(col).copied().unwrap_or(ColumnAlign::Left);
+            let content = format_table_cell(table_cell(row, col), *w, align);
+            spans.push(Span::styled(format!(" {content} "), cell_style));
+        }
+        spans.push(Span::styled("│".to_string(), border_style));
+        out.push(Line::from(spans));
+
+        if is_header {
+            out.push(Line::from(Span::styled(
+                table_border_line(&col_w, '├', '┼', '┤'),
+                border_style,
+            )));
+        }
+    }
+
+    out.push(Line::from(Span::styled(
+        table_border_line(&col_w, '└', '┴', '┘'),
+        border_style,
+    )));
+}
+
+fn table_cell(row: &[String], col: usize) -> &str {
+    row.get(col).map(|s| s.as_str()).unwrap_or("")
+}
+
+fn table_border_line(col_w: &[usize], left: char, mid: char, right: char) -> String {
+    let mut out = String::new();
+    out.push(left);
+    for (i, w) in col_w.iter().enumerate() {
+        out.push_str(&"─".repeat(w + 2));
+        out.push(if i + 1 == col_w.len() { right } else { mid });
+    }
+    out
+}
+
+/// Truncates (width-aware, with an ellipsis) then pads a cell to `width` per alignment.
+fn format_table_cell(text: &str, width: usize, align: ColumnAlign) -> String {
+    let content = if UnicodeWidthStr::width(text) > width {
+        truncate_to_width(text, width)
+    } else {
+        text.to_string()
+    };
+    let pad = width.saturating_sub(UnicodeWidthStr::width(content.as_str()));
+    match align {
+        ColumnAlign::Left => format!("{content}{}", " ".repeat(pad)),
+        ColumnAlign::Right => format!("{}{content}", " ".repeat(pad)),
+        ColumnAlign::Center => {
+            let left = pad / 2;
+            let right = pad - left;
+            format!("{}{content}{}", " ".repeat(left), " ".repeat(right))
+        }
+    }
+}
+
+/// Width-aware truncation that appends `…` and never exceeds `width` display columns.
+fn truncate_to_width(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if UnicodeWidthStr::width(text) <= width {
+        return text.to_string();
+    }
+    let budget = width.saturating_sub(1).max(1);
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+        if used + cw > budget {
+            break;
+        }
+        out.push(ch);
+        used += cw;
+    }
+    out.push('…');
+    out
 }
 
 fn split_blockquote(line: &str) -> Option<(usize, &str)> {
@@ -2004,8 +2369,15 @@ fn render_blockquote_lines(
     width: usize,
     theme: &Theme,
     tokens: &theme::ThemeTokens,
+    code_bg: Option<Color>,
 ) {
-    let prefix = format!("{} ", "▎".repeat(depth.min(3)));
+    // Indent nested quotes (depth > 1) so the nesting reads visually; a single-level
+    // quote keeps its flush "▎ " bar. prefix_width below keeps wrapped lines aligned.
+    let prefix = format!(
+        "{}{} ",
+        " ".repeat(depth.saturating_sub(1) * 2),
+        "▎".repeat(depth.min(3))
+    );
     let prefix_width = UnicodeWidthStr::width(prefix.as_str());
     let available = width.saturating_sub(prefix_width).max(1);
     let wrapped = if body.is_empty() {
@@ -2027,6 +2399,7 @@ fn render_blockquote_lines(
             false,
             None,
             Style::default(),
+            code_bg,
         ));
         out.push(Line::from(spans));
     }
@@ -2329,22 +2702,40 @@ fn render_code_block_border(
     tokens: &theme::ThemeTokens,
     code_bg: Option<Color>,
 ) -> Line<'static> {
-    let corner = if opening { "╭" } else { "╰" };
-    let label = if opening {
-        language
-            .filter(|lang| !lang.is_empty())
-            .map(|lang| format!(" {lang} "))
-            .unwrap_or_else(|| " code ".to_string())
-    } else {
-        "────".to_string()
-    };
-    let mut style = Style::default()
+    let mut border_style = Style::default()
         .fg(tokens.ui_muted)
         .add_modifier(Modifier::DIM);
     if let Some(bg) = code_bg {
-        style = style.bg(bg);
+        border_style = border_style.bg(bg);
     }
-    Line::from(Span::styled(format!("{corner}─{label}"), style))
+
+    if !opening {
+        return Line::from(Span::styled("╰────".to_string(), border_style));
+    }
+
+    // Opening border: emphasize the language badge (accent) against the dim frame.
+    let label = language
+        .filter(|lang| !lang.is_empty())
+        .map(|lang| {
+            let lang = lang.trim();
+            if lang.chars().count() > 20 {
+                format!("{}…", lang.chars().take(19).collect::<String>())
+            } else {
+                lang.to_string()
+            }
+        })
+        .unwrap_or_else(|| "code".to_string());
+    let mut label_style = Style::default()
+        .fg(tokens.ui_accent)
+        .add_modifier(Modifier::BOLD);
+    if let Some(bg) = code_bg {
+        label_style = label_style.bg(bg);
+    }
+    Line::from(vec![
+        Span::styled("╭─ ".to_string(), border_style),
+        Span::styled(label, label_style),
+        Span::styled(" ─".to_string(), border_style),
+    ])
 }
 
 fn render_code_block_line(
@@ -3204,6 +3595,7 @@ fn render_agenda_panel(
     app: &App,
     area: Rect,
     focused: bool,
+    dim: bool,
     tokens: &theme::ThemeTokens,
 ) {
     if area.height == 0 || area.width == 0 {
@@ -3246,10 +3638,14 @@ fn render_agenda_panel(
         Style::default().fg(tokens.ui_muted)
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
-        .title(Line::from(Span::styled(title, title_style)));
+    let block = if app.ui_chrome_visible {
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .title(Line::from(Span::styled(title, title_style)))
+    } else {
+        Block::default().borders(Borders::NONE)
+    };
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -3477,7 +3873,13 @@ fn render_agenda_panel(
         Style::default().bg(tokens.ui_cursorline_bg)
     };
 
+    let content_style = if dim {
+        Style::default().add_modifier(Modifier::DIM)
+    } else {
+        Style::default()
+    };
     let list = List::new(items)
+        .style(content_style)
         .highlight_symbol("")
         .highlight_style(highlight_style);
     let mut state = ListState::default();
@@ -3560,6 +3962,7 @@ fn push_agenda_section(
                     false,
                     None,
                     Style::default(),
+                    None,
                 ))
             })
             .collect();
@@ -3714,6 +4117,8 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
         String::new()
     };
 
+    let minimal = app.config.ui.minimal_status_bar;
+
     let mut left_spans = vec![
         Span::styled(
             format!(" {mode_label} "),
@@ -3735,29 +4140,40 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
                 Style::default().fg(tokens.ui_muted)
             },
         ),
-        Span::styled(format!(" {date_label} "), Style::default().fg(tokens.ui_fg)),
-        Span::styled(
+    ];
+    // The compact bar keeps only mode/focus plus the streak/progress glyphs; the verbose
+    // bar adds date, context, search, and the active file.
+    if !minimal {
+        left_spans.push(Span::styled(
+            format!(" {date_label} "),
+            Style::default().fg(tokens.ui_fg),
+        ));
+        left_spans.push(Span::styled(
             format!(" {context_label} "),
             Style::default().fg(tokens.ui_muted),
-        ),
-    ];
-    if let Some(search_label) = search_label {
-        left_spans.push(Span::styled(
-            format!(" {search_label} "),
-            Style::default().fg(tokens.ui_muted),
         ));
-    }
-    left_spans.extend([
-        Span::raw(" "),
-        Span::styled(
+        if let Some(search_label) = search_label {
+            left_spans.push(Span::styled(
+                format!(" {search_label} "),
+                Style::default().fg(tokens.ui_muted),
+            ));
+        }
+        left_spans.push(Span::raw(" "));
+        left_spans.push(Span::styled(
             format!("{file_label}{dirty_mark}"),
             Style::default()
                 .fg(tokens.ui_fg)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(streak_label, Style::default().fg(Color::Yellow)),
-        Span::styled(progress_label, Style::default().fg(Color::Cyan)),
-    ]);
+        ));
+    }
+    left_spans.push(Span::styled(
+        streak_label,
+        Style::default().fg(Color::Yellow),
+    ));
+    left_spans.push(Span::styled(
+        progress_label,
+        Style::default().fg(Color::Cyan),
+    ));
 
     let mut right_plain = String::new();
     let mut right_spans = Vec::new();
@@ -3807,7 +4223,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App, tokens: &theme::Theme
             message,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ));
-    } else if right_plain.is_empty() {
+    } else if right_plain.is_empty() && !minimal {
         let status_hint = status_focus_hint(app);
         let hint = truncate(&status_hint, 72);
         right_plain.push_str(&hint);
@@ -4009,6 +4425,9 @@ mod tests {
     use super::obsidian_image_embed;
     use super::render_markdown_view;
     use super::status_focus_hint;
+    use super::{
+        ColumnAlign, format_table_cell, parse_markdown_table, render_table_lines, split_table_cells,
+    };
     use crate::config::{EditorConfig, Theme};
     use crate::ui::theme::ThemeTokens;
     use image::{Rgba, RgbaImage};
@@ -4022,6 +4441,112 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>()
+    }
+
+    #[test]
+    fn parse_markdown_table_detects_basic_table() {
+        let lines = vec![
+            "| Name | Age |",
+            "| --- | ---: |",
+            "| Alice | 30 |",
+            "next paragraph",
+        ];
+        let table = parse_markdown_table(&lines, 0).expect("table detected");
+        assert_eq!(table.ncols, 2);
+        assert_eq!(table.consumed, 3);
+        assert_eq!(table.aligns, vec![ColumnAlign::Left, ColumnAlign::Right]);
+        assert_eq!(
+            table.rows.len(),
+            2,
+            "header + one body row (separator not stored)"
+        );
+        assert_eq!(table.rows[0], vec!["Name".to_string(), "Age".to_string()]);
+        assert_eq!(table.rows[1], vec!["Alice".to_string(), "30".to_string()]);
+    }
+
+    #[test]
+    fn parse_markdown_table_requires_separator_row() {
+        // A paragraph followed by a `---` thematic break must NOT be read as a table.
+        let lines = vec!["Some text", "---", "more"];
+        assert!(parse_markdown_table(&lines, 0).is_none());
+        // Two pipe rows without a separator are not a table either.
+        let lines2 = vec!["a | b", "c | d"];
+        assert!(parse_markdown_table(&lines2, 0).is_none());
+    }
+
+    #[test]
+    fn split_table_cells_handles_escaped_pipe_and_outer_bars() {
+        assert_eq!(
+            split_table_cells("| a | b |"),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(
+            split_table_cells(r"a \| b | c"),
+            vec!["a | b".to_string(), "c".to_string()]
+        );
+    }
+
+    #[test]
+    fn render_table_lines_draws_box_grid() {
+        let tokens = ThemeTokens::from_theme(&Theme::default());
+        let lines_in = vec!["| A | B |", "| --- | --- |", "| 1 | 2 |"];
+        let table = parse_markdown_table(&lines_in, 0).expect("table");
+        let mut out = Vec::new();
+        render_table_lines(&mut out, &table, 80, &tokens);
+        let rendered: Vec<String> = out.iter().map(line_to_string).collect();
+        assert!(
+            rendered[0].starts_with('┌') && rendered[0].contains('┬') && rendered[0].ends_with('┐'),
+            "top border: {:?}",
+            rendered[0]
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|l| l.contains("│ A ") && l.contains("│ B "))
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|l| l.starts_with('├') && l.contains('┼'))
+        );
+        assert!(rendered.iter().any(|l| l.contains("│ 1 ")));
+        let last = rendered.last().expect("bottom border");
+        assert!(last.starts_with('└') && last.contains('┴') && last.ends_with('┘'));
+    }
+
+    #[test]
+    fn format_table_cell_aligns_and_truncates() {
+        assert_eq!(format_table_cell("ab", 5, ColumnAlign::Left), "ab   ");
+        assert_eq!(format_table_cell("ab", 5, ColumnAlign::Right), "   ab");
+        assert_eq!(format_table_cell("ab", 6, ColumnAlign::Center), "  ab  ");
+        assert_eq!(format_table_cell("abcdef", 4, ColumnAlign::Left), "abc…");
+    }
+
+    #[test]
+    fn render_markdown_view_renders_gfm_table() {
+        let tokens = ThemeTokens::from_theme(&Theme::default());
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let theme_set = ThemeSet::load_defaults();
+        let syntax_theme = theme_set.themes["base16-ocean.dark"].clone();
+        let md = "| H1 | H2 |\n| --- | --- |\n| a | b |";
+        let rendered = render_markdown_view(
+            md,
+            80,
+            None,
+            &Theme::default(),
+            &EditorConfig::default(),
+            &tokens,
+            &syntax_set,
+            &syntax_theme,
+            None,
+            None,
+        );
+        let text: Vec<String> = rendered.lines.iter().map(line_to_string).collect();
+        assert!(
+            text.iter().any(|l| l.contains('┌')),
+            "expected a table top border, got: {text:?}"
+        );
+        assert!(text.iter().any(|l| l.contains("│ H1 ")));
     }
 
     #[test]

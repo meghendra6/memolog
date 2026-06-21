@@ -22,6 +22,19 @@ daily_template = ""
 # Max suggestions shown in the [[wikilink]] autocomplete popup.
 link_complete_max_items = 12
 
+[ui]
+# Compact status bar: show only mode/focus/streak/progress (drops date/context/file labels).
+minimal_status_bar = false
+
+[pomodoro]
+# Hide UI chrome (borders + status bar) for a distraction-free focus session while a
+# pomodoro is running; restored automatically when the timer ends.
+auto_focus_session = false
+
+[keybindings.global]
+# Toggle distraction-free chrome (panel borders/titles + status bar).
+toggle_chrome = ["\\"]
+
 [gemini]
 enabled = false
 api_key = ""
