@@ -491,11 +491,28 @@ impl<'a> App<'a> {
                 keybinding_conflicts.len()
             ))
         };
-        let startup_toast = match (carryover_startup_toast, keybinding_toast) {
-            (Some(carryover), Some(keybinding)) => Some(format!("{carryover} {keybinding}")),
-            (Some(carryover), None) => Some(carryover),
-            (None, Some(keybinding)) => Some(keybinding),
-            (None, None) => None,
+        let theme_toast = {
+            let invalid = config.theme.invalid_color_fields();
+            if invalid.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "Theme: {} invalid color value(s) ignored ({}). Check config.toml.",
+                    invalid.len(),
+                    invalid.join(", ")
+                ))
+            }
+        };
+        let startup_toast = {
+            let parts: Vec<String> = [carryover_startup_toast, keybinding_toast, theme_toast]
+                .into_iter()
+                .flatten()
+                .collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(" "))
+            }
         };
         let startup_toast_expiry = startup_toast.as_ref().map(|_| now + Duration::seconds(8));
 
@@ -1020,7 +1037,7 @@ impl<'a> App<'a> {
         crate::editor::markdown::filter_link_candidates(
             &self.link_complete_candidates,
             &self.link_complete_query,
-            8,
+            self.config.editor.link_complete_max_items.max(1),
         )
     }
 

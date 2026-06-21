@@ -1385,13 +1385,14 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => {
             let today = chrono::Local::now().date_naive();
-            let (text, enriched) = if app.config.capture.nl_parse {
-                let changed = crate::capture_nl::would_enrich(&app.quick_capture_input, today);
+            let (text, enriched_summary) = if app.config.capture.nl_parse {
+                let summary =
+                    crate::capture_nl::enrichment_summary(&app.quick_capture_input, today);
                 let enriched_text =
                     crate::capture_nl::enrich_capture_text(&app.quick_capture_input, today);
-                (enriched_text, changed)
+                (enriched_text, summary)
             } else {
-                (app.quick_capture_input.clone(), false)
+                (app.quick_capture_input.clone(), None)
             };
             if let Some(content) = quick_capture_inbox_content(&text) {
                 let header = if app.config.capture.daily_template.is_empty() {
@@ -1409,8 +1410,8 @@ fn handle_quick_capture_popup(app: &mut App, key: KeyEvent) {
                 ) {
                     app.toast(format!("Failed to save: {}", e));
                 } else {
-                    if enriched {
-                        app.toast("Quick note saved (auto-scheduled).");
+                    if let Some(summary) = &enriched_summary {
+                        app.toast(format!("Quick note saved · added {summary}"));
                     } else {
                         app.toast("Quick note saved to #inbox.");
                     }

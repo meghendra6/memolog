@@ -430,9 +430,18 @@ fn read_note_entries(
             if schedule.is_empty() {
                 continue;
             }
-            if text.trim().is_empty() {
-                continue;
-            }
+            // A line that is only schedule metadata (e.g. a bare "@sched(2026-03-15)" or
+            // "@time(09:00)" reminder) still expresses a clear intent to appear on the agenda.
+            // Surface it with a synthesized placeholder label instead of silently dropping it.
+            let text = if text.trim().is_empty() {
+                if schedule.time.is_some() {
+                    "(reminder)".to_string()
+                } else {
+                    "(scheduled)".to_string()
+                }
+            } else {
+                text.trim().to_string()
+            };
 
             let agenda_date = schedule
                 .scheduled
@@ -450,7 +459,7 @@ fn read_note_entries(
                 date: agenda_date,
                 time: schedule.time,
                 duration_minutes: schedule.duration_minutes,
-                text: text.trim().to_string(),
+                text,
                 indent: indent_spaces.div_ceil(2),
                 is_done: false,
                 priority: None,
@@ -2943,6 +2952,36 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[test]
+    fn scheduled_note_without_text_appears_with_placeholder() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2026-03-15");
+        fs::write(&path, "## [09:00:00]\n@sched(2026-03-15)\n").expect("write log");
+
+        let day = NaiveDate::from_ymd_opt(2026, 3, 15).expect("valid date");
+        let items = read_agenda_entries(&dir, day, day).expect("read agenda");
+        let note = items
+            .iter()
+            .find(|i| i.kind == AgendaItemKind::Note && i.date == day)
+            .expect("scheduled note should appear instead of being dropped");
+        assert_eq!(note.text, "(scheduled)");
+    }
+
+    #[test]
+    fn timed_note_without_text_uses_reminder_placeholder() {
+        let dir = temp_log_dir();
+        let path = get_file_path_for_date(&dir, "2026-03-16");
+        fs::write(&path, "## [09:00:00]\n@sched(2026-03-16) @time(09:30)\n").expect("write log");
+
+        let day = NaiveDate::from_ymd_opt(2026, 3, 16).expect("valid date");
+        let items = read_agenda_entries(&dir, day, day).expect("read agenda");
+        let note = items
+            .iter()
+            .find(|i| i.kind == AgendaItemKind::Note && i.date == day)
+            .expect("timed note should appear instead of being dropped");
+        assert_eq!(note.text, "(reminder)");
     }
 
     #[test]

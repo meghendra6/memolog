@@ -573,6 +573,12 @@ fn save_composer(app: &mut App, stay_in_editor: bool) {
         let input = lines.join("\n");
         if !input.trim().is_empty() {
             let today = chrono::Local::now().date_naive();
+            let enriched_summary = if app.config.capture.nl_parse {
+                let first_line = input.split_once('\n').map(|(f, _)| f).unwrap_or(&input);
+                crate::capture_nl::enrichment_summary(first_line, today)
+            } else {
+                None
+            };
             let to_save = if app.config.capture.nl_parse {
                 match input.split_once('\n') {
                     Some((first, rest)) => format!(
@@ -602,6 +608,9 @@ fn save_composer(app: &mut App, stay_in_editor: bool) {
                 return;
             }
             app.update_logs();
+            if let Some(summary) = &enriched_summary {
+                app.toast(format!("Saved · added {summary}"));
+            }
             if stay_in_editor && let Some(saved_entry) = app.all_logs.last().cloned() {
                 app.editing_entry = Some(crate::app::EditingEntry {
                     file_path: saved_entry.file_path.clone(),

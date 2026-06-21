@@ -435,6 +435,16 @@ pub(crate) fn handle_editor_visual(app: &mut App, key: event::KeyEvent, kind: Vi
             }
             exit_visual_mode(app);
         }
+        KeyCode::Char('o') => {
+            // Swap the cursor to the opposite end of the selection, keeping it active,
+            // so the user can extend the other side. Matches Vim's `o` in visual mode.
+            if let Some((anchor_row, anchor_col)) = app.visual_anchor {
+                let (cursor_row, cursor_col) = app.textarea.cursor();
+                app.visual_anchor = Some((cursor_row, cursor_col));
+                app.textarea
+                    .move_cursor(CursorMove::Jump(anchor_row as u16, anchor_col as u16));
+            }
+        }
         _ => {}
     }
 }
@@ -1995,6 +2005,25 @@ mod tests {
         send_char(&mut app, 'l');
         send_char(&mut app, 'y');
         assert_eq!(app.editor_mode, EditorMode::Normal);
+        assert_eq!(app.yank_buffer, "abc");
+    }
+
+    #[test]
+    fn visual_o_swaps_selection_anchor() {
+        let mut app = make_editing_app(&["abcdef"]);
+        send_char(&mut app, 'v');
+        send_char(&mut app, 'l');
+        send_char(&mut app, 'l');
+        assert_eq!(app.visual_anchor, Some((0, 0)));
+        assert_eq!(app.textarea.cursor(), (0, 2));
+
+        send_char(&mut app, 'o');
+        assert_eq!(app.visual_anchor, Some((0, 2)));
+        assert_eq!(app.textarea.cursor(), (0, 0));
+        assert_eq!(app.editor_mode, EditorMode::Visual(VisualKind::Char));
+
+        // Selection is unchanged in extent; yanking still captures "abc".
+        send_char(&mut app, 'y');
         assert_eq!(app.yank_buffer, "abc");
     }
 

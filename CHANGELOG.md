@@ -1,5 +1,33 @@
 # Changelog
 
+## [Unreleased]
+
+### 한국어
+- 일정 메타데이터만 있고 본문이 없는 노트 라인(예: 단독 `@sched(...)`/`@time(...)`)이 조용히 사라지지 않고 `(scheduled)`/`(reminder)` 플레이스홀더로 아젠다에 표시됨
+- 잘못된 테마 색상 값을 조용히 무시하지 않고 시작 시 알림으로 표시 (`config.toml` 확인 안내)
+- 포모도로 완료 알림을 아무 키나 눌러 닫을 수 있도록 개선 (기존: Esc만)
+- 아젠다/태스크 빈 상태 메시지가 현재 필터(및 아젠다 날짜)를 명시
+- 접힌 항목 표시(▶)를 강조 색상으로 표시해 스캔 시 구분 용이
+- 짧은 터미널에서 고정(pinned) 섹션이 타임라인을 과도하게 밀어내지 않도록 높이 제한
+- Mood/Carryover 팝업이 테마를 따르도록 수정, 팝업 푸터 단축키 표기 일관화
+- 일일 노트 템플릿 플레이스홀더 추가: `{{date_short}}`, `{{month}}`, `{{year}}`, `{{week}}`, `{{iso_week}}`, `{{doy}}`
+- 캡처 시 자동 추가된 토큰을 토스트로 표시 (예: `added @sched(...) @time(...)`)
+- 컴포저 Visual 모드 `o`로 선택 영역의 반대쪽 끝으로 커서 이동 (앵커 교체)
+- `[editor] link_complete_max_items` 설정 추가 (위키링크 자동완성 표시 개수, 기본 12)
+
+### English
+- Note lines that carry only schedule metadata (e.g. a bare `@sched(...)`/`@time(...)`) now appear in the agenda with a `(scheduled)`/`(reminder)` placeholder instead of being silently dropped
+- Invalid theme color values are surfaced in a startup notice (check `config.toml`) instead of silently falling back to the terminal default
+- The pomodoro completion alert can be dismissed with any key (previously Esc only)
+- Agenda/Tasks empty-state copy now names the active filter (and the agenda date)
+- The collapsed fold marker (▶) is accented so folded entries stand out while scanning
+- The pinned section height is capped so it can no longer squash the timeline on short terminals
+- Mood/Carryover popups now follow the active theme; popup footer keybinding notation standardized
+- Daily-note template gains `{{date_short}}`, `{{month}}`, `{{year}}`, `{{week}}`, `{{iso_week}}`, `{{doy}}` placeholders
+- The capture toast now names the tokens it inferred (e.g. `added @sched(...) @time(...)`)
+- Vim Visual mode `o` swaps the cursor to the opposite end of the selection
+- New `[editor] link_complete_max_items` setting (wikilink autocomplete cap, default 12)
+
 ## [1.4.0]
 
 ### 한국어
