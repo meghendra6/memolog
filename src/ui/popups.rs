@@ -753,7 +753,7 @@ pub fn render_date_picker_popup(f: &mut Frame, app: &App) {
     render_date_picker_fields(f, app, body_cols[0], &tokens);
     render_date_picker_detail(f, app, body_cols[1], &tokens);
 
-    let footer_text = "Enter apply | Esc cancel | h/l or +/- day | H/L or [/] week | j/k field | T today | R relative";
+    let footer_text = "Enter apply · Esc cancel · h/l or +/- day · H/L or [/] week · j/k field · T today · R relative";
     let footer_style = Style::default().fg(tokens.ui_muted);
     f.render_widget(Paragraph::new(footer_text).style(footer_style), footer);
 
@@ -1040,9 +1040,11 @@ fn format_duration(minutes: u32) -> String {
 }
 
 pub fn render_mood_popup(f: &mut Frame, app: &mut App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
     let block = Block::default()
         .title(" Mood Check-in ")
-        .borders(Borders::ALL);
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(tokens.ui_border_default));
     let area = centered_rect(60, 25, f.area());
     f.render_widget(Clear, area);
     f.render_widget(block, area);
@@ -1056,27 +1058,32 @@ pub fn render_mood_popup(f: &mut Frame, app: &mut App) {
         .margin(1)
         .split(area);
 
-    let list = List::new(items)
-        .highlight_symbol(">> ")
-        .highlight_style(Style::default().fg(Color::Yellow));
+    let list = List::new(items).highlight_symbol(">> ").highlight_style(
+        Style::default()
+            .fg(tokens.ui_accent)
+            .add_modifier(Modifier::BOLD),
+    );
 
     f.render_stateful_widget(list, popup_layout[0], &mut app.mood_list_state);
 
     // Add helpful footer with keyboard shortcuts
     let footer = Paragraph::new("↑/↓ select · Enter confirm · Esc skip")
-        .style(Style::default().fg(Color::DarkGray));
+        .style(Style::default().fg(tokens.ui_muted));
     f.render_widget(footer, popup_layout[1]);
 }
 
 pub fn render_todo_popup(f: &mut Frame, app: &mut App) {
+    let tokens = ThemeTokens::from_theme(&app.config.theme);
     let title = format!(
         " Carry over {} unfinished tasks from the last session? ",
         app.pending_todos.len()
     );
+    // Attention color on the border only, so the carried-over task list inside renders
+    // in normal text (previously the whole block was tinted red).
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .style(Style::default().fg(Color::LightRed));
+        .border_style(Style::default().fg(tokens.ui_toast_error));
     let area = centered_rect(70, 40, f.area());
     f.render_widget(Clear, area);
     f.render_widget(block, area);
@@ -1098,7 +1105,7 @@ pub fn render_todo_popup(f: &mut Frame, app: &mut App) {
 
     // Add helpful footer with keyboard shortcuts
     let footer =
-        Paragraph::new("Enter carry over · Esc skip").style(Style::default().fg(Color::DarkGray));
+        Paragraph::new("Enter carry over · Esc skip").style(Style::default().fg(tokens.ui_muted));
     f.render_widget(footer, popup_layout[1]);
 }
 
@@ -2402,7 +2409,7 @@ pub fn render_exit_popup(f: &mut Frame, _app: &App) {
         .style(Style::default().add_modifier(Modifier::BOLD))
         .wrap(ratatui::widgets::Wrap { trim: true });
 
-    let help_text = Paragraph::new("[Enter]/[y] Save & Exit    [d] Discard    [n]/[Esc] Cancel")
+    let help_text = Paragraph::new("Enter/y save & exit · d discard · n/Esc cancel")
         .style(Style::default().fg(Color::DarkGray));
 
     f.render_widget(body, text_area[0]);
@@ -2428,8 +2435,8 @@ pub fn render_delete_entry_popup(f: &mut Frame) {
         .style(Style::default().add_modifier(Modifier::BOLD))
         .wrap(ratatui::widgets::Wrap { trim: true });
 
-    let help_text = Paragraph::new("Enter/y: delete  Esc/n: cancel")
-        .style(Style::default().fg(Color::DarkGray));
+    let help_text =
+        Paragraph::new("Enter/y delete · Esc/n cancel").style(Style::default().fg(Color::DarkGray));
 
     f.render_widget(body, text_area[0]);
     f.render_widget(help_text, text_area[1]);
@@ -2518,7 +2525,7 @@ pub fn render_theme_switcher_popup(f: &mut Frame, app: &mut App) {
         .highlight_style(highlight_style);
     f.render_stateful_widget(list, popup_layout[0], &mut app.theme_list_state);
 
-    let help = Paragraph::new("(Up/Down) Move  (Enter) Apply  (Esc) Cancel")
+    let help = Paragraph::new("↑/↓ move · Enter apply · Esc cancel")
         .style(Style::default().fg(tokens.ui_muted));
     f.render_widget(help, popup_layout[1]);
 }
@@ -2561,7 +2568,7 @@ pub fn render_editor_style_popup(f: &mut Frame, app: &mut App) {
         .highlight_style(highlight_style);
     f.render_stateful_widget(list, popup_layout[0], &mut app.editor_style_list_state);
 
-    let help = Paragraph::new("(Up/Down) Move  (Enter) Apply  (Esc) Cancel")
+    let help = Paragraph::new("↑/↓ move · Enter apply · Esc cancel")
         .style(Style::default().fg(tokens.ui_muted));
     f.render_widget(help, popup_layout[1]);
 }

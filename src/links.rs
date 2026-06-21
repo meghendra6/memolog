@@ -21,6 +21,8 @@ pub enum LinkKind {
 }
 
 fn link_regex() -> &'static Regex {
+    // The inner class excludes `\n` by design, so a `[[` is never matched across a line
+    // break (this prevents accidentally capturing unrelated text spanning lines).
     static LINK_RE: OnceLock<Regex> = OnceLock::new();
     LINK_RE.get_or_init(|| Regex::new(r"\[\[([^\]\n]+)\]\]").expect("link regex must compile"))
 }
@@ -138,5 +140,25 @@ mod tests {
             distinct_targets(entry),
             vec!["Alpha".to_string(), "Beta".to_string()]
         );
+    }
+
+    #[test]
+    fn parses_multiple_pipes_uses_first_as_separator() {
+        // Obsidian behavior: only the first `|` separates target from alias; the rest
+        // is preserved verbatim inside the alias.
+        let links = parse_links("[[target|a|b]]");
+        assert_eq!(
+            links,
+            vec![Link {
+                target: "target".to_string(),
+                alias: Some("a|b".to_string())
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_multiline_targets() {
+        // A `[[` that is not closed on the same line must not match across the break.
+        assert!(parse_links("[[line1\nline2]]").is_empty());
     }
 }

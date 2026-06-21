@@ -13,9 +13,14 @@ cancel = ["esc"]
 # Auto-add @sched(...)/@time(...) from natural language in Quick Capture and new entries.
 nl_parse = true
 # Inline daily-note template inserted once when a new day's log file is first created.
-# Empty = no template. Placeholders: {{date}}, {{weekday}}, {{date_long}}.
+# Empty = no template. Placeholders: {{date}}, {{weekday}}, {{date_long}}, {{date_short}},
+# {{month}}, {{year}}, {{week}}, {{iso_week}}, {{doy}}.
 # Example: daily_template = "# {{date}} ({{weekday}})\n"
 daily_template = ""
+
+[editor]
+# Max suggestions shown in the [[wikilink]] autocomplete popup.
+link_complete_max_items = 12
 
 [gemini]
 enabled = false

@@ -105,18 +105,61 @@ pub fn enrich_capture_text(input: &str, base: NaiveDate) -> String {
     result
 }
 
-/// True if enrich_capture_text would add at least one token (used by the caller for the confirming toast).
-pub fn would_enrich(input: &str, base: NaiveDate) -> bool {
-    enrich_capture_text(input, base) != input
+/// Returns a short description of the tokens `enrich_capture_text` would add
+/// (e.g. "@sched(2026-05-30) @time(15:00)"), or `None` if nothing would be added.
+/// Mirrors the add conditions in `enrich_capture_text` so the caller can show a
+/// confirming toast that names exactly what was inferred.
+pub fn enrichment_summary(input: &str, base: NaiveDate) -> Option<String> {
+    let (existing, _) = parse_task_metadata(input);
+    let mut parts: Vec<String> = Vec::new();
+    if existing.scheduled.is_none()
+        && existing.due.is_none()
+        && existing.start.is_none()
+        && let Some(date) = scan_first_date(input, base)
+    {
+        parts.push(format!("@sched({})", date.format("%Y-%m-%d")));
+    }
+    if existing.time.is_none()
+        && let Some(time) = scan_first_time(input)
+    {
+        parts.push(format!("@time({})", time.format("%H:%M")));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
 }
 
-/// Renders a daily-note template, substituting {{date}} (YYYY-MM-DD), {{weekday}} (e.g. Monday),
-/// {{date_long}} (e.g. Monday, January 6 2026).
+/// Renders a daily-note template, substituting placeholders with values derived from `date`:
+/// - `{{date}}`      → `YYYY-MM-DD`
+/// - `{{weekday}}`   → full weekday name (e.g. `Monday`)
+/// - `{{date_long}}` → `Monday, January 6 2026`
+/// - `{{date_short}}`→ `Jan 6`
+/// - `{{month}}`     → full month name (e.g. `January`)
+/// - `{{year}}`      → `2026`
+/// - `{{week}}`      → ISO week number, zero-padded (e.g. `01`)
+/// - `{{iso_week}}`  → ISO year-week (e.g. `2026-W01`)
+/// - `{{doy}}`       → day of year, zero-padded (e.g. `006`)
+///
+/// Unknown placeholders are left untouched. Existing templates are unaffected since
+/// substitution only fires for placeholders that are present.
 pub fn render_daily_template(template: &str, date: NaiveDate) -> String {
+    use chrono::Datelike;
+    let iso = date.iso_week();
     template
         .replace("{{date}}", &date.format("%Y-%m-%d").to_string())
         .replace("{{weekday}}", &date.format("%A").to_string())
         .replace("{{date_long}}", &date.format("%A, %B %-d %Y").to_string())
+        .replace("{{date_short}}", &date.format("%b %-d").to_string())
+        .replace("{{month}}", &date.format("%B").to_string())
+        .replace("{{year}}", &date.format("%Y").to_string())
+        .replace(
+            "{{iso_week}}",
+            &format!("{}-W{:02}", iso.year(), iso.week()),
+        )
+        .replace("{{week}}", &format!("{:02}", iso.week()))
+        .replace("{{doy}}", &date.format("%j").to_string())
 }
 
 #[cfg(test)]
@@ -242,14 +285,32 @@ mod tests {
     }
 
     #[test]
-    fn would_enrich_flag() {
-        assert!(
-            would_enrich("meeting tomorrow", base()),
-            "should enrich 'meeting tomorrow'"
+    fn render_template_extended_placeholders() {
+        // 2026-05-29 is Friday, ISO week 22, day-of-year 149.
+        let result = render_daily_template(
+            "{{date_short}} | {{month}} {{year}} | wk {{week}} ({{iso_week}}) | doy {{doy}}",
+            base(),
         );
-        assert!(
-            !would_enrich("plain note", base()),
-            "should not enrich 'plain note'"
+        assert_eq!(result, "May 29 | May 2026 | wk 22 (2026-W22) | doy 149");
+    }
+
+    #[test]
+    fn render_template_leaves_unknown_placeholders() {
+        let result = render_daily_template("{{date}} {{nope}}", base());
+        assert_eq!(result, "2026-05-29 {{nope}}");
+    }
+
+    #[test]
+    fn enrichment_summary_lists_added_tokens() {
+        assert_eq!(
+            enrichment_summary("meeting tomorrow 3pm", base()),
+            Some("@sched(2026-05-30) @time(15:00)".to_string())
+        );
+        assert_eq!(enrichment_summary("plain note", base()), None);
+        // Manual @sched is respected, only @time is inferred.
+        assert_eq!(
+            enrichment_summary("call @sched(2026-01-01) 9am", base()),
+            Some("@time(09:00)".to_string())
         );
     }
 

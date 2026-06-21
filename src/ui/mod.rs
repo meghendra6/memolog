@@ -139,8 +139,14 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         let has_pinned = !pinned_entries.is_empty();
 
         let (pinned_area, timeline_area) = if has_pinned {
-            // Allocate 2 lines per pinned entry + 2 for borders, max 8 lines total
-            let pinned_height = (pinned_entries.len() * 2 + 2).min(8) as u16;
+            // Allocate 2 lines per pinned entry + 2 for borders, max 8 lines total,
+            // but never let it grow so large that the timeline drops below a usable
+            // minimum on short terminals (degrade pinned height instead of the timeline).
+            const MIN_TIMELINE_ROWS: u16 = 8;
+            const MIN_PINNED_ROWS: u16 = 3;
+            let desired = (pinned_entries.len() * 2 + 2).min(8) as u16;
+            let available_for_pinned = timeline_area_raw.height.saturating_sub(MIN_TIMELINE_ROWS);
+            let pinned_height = desired.min(available_for_pinned).max(MIN_PINNED_ROWS);
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(pinned_height), Constraint::Min(5)])
@@ -350,6 +356,13 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             } else {
                 " "
             };
+            // Accent the collapsed marker so entries with hidden content stand out while
+            // scanning; keep the expanded marker quiet.
+            let fold_style = if is_folded {
+                Style::default().fg(tokens.ui_accent)
+            } else {
+                Style::default().fg(tokens.ui_muted)
+            };
             let context_kind = crate::app::entry_context_kind(entry);
             let (context_marker, context_style) = match context_kind {
                 crate::models::TimelineFilter::Work => {
@@ -474,10 +487,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                     } else {
                         " "
                     };
-                    spans.push(Span::styled(
-                        fold_text,
-                        Style::default().fg(tokens.ui_muted),
-                    ));
+                    spans.push(Span::styled(fold_text, fold_style));
                     spans.push(Span::raw(" "));
                     if let Some(segments) = code_segments.as_ref() {
                         let segment_len = wline.chars().count();
@@ -906,7 +916,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             .collect();
         if todos.is_empty() {
             todos.push(ListItem::new(Line::from(Span::styled(
-                "No tasks in this view.",
+                format!("No tasks in this view ({}).", app.task_filter_label()),
                 Style::default().fg(tokens.ui_muted),
             ))));
             todos.push(ListItem::new(Line::from(Span::styled(
@@ -3279,7 +3289,10 @@ fn render_agenda_panel(
 
     if visible.is_empty() {
         items.push(ListItem::new(Line::from(Span::styled(
-            "No agenda items for this day.",
+            truncate(
+                &format!("No agenda items ({filter_label}) on {date_label}."),
+                list_width,
+            ),
             Style::default().fg(tokens.ui_muted),
         ))));
         items.push(ListItem::new(Line::from(Span::styled(

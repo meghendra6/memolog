@@ -474,6 +474,8 @@ pub struct EditorConfig {
     pub image_webp_quality: f32,
     pub image_preview_enabled: bool,
     pub image_cache_entries: usize,
+    /// Maximum number of suggestions shown in the `[[wikilink]]` autocomplete popup.
+    pub link_complete_max_items: usize,
 }
 
 impl Default for EditorConfig {
@@ -485,6 +487,7 @@ impl Default for EditorConfig {
             image_webp_quality: 80.0,
             image_preview_enabled: true,
             image_cache_entries: 128,
+            link_complete_max_items: 12,
         }
     }
 }
@@ -851,6 +854,69 @@ impl Default for Theme {
             link: "LightMagenta".to_string(),
             ui: None,
         }
+    }
+}
+
+impl Theme {
+    /// Returns the names of theme color fields whose configured value could not be parsed
+    /// as a named color, the literal `reset`, or an `R,G,B` triple. Such values silently
+    /// fall back to the terminal default, so surfacing them helps users find config typos.
+    pub fn invalid_color_fields(&self) -> Vec<String> {
+        use crate::ui::color_parser::parse_color_checked;
+        let mut bad = Vec::new();
+
+        let required: [(&str, &str); 11] = [
+            ("border_default", self.border_default.as_str()),
+            ("border_editing", self.border_editing.as_str()),
+            ("border_search", self.border_search.as_str()),
+            ("border_todo_header", self.border_todo_header.as_str()),
+            ("text_highlight", self.text_highlight.as_str()),
+            ("todo_done", self.todo_done.as_str()),
+            ("todo_wip", self.todo_wip.as_str()),
+            ("tag", self.tag.as_str()),
+            ("mood", self.mood.as_str()),
+            ("timestamp", self.timestamp.as_str()),
+            ("link", self.link.as_str()),
+        ];
+        for (name, value) in required {
+            if parse_color_checked(value).is_none() {
+                bad.push(name.to_string());
+            }
+        }
+
+        if let Some(ui) = &self.ui {
+            let optional: [(&str, &Option<String>); 6] = [
+                ("ui.fg", &ui.fg),
+                ("ui.bg", &ui.bg),
+                ("ui.muted", &ui.muted),
+                ("ui.accent", &ui.accent),
+                ("ui.selection_bg", &ui.selection_bg),
+                ("ui.cursorline_bg", &ui.cursorline_bg),
+            ];
+            for (name, value) in optional {
+                if let Some(v) = value
+                    && parse_color_checked(v).is_none()
+                {
+                    bad.push(name.to_string());
+                }
+            }
+            if let Some(toast) = &ui.toast {
+                let toast_fields: [(&str, &Option<String>); 3] = [
+                    ("ui.toast.info", &toast.info),
+                    ("ui.toast.success", &toast.success),
+                    ("ui.toast.error", &toast.error),
+                ];
+                for (name, value) in toast_fields {
+                    if let Some(v) = value
+                        && parse_color_checked(v).is_none()
+                    {
+                        bad.push(name.to_string());
+                    }
+                }
+            }
+        }
+
+        bad
     }
 }
 
@@ -1780,6 +1846,31 @@ mod tests {
         let _solarized_light = Theme::preset(ThemePreset::SolarizedLight);
         let _nord = Theme::preset(ThemePreset::NordCalm);
         let _mono = Theme::preset(ThemePreset::MonoContrast);
+    }
+
+    #[test]
+    fn default_and_presets_have_no_invalid_colors() {
+        assert!(Theme::default().invalid_color_fields().is_empty());
+        for preset in ThemePreset::all() {
+            assert!(
+                Theme::preset(*preset).invalid_color_fields().is_empty(),
+                "preset {:?} has invalid colors",
+                preset
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_color_fields_reports_bad_values() {
+        let theme = Theme {
+            border_default: "not-a-color".to_string(),
+            tag: "256,0,0".to_string(),
+            ..Theme::default()
+        };
+        let bad = theme.invalid_color_fields();
+        assert!(bad.contains(&"border_default".to_string()));
+        assert!(bad.contains(&"tag".to_string()));
+        assert_eq!(bad.len(), 2);
     }
 
     #[test]

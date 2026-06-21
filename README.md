@@ -131,6 +131,7 @@ Normal/Visual mode:
 - `ZZ` save and exit (Vim)
 - `ZQ` discard and exit (Vim)
 - `ciw`/`diw`/`yiw` change/delete/yank inner word
+- In Visual mode, `o` swaps the cursor to the opposite end of the selection
 
 ## Task priorities
 
@@ -279,7 +280,19 @@ nl_parse = true
 daily_template = "# {{date}} ({{weekday}})\n"
 ```
 
-Available placeholders: `{{date}}`, `{{weekday}}`, `{{date_long}}`. Leave `daily_template` empty (the default) for no template.
+Available placeholders:
+
+- `{{date}}` — `YYYY-MM-DD`
+- `{{weekday}}` — full weekday name (e.g. `Monday`)
+- `{{date_long}}` — e.g. `Monday, January 6 2026`
+- `{{date_short}}` — e.g. `Jan 6`
+- `{{month}}` — full month name (e.g. `January`)
+- `{{year}}` — e.g. `2026`
+- `{{week}}` — ISO week number (e.g. `01`)
+- `{{iso_week}}` — ISO year-week (e.g. `2026-W01`)
+- `{{doy}}` — day of year (e.g. `006`)
+
+Unknown placeholders are left untouched. Leave `daily_template` empty (the default) for no template.
 
 ## Gemini AI search (experimental)
 
@@ -434,6 +447,7 @@ image_jpeg_quality = 92
 image_webp_quality = 80.0
 image_preview_enabled = true
 image_cache_entries = 128
+link_complete_max_items = 12 # max suggestions in the [[wikilink]] autocomplete popup
 ```
 
 ## Keybindings (defaults)
